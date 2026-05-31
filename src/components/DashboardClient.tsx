@@ -53,17 +53,21 @@ export default function DashboardClient() {
   return (
     <div className="space-y-8">
       <div className="grid gap-6 lg:grid-cols-4">
-        <StatCard label="Contactos hoy" value={`${stats.contactsToday}`} accent="purple" />
-        <StatCard label="Contactos semana" value={`${stats.contactsWeek}`} accent="gold" />
-        <StatCard label="Contactos mes" value={`${stats.contactsMonth}`} accent="pink" />
+        <StatCard label="Contactos nuevos hoy" value={`${stats.contactsToday}`} accent="purple" />
+        <StatCard label="Mensajes recibidos hoy" value={`${stats.messagesToday}`} accent="gold" />
         <StatCard label="Comprobantes pendientes" value={`${stats.comprobantesPending}`} accent="green" />
+        <StatCard label="Monto verificado" value={`$${Number(stats.verifiedAmount ?? 0).toFixed(0)}`} accent="pink" />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-4">
+        <StatCard label="Contactos semana" value={`${stats.contactsWeek}`} accent="gold" />
+        <StatCard label="Contactos mes" value={`${stats.contactsMonth}`} accent="pink" />
         <StatCard label="VIP" value={`${stats.vipLeads}`} accent="gold" />
         <StatCard label="Activo" value={`${stats.activeLeads}`} accent="green" />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-4">
         <StatCard label="Frío" value={`${stats.coldLeads}`} accent="pink" />
-        <StatCard label="Monto verificado" value={`$${Number(stats.verifiedAmount ?? 0).toFixed(0)}`} accent="purple" />
       </div>
     </div>
   );

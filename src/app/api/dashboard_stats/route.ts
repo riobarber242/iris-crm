@@ -14,6 +14,12 @@ export async function GET() {
     .select('id', { count: 'exact', head: true })
     .gte('created_at', today.toISOString());
 
+  const messagesToday = await supabaseAdmin
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('role', 'user')
+    .gte('created_at', today.toISOString());
+
   const contactsWeek = await supabaseAdmin
     .from('contacts')
     .select('id', { count: 'exact', head: true })
@@ -51,6 +57,7 @@ export async function GET() {
 
   return NextResponse.json({
     contactsToday: contactsToday.count ?? 0,
+    messagesToday: messagesToday.count ?? 0,
     contactsWeek: contactsWeek.count ?? 0,
     contactsMonth: contactsMonth.count ?? 0,
     comprobantesPending: comprobantesPending.count ?? 0,
