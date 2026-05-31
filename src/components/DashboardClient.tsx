@@ -34,6 +34,9 @@ export default function DashboardClient() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => fetchStats())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, () => fetchStats())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => fetchStats())
+      // listen to new messages so dashboard updates when conversations arrive
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => fetchStats())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, () => fetchStats())
       .subscribe();
 
     channelRef.current = channel;
