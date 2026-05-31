@@ -54,33 +54,36 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   });
 
   async function replyAndSave(textResp: string, markInProgress = false) {
-    const { data: inserted } = await supabaseAdmin
+    const { data: inserted, error: insertError } = await supabaseAdmin
       .from('messages')
       .insert({
         contact_id: contact.id,
         role: 'assistant',
         content: textResp,
-        status: 'sending',
       })
       .select('*')
       .single();
 
+    if (insertError || !inserted) {
+      console.error('Error inserting assistant message', insertError);
+      // attempt to send even if DB insert failed
+      try {
+        await sendWhatsAppText(from, textResp);
+      } catch (e) {
+        console.error('Error sending WhatsApp message (no DB row):', e);
+      }
+      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
+      return;
+    }
+
     try {
       await sendWhatsAppText(from, textResp);
-      if (inserted?.id) {
-        await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
-      }
-      if (markInProgress) {
-        await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
-      }
+      if (inserted?.id) await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
     } catch (err) {
       console.error('Error sending WhatsApp message:', err);
-      if (inserted?.id) {
-        await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
-      }
-      if (markInProgress) {
-        await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
-      }
+      if (inserted?.id) await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
+      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
     }
   }
 

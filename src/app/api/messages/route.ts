@@ -42,12 +42,16 @@ export async function POST(request: Request) {
     return new NextResponse('No se encontró el contacto', { status: 404 });
   }
 
-  const { data: inserted } = await supabaseAdmin.from('messages').insert({
+  const { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert({
     contact_id: contactId,
     role: 'human',
     content,
-    status: 'sending',
   }).select('*').single();
+
+  if (insertError || !inserted) {
+    console.error('Insert message error', insertError);
+    return new NextResponse('Error guardando mensaje', { status: 500 });
+  }
 
   try {
     await sendWhatsAppText(contact.phone, content);
