@@ -84,6 +84,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <Link
                 key={item}
                 href={path}
+                className={active ? 'nav-3d-active' : 'nav-3d'}
                 style={{
                   display: 'block',
                   borderRadius: '10px',
@@ -93,7 +94,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   color: active ? '#000' : '#555',
                   background: active ? '#C8FF00' : 'transparent',
                   textDecoration: 'none',
-                  transition: 'background 0.15s, color 0.15s',
                 }}
               >
                 {navLabels[item]}
