@@ -6,7 +6,11 @@ export async function GET(request: Request) {
   const status = url.searchParams.get('status');
   const search = url.searchParams.get('search');
 
-  let query = supabaseAdmin.from('contacts').select('*, messages!inner(*)').order('created_at', { ascending: false });
+  let query = supabaseAdmin
+    .from('contacts')
+    .select('*, messages!inner(*)')
+    .order('created_at', { ascending: false })
+    .order('created_at', { foreignTable: 'messages', ascending: false });
   if (status) {
     query = query.eq('status', status);
   }
@@ -33,6 +37,9 @@ export async function PATCH(request: Request) {
 
   if (body.status) {
     updates.status = body.status;
+  }
+  if (body.name !== undefined) {
+    updates.name = body.name;
   }
   if (body.blocked !== undefined) {
     updates.blocked = body.blocked;

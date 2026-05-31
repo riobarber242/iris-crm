@@ -31,11 +31,13 @@ export default function ConversationsClient() {
 
     const channel = supabaseRef.current
       .channel('realtime-conversations')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-        // new message -> refetch or update last message
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => {
         fetchConversations();
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'contacts' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
+        fetchConversations();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, () => {
         fetchConversations();
       })
       .subscribe();
