@@ -1,6 +1,8 @@
+
 "use client";
 
 import React, { useEffect, useState, useRef } from 'react';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 type Message = {
   id?: string;
@@ -15,7 +17,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const mounted = useRef(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const supabaseRef = useRef<SupabaseClient | null>(null);
+  const channelRef = useRef<any>(null);
 
   async function fetchMessages() {
     try {
@@ -30,13 +34,53 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
   useEffect(() => {
     fetchMessages();
-    mounted.current = true;
-    const iv = setInterval(fetchMessages, 3000);
+
+    // Setup Supabase Realtime subscription
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
+    if (!url || !key) return;
+
+    supabaseRef.current = createClient(url, key);
+
+    try {
+      const channel = supabaseRef.current
+        .channel(`messages:contact:${contactId}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` },
+          (payload: any) => {
+            setMessages((m) => [...m, payload.new]);
+            // scroll to bottom
+            setTimeout(() => {
+              if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+            }, 50);
+          }
+        )
+        .subscribe();
+
+      channelRef.current = channel;
+    } catch (err) {
+      console.error('Realtime subscribe error', err);
+    }
+
     return () => {
-      mounted.current = false;
-      clearInterval(iv);
+      try {
+        if (channelRef.current) {
+          supabaseRef.current?.removeChannel(channelRef.current);
+        }
+      } catch (err) {
+        // ignore
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
+
+  useEffect(() => {
+    // scroll to bottom when messages change
+    if (listRef.current) {
+      listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [messages]);
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
@@ -69,12 +113,18 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
   return (
     <div>
-      <div className="space-y-3 max-h-[60vh] overflow-auto p-2">
+      <div ref={listRef} className="space-y-3 max-h-[60vh] overflow-auto p-2">
         {messages.map((m, i) => (
-          <div key={m.id ?? i} className={`p-3 rounded-md ${m.role === 'assistant' ? 'bg-iris-card' : 'bg-[#0f1724]'}`}>
-            <p className="text-xs text-iris-text-muted">{m.role} {m.status ? `• ${m.status}` : ''}</p>
-            <p className="text-white">{m.content}</p>
-            <p className="text-xs text-iris-text-muted">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : ''}</p>
+          <div
+            key={m.id ?? i}
+            className={`max-w-[80%] p-3 rounded-2xl ${m.role === 'assistant' ? 'ml-0 bg-iris-card self-start' : 'ml-auto bg-[#0b1220] self-end'} break-words`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-iris-text-muted capitalize">{m.role}</p>
+              {m.status ? <p className="text-xs text-iris-text-muted">{m.status}</p> : null}
+            </div>
+            <p className="text-white mt-1">{m.content}</p>
+            <p className="text-xs text-iris-text-muted mt-2">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : ''}</p>
           </div>
         ))}
       </div>
