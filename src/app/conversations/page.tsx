@@ -2,6 +2,7 @@ import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { supabaseAdmin } from '@/lib/db';
+import Link from 'next/link';
 
 async function fetchConversations() {
   const { data } = await supabaseAdmin
@@ -23,23 +24,25 @@ export default async function ConversationsPage() {
             {conversations.map((contact: any) => {
               const lastMessage = contact.messages?.[0];
               return (
-                <div key={contact.id} className="rounded-[28px] border border-white/10 bg-[#14141c] p-5">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-lg font-semibold text-white">{contact.name || contact.phone}</p>
-                      <p className="text-sm text-iris-text-muted">{contact.phone}</p>
+                <Link key={contact.id} href={`/conversations/${contact.id}`} className="block">
+                  <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-5 hover:shadow-lg transition">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-lg font-semibold text-white">{contact.name || contact.phone}</p>
+                        <p className="text-sm text-iris-text-muted">{contact.phone}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <StatusBadge status={contact.status} />
+                        {contact.blocked ? <span className="rounded-full bg-[#431b2e] px-3 py-1 text-xs text-iris-pink">Bloqueado</span> : null}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <StatusBadge status={contact.status} />
-                      {contact.blocked ? <span className="rounded-full bg-[#431b2e] px-3 py-1 text-xs text-iris-pink">Bloqueado</span> : null}
+                    <div className="mt-4 flex flex-col gap-2 rounded-3xl bg-iris-card p-4">
+                      <p className="text-sm text-iris-text-muted">Último mensaje:</p>
+                      <p className="text-base text-white">{lastMessage ? lastMessage.content : 'Sin mensajes aún'}</p>
+                      <p className="text-xs text-iris-text-muted">{lastMessage ? new Date(lastMessage.created_at).toLocaleString('es-AR') : ''}</p>
                     </div>
                   </div>
-                  <div className="mt-4 flex flex-col gap-2 rounded-3xl bg-iris-card p-4">
-                    <p className="text-sm text-iris-text-muted">Último mensaje:</p>
-                    <p className="text-base text-white">{lastMessage ? lastMessage.content : 'Sin mensajes aún'}</p>
-                    <p className="text-xs text-iris-text-muted">{lastMessage ? new Date(lastMessage.created_at).toLocaleString('es-AR') : ''}</p>
-                  </div>
-                </div>
+                </Link>
               );
             })}
           </div>
