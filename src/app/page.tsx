@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-iris-background text-white px-6 py-8">
@@ -10,6 +12,9 @@ export default function HomePage() {
               <p className="mt-4 max-w-2xl text-lg text-iris-text-muted">
                 Administrá contactos, conversaciones, comprobantes y campañas con estilo fintech oscuro.
               </p>
+              <Link href="/dashboard" className="mt-8 inline-block rounded-3xl bg-gradient-to-r from-iris-purple to-iris-pink px-8 py-3 font-semibold text-white shadow-iris transition hover:shadow-lg">
+                Entrar al Dashboard →
+              </Link>
             </div>
             <div className="rounded-3xl bg-gradient-to-br from-iris-purple via-[#5e2bff] to-iris-green p-1 shadow-iris">
               <div className="rounded-3xl bg-iris-background px-8 py-6 text-center">
