@@ -46,3 +46,16 @@ export async function sendWhatsAppImage(to: string, imageUrl: string, caption: s
     { headers }
   );
 }
+
+export async function fetchWhatsAppMediaUrl(mediaId: string) {
+  if (!headers) {
+    throw new Error('WHATSAPP_ACCESS_TOKEN no configurado');
+  }
+
+  const response = await axios.get(`${baseUrl}/${mediaId}`, {
+    headers,
+    params: { fields: 'url' },
+  });
+
+  return response.data?.url;
+}

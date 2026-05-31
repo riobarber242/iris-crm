@@ -1,5 +1,5 @@
 ﻿import { verifyMetaSignature } from './verify';
-import { sendWhatsAppText } from './client';
+import { sendWhatsAppText, fetchWhatsAppMediaUrl } from './client';
 import { supabaseAdmin } from '../db';
 import { generateBotResponse, generateAmountFromImage } from '../groq';
 import { irisSystemPrompt } from '../system-prompt';
@@ -87,8 +87,32 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     }
   }
 
+  async function resolveImageUrl() {
+    if (message.image?.link) return message.image.link;
+    if (message.image?.url) return message.image.url;
+    if (message.image?.id) {
+      try {
+        return await fetchWhatsAppMediaUrl(message.image.id);
+      } catch (error) {
+        console.error('Error fetching WhatsApp image URL:', error);
+      }
+    }
+
+    if (message.document?.link) return message.document.link;
+    if (message.document?.url) return message.document.url;
+    if (message.document?.id) {
+      try {
+        return await fetchWhatsAppMediaUrl(message.document.id);
+      } catch (error) {
+        console.error('Error fetching WhatsApp document URL:', error);
+      }
+    }
+
+    return null;
+  }
+
   async function handleCaptureImageFlow() {
-    const imageUrl = message.image?.link ?? message.document?.link ?? null;
+    const imageUrl = await resolveImageUrl();
     const amount = imageUrl ? await generateAmountFromImage(imageUrl).catch(() => 0) : 0;
 
     if (imageUrl) {
