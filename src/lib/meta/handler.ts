@@ -1,14 +1,12 @@
-import { verifyMetaSignature } from './verify';
+﻿import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText } from './client';
 import { supabaseAdmin } from '../db';
 import { generateBotResponse, generateAmountFromImage } from '../groq';
 import { irisSystemPrompt } from '../system-prompt';
 
-const CLUB_URL_SETTING_KEY = 'club_de_la_suerte_link';
-
 export async function handleWhatsappWebhook(rawBody: string, signature: string | undefined, payload: any) {
   if (!verifyMetaSignature(signature, rawBody)) {
-    return { status: 401, body: 'Firma no válida' };
+    return { status: 401, body: 'Firma no valida' };
   }
 
   const entries = payload.entry ?? [];
@@ -36,13 +34,13 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return;
   }
 
-  const dedup = await supabaseAdmin
+  const existingMessage = await supabaseAdmin
     .from('messages')
     .select('id')
     .eq('whatsapp_message_id', messageId)
-    .single();
+    .maybeSingle();
 
-  if (dedup.data) {
+  if (existingMessage.data) {
     return;
   }
 
@@ -55,116 +53,167 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     whatsapp_message_id: messageId,
   });
 
+  async function replyAndSave(textResp: string, markInProgress = false) {
+    const { data: inserted } = await supabaseAdmin
+      .from('messages')
+      .insert({
+        contact_id: contact.id,
+        role: 'assistant',
+        content: textResp,
+        status: 'sending',
+      })
+      .select('*')
+      .single();
+
+    try {
+      await sendWhatsAppText(from, textResp);
+      if (inserted?.id) {
+        await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+      }
+      if (markInProgress) {
+        await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
+      }
+    } catch (err) {
+      console.error('Error sending WhatsApp message:', err);
+      if (inserted?.id) {
+        await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
+      }
+      if (markInProgress) {
+        await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
+      }
+    }
+  }
+
+  async function handleCaptureImageFlow() {
+    const imageUrl = message.image?.link ?? message.document?.link ?? null;
+    const amount = imageUrl ? await generateAmountFromImage(imageUrl).catch(() => 0) : 0;
+
+    if (imageUrl) {
+      await supabaseAdmin.from('comprobantes').insert({
+        contact_id: contact.id,
+        image_url: imageUrl,
+        monto: amount,
+        estado: 'pendiente',
+      });
+    }
+
+    await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
+  }
+
   if (type === 'image' || type === 'document') {
-    await handleComprobanteImage(contact.id, message, from);
+    await handleCaptureImageFlow();
     return;
   }
 
-  const response = await buildAssistantResponse(contact, text);
-  const { data: inserted } = await supabaseAdmin.from('messages').insert({
-    contact_id: contact.id,
-    role: 'assistant',
-    content: response,
-    status: 'sending',
-  }).select('*').single();
+  const { data: lastAssistant } = await supabaseAdmin
+    .from('messages')
+    .select('*')
+    .eq('contact_id', contact.id)
+    .eq('role', 'assistant')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  const lastAssistantText = lastAssistant?.content ?? '';
+
+  if (!lastAssistantText) {
+    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
+    return;
+  }
+
+  if (lastAssistantText.toLowerCase().includes('mi nombre es iris')) {
+    await replyAndSave('Venis por las fichas de prueba o queres cargar?');
+    return;
+  }
+
+  if (lastAssistantText.toLowerCase().includes('fichas de prueba') || lastAssistantText.toLowerCase().includes('queres cargar')) {
+    const lowerText = text.toLowerCase();
+
+    if (/carg(ar|a)|quiero cargar|quiero recarg/.test(lowerText)) {
+      await replyAndSave('Perfecto! Dame un momento que te atiendo enseguida', true);
+      return;
+    }
+
+    if (/fichas|prueba|proba|prueb/.test(lowerText)) {
+      await replyAndSave(
+        'Unite a mi canal de WhatsApp y mandame captura. Ahi subo promos, horarios de atencion y lineas disponibles: https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F'
+      );
+      return;
+    }
+
+    await replyAndSave('Venis por las fichas de prueba o queres cargar?');
+    return;
+  }
+
+  if (lastAssistantText.toLowerCase().includes('unite a mi canal')) {
+    await replyAndSave('Para poder seguir necesito que me mandes la captura del canal');
+    return;
+  }
+
+  if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(text.toLowerCase())) {
+    await replyAndSave('Entendido, dame un momento', true);
+    return;
+  }
+
+  if (lastAssistantText.toLowerCase().includes('sos de cargar y jugar') || lastAssistantText.toLowerCase().includes('sos de cargar y jugar seguido')) {
+    const lowerText = text.toLowerCase();
+
+    if (/(si|si|obvio|claro|siempre|si,)/.test(lowerText)) {
+      await replyAndSave(
+        'Buenisimo porque lo que estoy buscando son clientes que carguen conmigo. Las fichas de regalo son solo para probar la plataforma. Los premios se retiran cuando ganas jugando con una carga. Si estas de acuerdo, decime tu nombre y te creo el usuario. Aprovecha despues a cargar que les doy un 20% mas de lo que carguen'
+      );
+      return;
+    }
+
+    if (/(no|nono|no puedo|no gracias)/.test(lowerText)) {
+      await replyAndSave('Entendido, dame un momento', true);
+      return;
+    }
+
+    await replyAndSave('Sos de cargar y jugar seguido?');
+    return;
+  }
+
+  if (lastAssistantText.toLowerCase().includes('decime tu nombre') || lastAssistantText.toLowerCase().includes('decime tu nombre y te creo el usuario')) {
+    const name = text.split('\\n')[0].split(' ').slice(0, 3).join(' ').trim();
+
+    if (name) {
+      await supabaseAdmin.from('contacts').update({ name }).eq('id', contact.id);
+    }
+
+    await replyAndSave(`Perfecto ${name}! Dame un momento que te preparo todo`, true);
+    return;
+  }
 
   try {
-    await sendWhatsAppText(from, response);
-    if (inserted?.id) {
-      await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
-    }
-  } catch (err) {
-    console.error('Error sending WhatsApp message:', err);
-    if (inserted?.id) {
-      await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
-    }
+    const fallback = await generateBotResponse(
+      irisSystemPrompt + `\\nContacto: ${contact.name ?? 'cliente'}\\nMensaje: ${text}`,
+      text
+    );
+    await replyAndSave(fallback);
+    return;
+  } catch (e) {
+    console.error('Groq fallback error', e);
   }
+
+  await replyAndSave('Perdon, no entendi. Podes repetir?');
 }
 
 async function findOrCreateContact(phone: string, name: string | null) {
-  const { data: existing } = await supabaseAdmin
-    .from('contacts')
-    .select('*')
-    .eq('phone', phone)
-    .single();
+  const { data: existing } = await supabaseAdmin.from('contacts').select('*').eq('phone', phone).single();
 
   if (existing) {
-    const updates: Record<string, any> = {};
-    if (!existing.name && name) {
-      updates.name = name;
-    }
-    if (Object.keys(updates).length > 0) {
-      await supabaseAdmin.from('contacts').update(updates).eq('id', existing.id);
+    if (name && !existing.name) {
+      await supabaseAdmin.from('contacts').update({ name }).eq('id', existing.id);
     }
     return existing;
   }
 
-  const { data: contact } = await supabaseAdmin.from('contacts').insert({
-    phone,
-    name,
-    status: 'nuevo',
-    joined_channel: false,
-    user_created: false,
-    blocked: false,
-  }).select('*').single();
+  const { data: inserted } = await supabaseAdmin
+    .from('contacts')
+    .insert({ phone, name, status: 'nuevo' })
+    .select('*')
+    .single();
 
-  if (!contact) {
-    throw new Error('No se pudo crear el contacto');
-  }
-
-  return contact;
-}
-
-async function handleComprobanteImage(contactId: string, message: any, to: string) {
-  const imageUrl = message.image?.link ?? message.document?.link;
-  if (!imageUrl) {
-    await sendWhatsAppText(to, 'No pude leer la imagen, mandamela de nuevo por favor.');
-    return;
-  }
-
-  const monto = await generateAmountFromImage(imageUrl);
-  await supabaseAdmin.from('comprobantes').insert({
-    contact_id: contactId,
-    image_url: imageUrl,
-    monto,
-    estado: 'pendiente',
-  });
-  try {
-    await sendWhatsAppText(to, 'Gracias, ya guardé tu comprobante y lo tengo en revisión.');
-  } catch (err) {
-    console.error('Error sending comprobante confirmation:', err);
-  }
-}
-
-async function buildAssistantResponse(contact: any, incomingText: string) {
-  const clubUrl = await getSetting(CLUB_URL_SETTING_KEY, 'https://t.me/ElClubDeLaSuerteDeIris');
-  const prompt = `${irisSystemPrompt}
-
-Contacto: ${contact.name ?? 'cliente'}
-Mensaje: ${incomingText}
-Canal: ${clubUrl}`;
-
-  if (isHumanRoute(incomingText)) {
-    return 'Entiendo que preferís hablar con alguien de atención. Te paso con un operador humano en un momento.';
-  }
-
-  if (incomingText.toUpperCase().includes('QUIERO EL 15%')) {
-    return 'Para activar el bonus tenés que hacer una recarga mínima de 500 y mandar tu comprobante, después te aviso cuando esté aprobado.';
-  }
-
-  if (contact.status === 'nuevo') {
-    return `Hola! Soy Iris, tu asistente. Guardame como contacto y sumate al club acá: ${clubUrl}. Mientras preparo tu cuenta, te aviso cómo sigue.`;
-  }
-
-  return await generateBotResponse(prompt, incomingText);
-}
-
-function isHumanRoute(text: string) {
-  const angryKeywords = ['enoj', 'molest', 'reclamo', 'queja', 'mal', 'pésim'];
-  return angryKeywords.some((word) => text.toLowerCase().includes(word));
-}
-
-async function getSetting(key: string, fallback: string) {
-  const { data } = await supabaseAdmin.from('settings').select('value').eq('key', key).single();
-  return data?.value ?? fallback;
+  return inserted as any;
 }
