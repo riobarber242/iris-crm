@@ -27,7 +27,7 @@ export default function ComprobantesClient() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/comprobantes?estado=pendiente');
+      const res = await fetch('/api/comprobantes');
       if (!res.ok) {
         throw new Error(`Error cargando comprobantes: ${res.statusText}`);
       }
@@ -91,7 +91,7 @@ export default function ComprobantesClient() {
       ) : error ? (
         <div className="rounded-[28px] border border-red-500 bg-[#2a1319] p-8 text-red-200">{error}</div>
       ) : comprobantes.length === 0 ? (
-        <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-8 text-white">No hay comprobantes pendientes.</div>
+        <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-8 text-white">No hay comprobantes cargados.</div>
       ) : (
         <div className="space-y-4">
           {comprobantes.map((item) => (

@@ -4,13 +4,14 @@ import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const estado = url.searchParams.get('estado') || 'pendiente';
+  const estado = url.searchParams.get('estado');
 
-  const { data, error } = await supabaseAdmin
-    .from('comprobantes')
-    .select('*, contacts(phone, name)')
-    .eq('estado', estado)
-    .order('created_at', { ascending: false });
+  let query = supabaseAdmin.from('comprobantes').select('*, contacts(phone, name)');
+  if (estado && estado !== 'all') {
+    query = query.eq('estado', estado);
+  }
+
+  const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
     return new NextResponse(error.message, { status: 500 });

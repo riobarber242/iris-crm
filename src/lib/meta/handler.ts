@@ -1,8 +1,90 @@
-﻿import { verifyMetaSignature } from './verify';
+﻿import axios from 'axios';
+import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText, fetchWhatsAppMediaUrl } from './client';
 import { supabaseAdmin } from '../db';
 import { generateBotResponse, generateAmountFromImage } from '../groq';
 import { irisSystemPrompt } from '../system-prompt';
+
+const COMPROBANTES_BUCKET = 'comprobantes';
+
+function getExtensionFromUrl(url: string, contentType?: string) {
+  try {
+    const pathname = new URL(url).pathname;
+    const ext = pathname.split('.').pop();
+    if (ext && ext.length > 0 && ext.length <= 5) {
+      return ext.split('?')[0];
+    }
+  } catch {
+    // ignore
+  }
+
+  if (contentType) {
+    if (contentType.includes('jpeg')) return 'jpg';
+    if (contentType.includes('png')) return 'png';
+    if (contentType.includes('gif')) return 'gif';
+    if (contentType.includes('webp')) return 'webp';
+  }
+
+  return 'jpg';
+}
+
+async function downloadMediaBuffer(url: string) {
+  const response = await axios.get<ArrayBuffer>(url, {
+    responseType: 'arraybuffer',
+    headers: {
+      'User-Agent': 'Supabase CRM',
+    },
+  });
+  return {
+    buffer: Buffer.from(response.data),
+    contentType: response.headers['content-type'] as string | undefined,
+  };
+}
+
+async function ensureStorageBucket() {
+  try {
+    const { data, error } = await supabaseAdmin.storage.getBucket(COMPROBANTES_BUCKET);
+    if (error && /not found|404/i.test(error.message)) {
+      await supabaseAdmin.storage.createBucket(COMPROBANTES_BUCKET, { public: true });
+    }
+    return data;
+  } catch (error) {
+    console.error('Error asegurando bucket de storage:', error);
+    return null;
+  }
+}
+
+async function uploadComprobanteImage(imageUrl: string, contactId: string) {
+  try {
+    await ensureStorageBucket();
+    const { buffer, contentType } = await downloadMediaBuffer(imageUrl);
+    const extension = getExtensionFromUrl(imageUrl, contentType);
+    const filePath = `comprobantes/${contactId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+
+    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+      .from(COMPROBANTES_BUCKET)
+      .upload(filePath, buffer, { contentType, upsert: false });
+
+    if (uploadError) {
+      console.error('Error subiendo imagen a Supabase Storage:', uploadError);
+      return null;
+    }
+
+    const { data: publicUrlData, error: publicUrlError } = await supabaseAdmin.storage
+      .from(COMPROBANTES_BUCKET)
+      .getPublicUrl(filePath);
+
+    if (publicUrlError) {
+      console.error('Error obteniendo public URL:', publicUrlError);
+      return null;
+    }
+
+    return publicUrlData.publicUrl;
+  } catch (error) {
+    console.error('Error descargando o subiendo imagen:', error);
+    return null;
+  }
+}
 
 export async function handleWhatsappWebhook(rawBody: string, signature: string | undefined, payload: any) {
   if (!verifyMetaSignature(signature, rawBody)) {
@@ -114,11 +196,17 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   async function handleCaptureImageFlow() {
     const imageUrl = await resolveImageUrl();
     const amount = imageUrl ? await generateAmountFromImage(imageUrl).catch(() => 0) : 0;
+    let storedImageUrl: string | null = null;
 
     if (imageUrl) {
+      storedImageUrl = await uploadComprobanteImage(imageUrl, contact.id);
+    }
+
+    const imageUrlToSave = storedImageUrl ?? imageUrl;
+    if (imageUrlToSave) {
       await supabaseAdmin.from('comprobantes').insert({
         contact_id: contact.id,
-        image_url: imageUrl,
+        image_url: imageUrlToSave,
         monto: amount,
         estado: 'pendiente',
       });
