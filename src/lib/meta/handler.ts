@@ -6,6 +6,7 @@ import { generateBotResponse, generateAmountFromImage } from '../groq';
 import { irisSystemPrompt } from '../system-prompt';
 
 const COMPROBANTES_BUCKET = 'comprobantes';
+const BOT_ENABLED_KEY = 'bot_enabled';
 
 function getExtensionFromUrl(url: string, contentType?: string) {
   try {
@@ -193,6 +194,8 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return null;
   }
 
+  const botEnabled = await getBotEnabled();
+
   async function handleCaptureImageFlow() {
     const imageUrl = await resolveImageUrl();
     const amount = imageUrl ? await generateAmountFromImage(imageUrl).catch(() => 0) : 0;
@@ -212,11 +215,17 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
       });
     }
 
-    await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
+    if (botEnabled) {
+      await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
+    }
   }
 
   if (type === 'image' || type === 'document') {
     await handleCaptureImageFlow();
+    return;
+  }
+
+  if (!botEnabled) {
     return;
   }
 
@@ -331,4 +340,13 @@ async function findOrCreateContact(phone: string, name: string | null) {
     .single();
 
   return inserted as any;
+}
+
+async function getBotEnabled(): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('settings')
+    .select('value')
+    .eq('key', BOT_ENABLED_KEY)
+    .single();
+  return data?.value !== 'false';
 }

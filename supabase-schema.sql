@@ -51,6 +51,12 @@ create table if not exists settings (
   value text not null
 );
 
+-- Valor por defecto: bot activo
+insert into settings (key, value) values ('bot_enabled', 'true') on conflict (key) do nothing;
+
+-- Storage bucket para imágenes de comprobantes (crear en Supabase Dashboard → Storage)
+-- Bucket name: comprobantes (public)
+
 -- Campañas salientes
 create table if not exists campaigns (
   id uuid primary key default gen_random_uuid(),
