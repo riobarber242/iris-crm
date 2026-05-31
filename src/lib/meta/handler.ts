@@ -61,14 +61,24 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   }
 
   const response = await buildAssistantResponse(contact, text);
-  await supabaseAdmin.from('messages').insert({
+  const { data: inserted } = await supabaseAdmin.from('messages').insert({
     contact_id: contact.id,
     role: 'assistant',
     content: response,
-    status: 'sent',
-  });
+    status: 'sending',
+  }).select('*').single();
 
-  await sendWhatsAppText(from, response);
+  try {
+    await sendWhatsAppText(from, response);
+    if (inserted?.id) {
+      await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+    }
+  } catch (err) {
+    console.error('Error sending WhatsApp message:', err);
+    if (inserted?.id) {
+      await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
+    }
+  }
 }
 
 async function findOrCreateContact(phone: string, name: string | null) {
@@ -119,8 +129,11 @@ async function handleComprobanteImage(contactId: string, message: any, to: strin
     monto,
     estado: 'pendiente',
   });
-
-  await sendWhatsAppText(to, 'Gracias, ya guardé tu comprobante y lo tengo en revisión.');
+  try {
+    await sendWhatsAppText(to, 'Gracias, ya guardé tu comprobante y lo tengo en revisión.');
+  } catch (err) {
+    console.error('Error sending comprobante confirmation:', err);
+  }
 }
 
 async function buildAssistantResponse(contact: any, incomingText: string) {

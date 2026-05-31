@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';

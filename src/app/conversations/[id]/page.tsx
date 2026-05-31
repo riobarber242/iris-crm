@@ -1,5 +1,8 @@
+export const dynamic = 'force-dynamic';
+
 import { AdminShell } from '@/components/AdminShell';
 import { supabaseAdmin } from '@/lib/db';
+import ChatWindow from '@/components/ChatWindow';
 
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
@@ -12,8 +15,8 @@ async function fetchContact(id: string) {
   return data;
 }
 
-export default async function ConversationPage({ params }: { params: { id: string } }) {
-  const contact = await fetchContact(params.id);
+export default async function ConversationPage({ params }: any) {
+  const contact = await fetchContact(params.id as string);
 
   if (!contact) {
     return (
@@ -35,18 +38,8 @@ export default async function ConversationPage({ params }: { params: { id: strin
           </div>
         </div>
 
-        <div className="space-y-3">
-          {messages.length === 0 ? (
-            <p className="text-iris-text-muted">No hay mensajes aún.</p>
-          ) : (
-            messages.map((m: any, idx: number) => (
-              <div key={idx} className="rounded-lg bg-iris-card p-3">
-                <p className="text-sm text-iris-text-muted">{m.role}</p>
-                <p className="text-white">{m.content}</p>
-                <p className="text-xs text-iris-text-muted">{new Date(m.created_at).toLocaleString('es-AR')}</p>
-              </div>
-            ))
-          )}
+        <div>
+          <ChatWindow contactId={contact.id} />
         </div>
       </div>
     </AdminShell>

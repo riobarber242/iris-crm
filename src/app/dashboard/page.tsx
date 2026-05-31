@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { StatCard } from '@/components/ui/StatCard';
@@ -59,7 +61,7 @@ async function fetchDashboardStats() {
     vipLeads: vipLeads.count ?? 0,
     activeLeads: activeLeads.count ?? 0,
     coldLeads: coldLeads.count ?? 0,
-    verifiedAmount: verifiedAmount.data?.reduce((sum, item) => sum + Number(item.monto ?? 0), 0) ?? 0,
+    verifiedAmount: verifiedAmount.data?.reduce((sum: number, item: any) => sum + Number(item.monto ?? 0), 0) ?? 0,
   };
 }
 

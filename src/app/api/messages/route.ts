@@ -42,13 +42,26 @@ export async function POST(request: Request) {
     return new NextResponse('No se encontró el contacto', { status: 404 });
   }
 
-  await sendWhatsAppText(contact.phone, content);
-  const { data, error } = await supabaseAdmin.from('messages').insert({
+  const { data: inserted } = await supabaseAdmin.from('messages').insert({
     contact_id: contactId,
     role: 'human',
     content,
-    status: 'sent',
+    status: 'sending',
   }).select('*').single();
+
+  try {
+    await sendWhatsAppText(contact.phone, content);
+    if (inserted?.id) {
+      await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+    }
+  } catch (err) {
+    console.error('Error sending manual message:', err);
+    if (inserted?.id) {
+      await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
+    }
+  }
+
+  const { data, error } = await supabaseAdmin.from('messages').select('*').eq('id', inserted?.id).single();
 
   if (error) {
     return new NextResponse(error.message, { status: 500 });

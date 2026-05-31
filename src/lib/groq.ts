@@ -3,16 +3,16 @@ import axios from 'axios';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.cloud/v1';
 
-if (!GROQ_API_KEY) {
-  throw new Error('Falta GROQ_API_KEY en las variables de entorno');
-}
-
-const headers = {
-  Authorization: `Bearer ${GROQ_API_KEY}`,
-  'Content-Type': 'application/json',
-};
+const headers = GROQ_API_KEY
+  ? { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+  : null;
 
 export async function generateBotResponse(systemPrompt: string, userMessage: string) {
+  if (!headers) {
+    // Fallback simple response when GROQ is not configured
+    return `Hola! Gracias por tu mensaje: "${userMessage}". En breve un operador te responde.`;
+  }
+
   const response = await axios.post(
     `${GROQ_API_URL}/completions`,
     {
@@ -28,6 +28,11 @@ export async function generateBotResponse(systemPrompt: string, userMessage: str
 }
 
 export async function generateAmountFromImage(imageUrl: string) {
+  if (!headers) {
+    // If GROQ not configured, return 0 so comprobantes can still be saved
+    return 0;
+  }
+
   const response = await axios.post(
     `${GROQ_API_URL}/vision`,
     {

@@ -1,5 +1,7 @@
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+export const dynamic = 'force-dynamic';
+
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
