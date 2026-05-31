@@ -16,6 +16,13 @@ type ComprobanteItem = {
   } | null;
 };
 
+const card: React.CSSProperties = {
+  background: '#FFFFFF',
+  borderRadius: '20px',
+  padding: '20px',
+  boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+};
+
 export default function ComprobantesClient() {
   const [comprobantes, setComprobantes] = useState<ComprobanteItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,13 +35,9 @@ export default function ComprobantesClient() {
     setError(null);
     try {
       const res = await fetch('/api/comprobantes');
-      if (!res.ok) {
-        throw new Error(`Error cargando comprobantes: ${res.statusText}`);
-      }
-      const data = await res.json();
-      setComprobantes(data);
+      if (!res.ok) throw new Error(`Error: ${res.statusText}`);
+      setComprobantes(await res.json());
     } catch (err) {
-      console.error(err);
       setError('No se pudieron cargar los comprobantes.');
     } finally {
       setLoading(false);
@@ -48,103 +51,118 @@ export default function ComprobantesClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comprobanteId: id, action }),
       });
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
+      if (!res.ok) throw new Error(await res.text());
       await fetchComprobantes();
-    } catch (err) {
-      console.error(err);
+    } catch {
       setError('No se pudo actualizar el comprobante.');
     }
   }
 
   useEffect(() => {
     fetchComprobantes();
-
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
     if (!url || !key) return;
-
     supabaseRef.current = createClient(url, key);
     const channel = supabaseRef.current
       .channel('realtime-comprobantes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, () => {
-        fetchComprobantes();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, () => fetchComprobantes())
       .subscribe();
-
     channelRef.current = channel;
-
     return () => {
-      try {
-        if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current);
-      } catch (e) {
-        console.error('Error removing Supabase channel', e);
-      }
+      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
     };
   }, []);
 
-  return (
-    <div className="space-y-6">
-      {loading ? (
-        <div className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-8 text-white">Cargando comprobantes...</div>
-      ) : error ? (
-        <div className="rounded-[24px] border-2 border-red-500 bg-[#2a1319] p-8 text-red-200">{error}</div>
-      ) : comprobantes.length === 0 ? (
-        <div className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-8 text-white">No hay comprobantes cargados.</div>
-      ) : (
-        <div className="space-y-4">
-          {comprobantes.map((item) => (
-            <div key={item.id} className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-5 shadow-[0_0_0_16px_rgba(198,255,0,0.05)]">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div className="flex-1 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-lg font-bold text-white">{item.contacts?.name || item.contacts?.phone}</p>
-                      <p className="text-sm text-[#888888]">{item.contacts?.phone}</p>
-                    </div>
-                    <StatusBadge status={item.estado} />
-                  </div>
-                  <div className="rounded-[20px] bg-[#111111] p-4">
-                    {item.image_url ? (
-                      <img src={item.image_url} alt="Comprobante" className="h-[260px] w-full rounded-[20px] object-cover" />
-                    ) : (
-                      <div className="flex h-[260px] items-center justify-center rounded-[20px] border border-dashed border-white/10 bg-[#0d0d13] text-sm text-[#888888]">
-                        Sin imagen disponible
-                      </div>
-                    )}
-                  </div>
-                </div>
+  if (loading) return <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>Cargando comprobantes...</div>;
+  if (error) return <div style={{ padding: '16px', background: '#FFE5E5', borderRadius: '12px', color: '#CC3333' }}>{error}</div>;
+  if (comprobantes.length === 0) return <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>No hay comprobantes cargados.</div>;
 
-                <div className="flex w-full max-w-xs flex-col gap-4">
-                  <div className="rounded-[20px] bg-[#111111] p-4">
-                    <p className="text-sm text-[#888888]">Fecha y hora</p>
-                    <p className="mt-1 text-base font-semibold text-white">{new Date(item.created_at).toLocaleString('es-AR')}</p>
-                  </div>
-                  <div className="rounded-[20px] bg-[#111111] p-4">
-                    <p className="text-sm text-[#888888]">Monto detectado</p>
-                    <p className="mt-1 text-base font-semibold text-white">${item.monto ?? '0'}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <button
-                      onClick={() => updateComprobante(item.id, 'verificar')}
-                      className="rounded-2xl bg-[#C6FF00] px-4 py-2 text-sm font-bold text-black shadow-[0_8px_15px_rgba(198,255,0,0.18)]"
-                    >
-                      Verificado
-                    </button>
-                    <button
-                      onClick={() => updateComprobante(item.id, 'rechazar')}
-                      className="rounded-2xl border-2 border-[#C6FF00] bg-transparent px-4 py-2 text-sm font-bold text-[#C6FF00]"
-                    >
-                      Rechazado
-                    </button>
-                  </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {comprobantes.map((item) => (
+        <div key={item.id} style={card}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Header: nombre + badge */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <p style={{ fontSize: '16px', fontWeight: 700, color: '#000', margin: 0 }}>
+                  {item.contacts?.name || item.contacts?.phone}
+                </p>
+                <p style={{ fontSize: '13px', color: '#999', margin: '2px 0 0 0' }}>{item.contacts?.phone}</p>
+              </div>
+              <StatusBadge status={item.estado} />
+            </div>
+
+            {/* Imagen */}
+            <div style={{ background: '#F5F5F5', borderRadius: '16px', overflow: 'hidden' }}>
+              {item.image_url ? (
+                <img
+                  src={item.image_url}
+                  alt="Comprobante"
+                  style={{ width: '100%', maxHeight: '280px', objectFit: 'cover', display: 'block' }}
+                />
+              ) : (
+                <div style={{ height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: '14px' }}>
+                  Sin imagen disponible
+                </div>
+              )}
+            </div>
+
+            {/* Metadata + botones */}
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div>
+                  <p style={{ fontSize: '11px', color: '#999', fontWeight: 600, textTransform: 'uppercase', margin: 0 }}>Fecha</p>
+                  <p style={{ fontSize: '14px', fontWeight: 600, color: '#000', margin: '2px 0 0 0' }}>
+                    {new Date(item.created_at).toLocaleString('es-AR')}
+                  </p>
+                </div>
+                <div>
+                  <p style={{ fontSize: '11px', color: '#999', fontWeight: 600, textTransform: 'uppercase', margin: 0 }}>Monto</p>
+                  <p style={{ fontSize: '20px', fontWeight: 900, color: '#000', margin: '2px 0 0 0' }}>
+                    ${item.monto ?? '0'}
+                  </p>
                 </div>
               </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => updateComprobante(item.id, 'verificar')}
+                  style={{
+                    background: '#C8FF00',
+                    color: '#000',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '8px 20px',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(200,255,0,0.3)',
+                  }}
+                >
+                  ✓ Verificar
+                </button>
+                <button
+                  onClick={() => updateComprobante(item.id, 'rechazar')}
+                  style={{
+                    background: '#1a1a1a',
+                    color: '#fff',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '8px 20px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✕ Rechazar
+                </button>
+              </div>
             </div>
-          ))}
+          </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }

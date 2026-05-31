@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const whatsappToken = process.env.WHATSAPP_ACCESS_TOKEN;
 const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const baseUrl = 'https://graph.facebook.com/v17.0';
+const baseUrl = 'https://graph.facebook.com/v18.0';
 
 const headers = whatsappToken
   ? { Authorization: `Bearer ${whatsappToken}`, 'Content-Type': 'application/json' }

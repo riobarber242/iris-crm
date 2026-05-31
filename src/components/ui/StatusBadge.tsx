@@ -2,16 +2,44 @@ type StatusBadgeProps = {
   status: 'nuevo' | 'en_proceso' | 'activo' | 'bloqueado' | 'pendiente' | 'verificado' | 'rechazado';
 };
 
-const statusStyles: Record<string, string> = {
-  nuevo: 'bg-[#151515] text-[#888888] border border-white/10',
-  en_proceso: 'bg-[#151515] text-[#C6FF00] border border-[#C6FF00]/20',
-  activo: 'bg-[#151515] text-[#C6FF00] border border-[#C6FF00]/20',
-  bloqueado: 'bg-[#3a1515] text-[#ff6e6e] border border-[#ff6e6e]/20',
-  pendiente: 'bg-[#C6FF00] text-black border border-[#C6FF00]',
-  verificado: 'bg-[#C6FF00]/20 text-[#C6FF00] border border-[#C6FF00]/30',
-  rechazado: 'bg-transparent text-[#C6FF00] border border-[#C6FF00] ',
+const statusStyles: Record<string, React.CSSProperties> = {
+  nuevo:      { background: '#F0F0F0', color: '#888' },
+  en_proceso: { background: '#C8FF00', color: '#000' },
+  activo:     { background: '#C8FF00', color: '#000' },
+  bloqueado:  { background: '#FFE5E5', color: '#CC3333' },
+  pendiente:  { background: '#FFF8DC', color: '#886600' },
+  verificado: { background: '#C8FF00', color: '#000' },
+  rechazado:  { background: '#FFE5E5', color: '#CC3333' },
 };
 
+const statusLabels: Record<string, string> = {
+  nuevo: 'Nuevo',
+  en_proceso: 'En proceso',
+  activo: 'Activo',
+  bloqueado: 'Bloqueado',
+  pendiente: 'Pendiente',
+  verificado: 'Verificado',
+  rechazado: 'Rechazado',
+};
+
+import React from 'react';
+
 export function StatusBadge({ status }: StatusBadgeProps) {
-  return <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[status]}`}>{status.replace('_', ' ')}</span>;
+  const style = statusStyles[status] ?? { background: '#F0F0F0', color: '#888' };
+  return (
+    <span
+      style={{
+        ...style,
+        borderRadius: '999px',
+        padding: '4px 12px',
+        fontSize: '11px',
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        display: 'inline-block',
+      }}
+    >
+      {statusLabels[status] ?? status}
+    </span>
+  );
 }

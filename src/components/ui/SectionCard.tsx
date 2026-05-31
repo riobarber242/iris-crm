@@ -8,12 +8,19 @@ type SectionCardProps = {
 
 export function SectionCard({ title, description, children }: SectionCardProps) {
   return (
-    <section className="rounded-[24px] border-2 border-[#C6FF00] bg-[#111111] p-6 shadow-iris">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-white">{title}</h2>
-          {description ? <p className="mt-2 text-sm text-[#888888]">{description}</p> : null}
-        </div>
+    <section
+      style={{
+        background: '#FFFFFF',
+        borderRadius: '20px',
+        padding: '24px',
+        boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+      }}
+    >
+      <div style={{ marginBottom: '20px' }}>
+        <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#000', margin: 0 }}>{title}</h2>
+        {description ? (
+          <p style={{ fontSize: '13px', color: '#999', marginTop: '4px' }}>{description}</p>
+        ) : null}
       </div>
       {children}
     </section>

@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark;
-  background-color: #0a0a0f;
-  color: #ffffff;
+  color-scheme: light;
+  background-color: #F5F5F5;
+  color: #1a1a1a;
 }
 
 * {
@@ -17,11 +17,8 @@ html, body {
 }
 
 body {
-  color: #f8f8ff;
-  background: linear-gradient(135deg, #050510 0%, #1a0535 30%, #0a1a05 65%, #C6FF0008 100%);
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-  background-size: cover;
+  color: #1a1a1a;
+  background: #F5F5F5;
 }
 
 a {

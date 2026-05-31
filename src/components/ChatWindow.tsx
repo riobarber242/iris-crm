@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -25,82 +24,49 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetch(`/api/messages?contactId=${contactId}`);
       if (!res.ok) return;
-      const data = await res.json();
-      setMessages(data.reverse());
-    } catch (err) {
-      console.error(err);
-    }
+      setMessages((await res.json()).reverse());
+    } catch {}
   }
 
   useEffect(() => {
     fetchMessages();
-
-    // Setup Supabase Realtime subscription
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
     if (!url || !key) return;
-
     supabaseRef.current = createClient(url, key);
-
     try {
       const channel = supabaseRef.current
         .channel(`messages:contact:${contactId}`)
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` },
-          (payload: any) => {
-            const incoming = payload.new;
-            setMessages((m) => [...m, incoming]);
-            // desktop notification for assistant messages when user not focused
-            if (document.hidden && incoming.role === 'assistant') {
-              if (Notification && Notification.permission === 'granted') {
-                new Notification('Iris — Nuevo mensaje', { body: incoming.content });
-              } else if (Notification && Notification.permission !== 'denied') {
-                Notification.requestPermission().then((perm) => {
-                  if (perm === 'granted') new Notification('Iris — Nuevo mensaje', { body: incoming.content });
-                });
-              }
-            }
-
-            // scroll to bottom
-            setTimeout(() => {
-              if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-            }, 50);
-          }
-        )
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `contact_id=eq.${contactId}`,
+        }, (payload: any) => {
+          setMessages((m) => [...m, payload.new]);
+          setTimeout(() => {
+            if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+          }, 50);
+        })
         .subscribe();
-
       channelRef.current = channel;
-    } catch (err) {
-      console.error('Realtime subscribe error', err);
-    }
-
+    } catch {}
     return () => {
-      try {
-        if (channelRef.current) {
-          supabaseRef.current?.removeChannel(channelRef.current);
-        }
-      } catch (err) {
-        // ignore
-      }
+      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contactId]);
 
   useEffect(() => {
-    // scroll to bottom when messages change
-    if (listRef.current) {
-      listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-    }
+    if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  // mark assistant messages as read when opening the chat
   useEffect(() => {
-    fetch(`/api/messages/mark-read`, {
+    fetch('/api/messages/mark-read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contactId }),
-    }).catch((e) => console.error('mark-read error', e));
+    }).catch(() => {});
   }, [contactId]);
 
   async function handleSend(e?: React.FormEvent) {
@@ -110,7 +76,6 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setMessages((m) => [...m, temp]);
     setLoading(true);
     setInput('');
-
     try {
       const res = await fetch('/api/messages', {
         method: 'POST',
@@ -121,48 +86,100 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         const saved = await res.json();
         setMessages((m) => m.map((msg) => (msg === temp ? saved : msg)));
       } else {
-        console.error('Failed to send message');
         setMessages((m) => m.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg)));
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       setMessages((m) => m.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg)));
     }
-
     setLoading(false);
   }
 
   return (
-    <div>
-      <div ref={listRef} className="space-y-3 max-h-[60vh] overflow-auto p-2">
-        {messages.map((m, i) => (
-          <div
-            key={m.id ?? i}
-            className={`max-w-[80%] p-3 rounded-2xl ${m.role === 'assistant' ? 'ml-0 self-start bg-gradient-to-r from-purple-700 to-purple-600 text-white' : 'ml-auto self-end bg-gradient-to-r from-yellow-600 to-yellow-500 text-black'} break-words`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-iris-text-muted/80 capitalize">{m.role}</p>
-              {m.status ? <p className="text-xs text-iris-text-muted/80">{m.status}</p> : null}
+    <div
+      style={{
+        background: '#FFFFFF',
+        borderRadius: '20px',
+        padding: '20px',
+        boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+      }}
+    >
+      {/* Message list */}
+      <div
+        ref={listRef}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          maxHeight: '60vh',
+          overflowY: 'auto',
+          paddingRight: '4px',
+          marginBottom: '16px',
+        }}
+      >
+        {messages.map((m, i) => {
+          const isBot = m.role === 'assistant';
+          const isHuman = m.role === 'human';
+          return (
+            <div
+              key={m.id ?? i}
+              style={{
+                maxWidth: '78%',
+                alignSelf: isBot ? 'flex-start' : 'flex-end',
+                background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
+                color: isBot ? '#333' : isHuman ? '#000' : '#fff',
+                borderRadius: isBot ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
+                padding: '10px 14px',
+                wordBreak: 'break-word',
+              }}
+            >
+              <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0', textTransform: 'capitalize' }}>
+                {m.role}{m.status && m.status !== 'sent' ? ` · ${m.status}` : ''}
+              </p>
+              <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
+              {m.created_at && (
+                <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5 }}>
+                  {new Date(m.created_at).toLocaleString('es-AR')}
+                </p>
+              )}
             </div>
-            <p className="mt-1">{m.content}</p>
-            <p className="text-xs text-iris-text-muted/80 mt-2">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : ''}</p>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      <form onSubmit={handleSend} className="mt-4 flex gap-3">
+      {/* Input */}
+      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          className="flex-1 rounded-2xl border-2 border-[#C6FF00] bg-[#111111] p-3 text-white placeholder-[#888888]"
           placeholder="Escribí un mensaje..."
+          style={{
+            flex: 1,
+            background: '#F5F5F5',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 16px',
+            fontSize: '14px',
+            color: '#1a1a1a',
+            outline: 'none',
+          }}
         />
         <button
           type="submit"
           disabled={loading}
-          className="rounded-2xl bg-[#C6FF00] px-5 py-3 text-sm font-bold text-black shadow-[0_8px_15px_rgba(198,255,0,0.18)]"
+          style={{
+            background: '#C8FF00',
+            color: '#000',
+            fontWeight: 700,
+            fontSize: '14px',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 20px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.7 : 1,
+            boxShadow: '0 4px 12px rgba(200,255,0,0.3)',
+          }}
         >
-          {loading ? 'Enviando...' : 'Enviar'}
+          {loading ? '...' : 'Enviar'}
         </button>
       </form>
     </div>

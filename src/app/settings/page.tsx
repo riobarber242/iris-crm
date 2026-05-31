@@ -1,7 +1,7 @@
-import { AdminShell } from '@/components/AdminShell';
-import { SectionCard } from '@/components/ui/SectionCard';
 export const dynamic = 'force-dynamic';
 
+import { AdminShell } from '@/components/AdminShell';
+import { SectionCard } from '@/components/ui/SectionCard';
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
@@ -14,13 +14,31 @@ export default async function SettingsPage() {
 
   return (
     <AdminShell>
-      <div className="space-y-8">
-        <SectionCard title="Configuración" description="Ajustá el prompt de Iris y el canal de El Club de la Suerte.">
-          <div className="grid gap-4">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <SectionCard title="Configuración" description="Variables de sistema del CRM.">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {settings.map((item: any) => (
-              <div key={item.key} className="rounded-[28px] border border-white/10 bg-[#14141c] p-5">
-                <p className="text-sm uppercase tracking-[0.2em] text-iris-pink">{item.key}</p>
-                <p className="mt-3 text-base text-white">{item.value}</p>
+              <div
+                key={item.key}
+                style={{
+                  background: '#F5F5F5',
+                  borderRadius: '14px',
+                  padding: '14px 18px',
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.1em',
+                    color: '#999',
+                    margin: '0 0 6px 0',
+                  }}
+                >
+                  {item.key}
+                </p>
+                <p style={{ fontSize: '14px', color: '#000', margin: 0, wordBreak: 'break-all' }}>{item.value}</p>
               </div>
             ))}
           </div>

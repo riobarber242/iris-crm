@@ -7,6 +7,15 @@ import type { ReactNode } from 'react';
 
 const navItems = ['dashboard', 'conversations', 'comprobantes', 'leads', 'campanas', 'settings'];
 
+const navLabels: Record<string, string> = {
+  dashboard: 'Dashboard',
+  conversations: 'Conversaciones',
+  comprobantes: 'Comprobantes',
+  leads: 'Leads',
+  campanas: 'Campañas',
+  settings: 'Configuración',
+};
+
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [botEnabled, setBotEnabled] = useState(true);
@@ -33,8 +42,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen text-white">
-      {/* Header con toggle */}
+    <div style={{ minHeight: '100vh', background: '#F5F5F5', color: '#1a1a1a' }}>
+      {/* Header */}
       <header
         style={{
           position: 'sticky',
@@ -42,26 +51,32 @@ export function AdminShell({ children }: { children: ReactNode }) {
           zIndex: 50,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
           padding: '12px 24px',
-          borderBottom: '1px solid rgba(198,255,0,0.12)',
-          backdropFilter: 'blur(12px)',
-          backgroundColor: 'rgba(5,5,16,0.75)',
+          background: '#FFFFFF',
+          borderBottom: '1px solid #E8E8E8',
+          boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
         }}
       >
+        <span style={{ fontSize: '13px', fontWeight: 700, letterSpacing: '0.12em', color: '#000', textTransform: 'uppercase' }}>
+          Iris CRM
+        </span>
+
+        {/* Toggle Bot/Humano — pill oscuro estilo Lemon */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span
             style={{
-              fontSize: '12px',
-              fontWeight: 600,
-              letterSpacing: '0.08em',
-              color: !mounted ? 'transparent' : botEnabled ? '#C6FF00' : '#888',
-              transition: 'color 0.2s',
-              minWidth: '56px',
+              fontSize: '11px',
+              fontWeight: 700,
+              letterSpacing: '0.1em',
+              color: !mounted ? 'transparent' : botEnabled ? '#C8FF00' : '#999',
+              textTransform: 'uppercase',
+              minWidth: '52px',
               textAlign: 'right',
+              transition: 'color 0.2s',
             }}
           >
-            {botEnabled ? 'BOT' : 'HUMANO'}
+            {botEnabled ? 'Bot' : 'Humano'}
           </span>
           <button
             onClick={toggleBot}
@@ -75,62 +90,98 @@ export function AdminShell({ children }: { children: ReactNode }) {
               borderRadius: '14px',
               border: 'none',
               cursor: 'pointer',
-              padding: '2px',
-              backgroundColor: botEnabled ? '#C6FF00' : '#333',
-              transition: 'background-color 0.2s',
+              padding: '3px',
+              background: '#1a1a1a',
+              transition: 'background 0.2s',
               outline: 'none',
             }}
           >
             <span
               style={{
                 display: 'block',
-                width: '24px',
-                height: '24px',
+                width: '22px',
+                height: '22px',
                 borderRadius: '50%',
-                backgroundColor: botEnabled ? '#050510' : '#888',
-                transform: botEnabled ? 'translateX(24px)' : 'translateX(0)',
-                transition: 'transform 0.2s, background-color 0.2s',
+                background: botEnabled ? '#C8FF00' : '#555',
+                transform: botEnabled ? 'translateX(23px)' : 'translateX(0)',
+                transition: 'transform 0.2s, background 0.2s',
               }}
             />
           </button>
         </div>
       </header>
 
-      {/* Layout principal */}
-      <div className="grid min-h-screen grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[280px_1fr]">
-        <aside className="rounded-[28px] border-2 border-[#C6FF00] bg-[#111111] p-6 shadow-iris">
-          <div className="mb-10">
-            <p className="text-sm uppercase tracking-[0.28em] text-[#C6FF00]">Iris CRM</p>
-            <h1 className="mt-4 text-3xl font-bold text-white">Panel</h1>
-            <p className="mt-3 text-sm text-[#888888]">Todo en un mismo lugar para gestionar la plataforma.</p>
+      {/* Main layout */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr',
+          gap: '24px',
+          padding: '24px',
+          minHeight: 'calc(100vh - 53px)',
+        }}
+        className="lg:grid-cols-[260px_1fr]"
+      >
+        {/* Sidebar */}
+        <aside
+          style={{
+            background: '#FFFFFF',
+            borderRadius: '20px',
+            padding: '24px',
+            boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+            alignSelf: 'start',
+            position: 'sticky',
+            top: '77px',
+          }}
+        >
+          <div style={{ marginBottom: '32px' }}>
+            <div
+              style={{
+                display: 'inline-block',
+                background: '#C8FF00',
+                borderRadius: '10px',
+                padding: '4px 12px',
+                fontSize: '11px',
+                fontWeight: 800,
+                letterSpacing: '0.12em',
+                color: '#000',
+                textTransform: 'uppercase',
+                marginBottom: '16px',
+              }}
+            >
+              Iris CRM
+            </div>
+            <h1 style={{ fontSize: '22px', fontWeight: 800, color: '#000', margin: 0 }}>Panel</h1>
+            <p style={{ fontSize: '13px', color: '#999', marginTop: '6px' }}>Gestioná tu plataforma</p>
           </div>
-          <nav className="flex flex-col gap-3">
+
+          <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {navItems.map((item) => {
               const path = item === 'dashboard' ? '/dashboard' : `/${item}`;
               const active = pathname === path;
-
               return (
                 <Link
                   key={item}
                   href={path}
-                  className={`rounded-[18px] border border-transparent px-4 py-3 text-sm font-semibold transition ${
-                    active
-                      ? 'bg-[#C6FF00]/10 text-[#C6FF00] shadow-[0_0_0_2px_rgba(198,255,0,0.15)]'
-                      : 'text-white hover:bg-white/5'
-                  }`}
+                  style={{
+                    display: 'block',
+                    borderRadius: '12px',
+                    padding: '10px 14px',
+                    fontSize: '14px',
+                    fontWeight: active ? 700 : 500,
+                    color: active ? '#000' : '#666',
+                    background: active ? '#C8FF00' : 'transparent',
+                    transition: 'background 0.15s, color 0.15s',
+                    textDecoration: 'none',
+                  }}
                 >
-                  {item === 'campanas'
-                    ? 'Campañas'
-                    : item === 'settings'
-                    ? 'Configuración'
-                    : item === 'dashboard'
-                    ? 'Dashboard'
-                    : item.charAt(0).toUpperCase() + item.slice(1)}
+                  {navLabels[item]}
                 </Link>
               );
             })}
           </nav>
         </aside>
+
         <main>{children}</main>
       </div>
     </div>

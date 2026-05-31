@@ -30,11 +30,14 @@ function getExtensionFromUrl(url: string, contentType?: string) {
 }
 
 async function downloadMediaBuffer(url: string) {
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const response = await axios.get<ArrayBuffer>(url, {
     responseType: 'arraybuffer',
-    headers: {
-      'User-Agent': 'Supabase CRM',
-    },
+    headers,
   });
   return {
     buffer: Buffer.from(response.data),
