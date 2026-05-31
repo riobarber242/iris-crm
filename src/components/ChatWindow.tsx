@@ -49,7 +49,19 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` },
           (payload: any) => {
-            setMessages((m) => [...m, payload.new]);
+            const incoming = payload.new;
+            setMessages((m) => [...m, incoming]);
+            // desktop notification for assistant messages when user not focused
+            if (document.hidden && incoming.role === 'assistant') {
+              if (Notification && Notification.permission === 'granted') {
+                new Notification('Iris — Nuevo mensaje', { body: incoming.content });
+              } else if (Notification && Notification.permission !== 'denied') {
+                Notification.requestPermission().then((perm) => {
+                  if (perm === 'granted') new Notification('Iris — Nuevo mensaje', { body: incoming.content });
+                });
+              }
+            }
+
             // scroll to bottom
             setTimeout(() => {
               if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -81,6 +93,15 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
     }
   }, [messages]);
+
+  // mark assistant messages as read when opening the chat
+  useEffect(() => {
+    fetch(`/api/messages/mark-read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId }),
+    }).catch((e) => console.error('mark-read error', e));
+  }, [contactId]);
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
@@ -117,14 +138,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         {messages.map((m, i) => (
           <div
             key={m.id ?? i}
-            className={`max-w-[80%] p-3 rounded-2xl ${m.role === 'assistant' ? 'ml-0 bg-iris-card self-start' : 'ml-auto bg-[#0b1220] self-end'} break-words`}
+            className={`max-w-[80%] p-3 rounded-2xl ${m.role === 'assistant' ? 'ml-0 self-start bg-gradient-to-r from-purple-700 to-purple-600 text-white' : 'ml-auto self-end bg-gradient-to-r from-yellow-600 to-yellow-500 text-black'} break-words`}
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-iris-text-muted capitalize">{m.role}</p>
-              {m.status ? <p className="text-xs text-iris-text-muted">{m.status}</p> : null}
+              <p className="text-xs text-iris-text-muted/80 capitalize">{m.role}</p>
+              {m.status ? <p className="text-xs text-iris-text-muted/80">{m.status}</p> : null}
             </div>
-            <p className="text-white mt-1">{m.content}</p>
-            <p className="text-xs text-iris-text-muted mt-2">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : ''}</p>
+            <p className="mt-1">{m.content}</p>
+            <p className="text-xs text-iris-text-muted/80 mt-2">{m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : ''}</p>
           </div>
         ))}
       </div>

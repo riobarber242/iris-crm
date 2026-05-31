@@ -11,8 +11,21 @@ async function fetchConversations() {
     .from('contacts')
     .select('id, name, phone, status, blocked, created_at, messages(content, created_at, role)')
     .order('created_at', { ascending: false });
+  const contacts = data ?? [];
 
-  return data ?? [];
+  // fetch unread counts
+  const { data: unreadMessages } = await supabaseAdmin
+    .from('messages')
+    .select('contact_id')
+    .eq('role', 'assistant')
+    .neq('status', 'read');
+
+  const unreadMap: Record<string, number> = {};
+  (unreadMessages ?? []).forEach((m: any) => {
+    unreadMap[m.contact_id] = (unreadMap[m.contact_id] ?? 0) + 1;
+  });
+
+  return contacts.map((c: any) => ({ ...c, unread_count: unreadMap[c.id] ?? 0 }));
 }
 
 export default async function ConversationsPage() {
@@ -35,6 +48,11 @@ export default async function ConversationsPage() {
                       </div>
                       <div className="flex items-center gap-3">
                         <StatusBadge status={contact.status} />
+                        {contact.unread_count ? (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-yellow-600 px-2 py-0.5 text-xs font-semibold text-black">
+                            {contact.unread_count}
+                          </span>
+                        ) : null}
                         {contact.blocked ? <span className="rounded-full bg-[#431b2e] px-3 py-1 text-xs text-iris-pink">Bloqueado</span> : null}
                       </div>
                     </div>
