@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { AdminShell } from '@/components/AdminShell';
 import { supabaseAdmin } from '@/lib/db';
 import ChatWindow from '@/components/ChatWindow';
+import ContactHeader from '@/components/ContactHeader';
 
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
@@ -32,10 +33,7 @@ export default async function ConversationPage({ params }: any) {
     <AdminShell>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-semibold text-white">{contact.name || contact.phone}</h2>
-            <p className="text-sm text-iris-text-muted">{contact.phone}</p>
-          </div>
+          <ContactHeader contactId={contact.id} initialName={contact.name} phone={contact.phone} />
         </div>
 
         <div>
