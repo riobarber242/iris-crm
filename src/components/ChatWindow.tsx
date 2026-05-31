@@ -150,14 +150,18 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         ))}
       </div>
 
-      <form onSubmit={handleSend} className="mt-4 flex gap-2">
+      <form onSubmit={handleSend} className="mt-4 flex gap-3">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          className="flex-1 rounded-xl bg-[#0b0b11] p-3 text-white"
+          className="flex-1 rounded-2xl border-2 border-[#C6FF00] bg-[#111111] p-3 text-white placeholder-[#888888]"
           placeholder="Escribí un mensaje..."
         />
-        <button type="submit" disabled={loading} className="rounded-xl bg-iris-pink px-4 py-2 text-white">
+        <button
+          type="submit"
+          disabled={loading}
+          className="rounded-2xl bg-[#C6FF00] px-5 py-3 text-sm font-bold text-black shadow-[0_8px_15px_rgba(198,255,0,0.18)]"
+        >
           {loading ? 'Enviando...' : 'Enviar'}
         </button>
       </form>

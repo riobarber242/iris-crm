@@ -57,20 +57,20 @@ export default function ConversationsClient() {
         const lastMessage = contact.messages?.[0];
         return (
           <Link key={contact.id} href={`/conversations/${contact.id}`} className="block">
-            <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-5 hover:shadow-lg transition">
+            <div className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-5 hover:shadow-[0_0_0_16px_rgba(198,255,0,0.08)] transition">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-lg font-semibold text-white">{contact.name || contact.phone}</p>
-                  <p className="text-sm text-iris-text-muted">{contact.phone}</p>
+                  <p className="text-lg font-bold text-white">{contact.name || contact.phone}</p>
+                  <p className="text-sm text-[#888888]">{contact.phone}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-iris-text-muted">{contact.status}</span>
+                  <span className="rounded-full bg-[#111111] px-3 py-1 text-sm font-semibold text-[#C6FF00]">{contact.status}</span>
                 </div>
               </div>
-              <div className="mt-4 flex flex-col gap-2 rounded-3xl bg-iris-card p-4">
-                <p className="text-sm text-iris-text-muted">Último mensaje:</p>
-                <p className="text-base text-white">{lastMessage ? lastMessage.content : 'Sin mensajes aún'}</p>
-                <p className="text-xs text-iris-text-muted">{lastMessage ? new Date(lastMessage.created_at).toLocaleString('es-AR') : ''}</p>
+              <div className="mt-4 flex flex-col gap-2 rounded-[20px] bg-[#111111] p-4">
+                <p className="text-sm text-[#888888]">Último mensaje:</p>
+                <p className="text-base font-semibold text-white">{lastMessage ? lastMessage.content : 'Sin mensajes aún'}</p>
+                <p className="text-xs text-[#888888]">{lastMessage ? new Date(lastMessage.created_at).toLocaleString('es-AR') : ''}</p>
               </div>
             </div>
           </Link>

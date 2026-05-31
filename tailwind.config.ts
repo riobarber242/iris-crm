@@ -6,18 +6,16 @@ const config: Config = {
     extend: {
       colors: {
         iris: {
-          background: '#0a0a0f',
-          card: '#111118',
-          purple: '#9b30ff',
-          gold: '#ffd700',
-          pink: '#ff2d78',
-          green: '#00ff00',
-          text: '#ffffff',
-          'text-muted': '#c4c4d3',
+          background: '#0A0A0A',
+          card: '#111111',
+          cardStrong: '#141414',
+          green: '#C6FF00',
+          text: '#FFFFFF',
+          'text-muted': '#888888',
         },
       },
       boxShadow: {
-        iris: '0 20px 70px rgba(155, 48, 255, 0.16)',
+        iris: '0 16px 40px rgba(198, 255, 0, 0.12)',
       },
       fontFamily: {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],

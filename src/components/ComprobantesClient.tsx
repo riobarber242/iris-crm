@@ -87,29 +87,29 @@ export default function ComprobantesClient() {
   return (
     <div className="space-y-6">
       {loading ? (
-        <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-8 text-white">Cargando comprobantes...</div>
+        <div className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-8 text-white">Cargando comprobantes...</div>
       ) : error ? (
-        <div className="rounded-[28px] border border-red-500 bg-[#2a1319] p-8 text-red-200">{error}</div>
+        <div className="rounded-[24px] border-2 border-red-500 bg-[#2a1319] p-8 text-red-200">{error}</div>
       ) : comprobantes.length === 0 ? (
-        <div className="rounded-[28px] border border-white/10 bg-[#14141c] p-8 text-white">No hay comprobantes cargados.</div>
+        <div className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-8 text-white">No hay comprobantes cargados.</div>
       ) : (
         <div className="space-y-4">
           {comprobantes.map((item) => (
-            <div key={item.id} className="rounded-[28px] border border-white/10 bg-[#14141c] p-5">
+            <div key={item.id} className="rounded-[24px] border-2 border-[#C6FF00] bg-[#141414] p-5 shadow-[0_0_0_16px_rgba(198,255,0,0.05)]">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div className="flex-1 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-lg font-semibold text-white">{item.contacts?.name || item.contacts?.phone}</p>
-                      <p className="text-sm text-iris-text-muted">{item.contacts?.phone}</p>
+                      <p className="text-lg font-bold text-white">{item.contacts?.name || item.contacts?.phone}</p>
+                      <p className="text-sm text-[#888888]">{item.contacts?.phone}</p>
                     </div>
                     <StatusBadge status={item.estado} />
                   </div>
-                  <div className="rounded-3xl bg-iris-card p-4">
+                  <div className="rounded-[20px] bg-[#111111] p-4">
                     {item.image_url ? (
-                      <img src={item.image_url} alt="Comprobante" className="h-[260px] w-full rounded-3xl object-cover" />
+                      <img src={item.image_url} alt="Comprobante" className="h-[260px] w-full rounded-[20px] object-cover" />
                     ) : (
-                      <div className="flex h-[260px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-[#0d0d13] text-sm text-iris-text-muted">
+                      <div className="flex h-[260px] items-center justify-center rounded-[20px] border border-dashed border-white/10 bg-[#0d0d13] text-sm text-[#888888]">
                         Sin imagen disponible
                       </div>
                     )}
@@ -117,24 +117,24 @@ export default function ComprobantesClient() {
                 </div>
 
                 <div className="flex w-full max-w-xs flex-col gap-4">
-                  <div className="rounded-3xl bg-iris-card p-4">
-                    <p className="text-sm text-iris-text-muted">Fecha y hora</p>
-                    <p className="mt-1 text-base text-white">{new Date(item.created_at).toLocaleString('es-AR')}</p>
+                  <div className="rounded-[20px] bg-[#111111] p-4">
+                    <p className="text-sm text-[#888888]">Fecha y hora</p>
+                    <p className="mt-1 text-base font-semibold text-white">{new Date(item.created_at).toLocaleString('es-AR')}</p>
                   </div>
-                  <div className="rounded-3xl bg-iris-card p-4">
-                    <p className="text-sm text-iris-text-muted">Monto detectado</p>
-                    <p className="mt-1 text-base text-white">${item.monto ?? '0'}</p>
+                  <div className="rounded-[20px] bg-[#111111] p-4">
+                    <p className="text-sm text-[#888888]">Monto detectado</p>
+                    <p className="mt-1 text-base font-semibold text-white">${item.monto ?? '0'}</p>
                   </div>
                   <div className="flex flex-wrap gap-3">
                     <button
                       onClick={() => updateComprobante(item.id, 'verificar')}
-                      className="rounded-2xl bg-iris-green px-4 py-2 text-sm font-semibold text-black"
+                      className="rounded-2xl bg-[#C6FF00] px-4 py-2 text-sm font-bold text-black shadow-[0_8px_15px_rgba(198,255,0,0.18)]"
                     >
                       Verificado
                     </button>
                     <button
                       onClick={() => updateComprobante(item.id, 'rechazar')}
-                      className="rounded-2xl bg-iris-pink px-4 py-2 text-sm font-semibold text-white"
+                      className="rounded-2xl border-2 border-[#C6FF00] bg-transparent px-4 py-2 text-sm font-bold text-[#C6FF00]"
                     >
                       Rechazado
                     </button>

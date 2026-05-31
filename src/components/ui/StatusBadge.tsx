@@ -3,13 +3,13 @@ type StatusBadgeProps = {
 };
 
 const statusStyles: Record<string, string> = {
-  nuevo: 'bg-[#2d2d4c] text-iris-text-muted',
-  en_proceso: 'bg-[#3d294f] text-iris-purple',
-  activo: 'bg-[#083d17] text-iris-green',
-  bloqueado: 'bg-[#3a1515] text-[#ff6e6e]',
-  pendiente: 'bg-[#3f2929] text-iris-gold',
-  verificado: 'bg-[#14321f] text-iris-green',
-  rechazado: 'bg-[#401a2f] text-iris-pink',
+  nuevo: 'bg-[#151515] text-[#888888] border border-white/10',
+  en_proceso: 'bg-[#151515] text-[#C6FF00] border border-[#C6FF00]/20',
+  activo: 'bg-[#151515] text-[#C6FF00] border border-[#C6FF00]/20',
+  bloqueado: 'bg-[#3a1515] text-[#ff6e6e] border border-[#ff6e6e]/20',
+  pendiente: 'bg-[#C6FF00] text-black border border-[#C6FF00]',
+  verificado: 'bg-[#C6FF00]/20 text-[#C6FF00] border border-[#C6FF00]/30',
+  rechazado: 'bg-transparent text-[#C6FF00] border border-[#C6FF00] ',
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {
