@@ -21,8 +21,9 @@ export default function ConversationsClient() {
     return () => clearInterval(timer);
   }, []);
 
-  // Persist last_read_at to DB and clear badge optimistically in local state
+  // Persist last_read_at to DB, clear badge optimistically, refresh sidebar badge
   function markRead(contactId: string) {
+    // Optimistic update: clear badge in list immediately
     setConversations(prev =>
       prev.map(c =>
         c.id === contactId
@@ -30,11 +31,14 @@ export default function ConversationsClient() {
           : c,
       ),
     );
+    // Persist to DB
     fetch('/api/conversations', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contactId, markRead: true }),
     }).catch(() => {});
+    // Notify AdminShell to refresh the sidebar badge immediately
+    window.dispatchEvent(new Event('refresh-unread'));
   }
 
   return (

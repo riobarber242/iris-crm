@@ -51,6 +51,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
     fetchUnread();
     const timer = setInterval(fetchUnread, 15_000);
 
+    // Immediate refresh when ConversationsClient marks a conversation as read
+    function handleRefreshEvent() { fetchUnread(); }
+    window.addEventListener('refresh-unread', handleRefreshEvent);
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (url && key) {
@@ -64,6 +68,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
     return () => {
       clearInterval(timer);
+      window.removeEventListener('refresh-unread', handleRefreshEvent);
       try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch {}
     };
   }, []);

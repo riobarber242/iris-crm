@@ -1,38 +1,53 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 
-// Returns the count of unique contacts that sent a message today
-// and haven't received a reply yet (last message from that contact is role='user').
-// Used by the sidebar badge in AdminShell.
+// Counts contacts that have user messages AFTER their last_read_at.
+// Mirrors exactly what ConversationsClient shows as green badges.
+// Contacts where last_read_at = null are treated as "no badge" (same as client).
 export async function GET() {
   try {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const utcNow  = new Date();
+    const argNow  = new Date(utcNow.getTime() - ART_OFFSET_MS);
+    const todayStart = new Date(Date.UTC(
+      argNow.getUTCFullYear(), argNow.getUTCMonth(), argNow.getUTCDate(), 3, 0, 0, 0,
+    ));
 
-    // Get all messages from today, ordered desc so first occurrence per contact = latest
-    const { data, error } = await supabaseAdmin
+    // 1. All contacts that have a last_read_at (excludes never-opened ones)
+    const { data: contacts, error: cErr } = await supabaseAdmin
+      .from('contacts')
+      .select('id, last_read_at')
+      .not('last_read_at', 'is', null);
+
+    if (cErr) return new NextResponse(cErr.message, { status: 500 });
+
+    // Build a map: contactId → last_read_at date
+    const lastReadMap = new Map<string, Date>(
+      (contacts ?? []).map((c: any) => [c.id, new Date(c.last_read_at)]),
+    );
+
+    if (lastReadMap.size === 0) return NextResponse.json({ total: 0 });
+
+    // 2. User messages from today for those contacts
+    const { data: msgs, error: mErr } = await supabaseAdmin
       .from('messages')
-      .select('contact_id, role')
+      .select('contact_id, created_at')
+      .eq('role', 'user')
       .gte('created_at', todayStart.toISOString())
-      .order('created_at', { ascending: false });
+      .in('contact_id', [...lastReadMap.keys()]);
 
-    if (error) return new NextResponse(error.message, { status: 500 });
+    if (mErr) return new NextResponse(mErr.message, { status: 500 });
 
-    // Find the latest message role per contact
-    const latestRole = new Map<string, string>();
-    for (const msg of (data ?? [])) {
-      if (!latestRole.has(msg.contact_id)) {
-        latestRole.set(msg.contact_id, msg.role);
+    // 3. Count contacts with at least one user message AFTER their last_read_at
+    const unreadContacts = new Set<string>();
+    for (const msg of (msgs ?? [])) {
+      const lr = lastReadMap.get(msg.contact_id);
+      if (lr && new Date(msg.created_at) > lr) {
+        unreadContacts.add(msg.contact_id);
       }
     }
 
-    // Count contacts where the last message is from the user (needs response)
-    let total = 0;
-    for (const role of latestRole.values()) {
-      if (role === 'user') total++;
-    }
-
-    return NextResponse.json({ total });
+    return NextResponse.json({ total: unreadContacts.size });
   } catch (err: any) {
     return new NextResponse(String(err?.message ?? err), { status: 500 });
   }
