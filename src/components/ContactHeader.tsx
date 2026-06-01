@@ -6,14 +6,38 @@ export default function ContactHeader({
   contactId,
   phone,
   initialCasinoUsername,
+  initialBlocked,
 }: {
-  contactId:            string;
-  phone:                string;
+  contactId:             string;
+  phone:                 string;
   initialCasinoUsername?: string | null;
+  initialBlocked?:       boolean;
 }) {
   const [casinoUser, setCasinoUser] = useState(initialCasinoUsername ?? '');
   const [editing,    setEditing]    = useState(false);
   const [loading,    setLoading]    = useState(false);
+  const [blocked,    setBlocked]    = useState(initialBlocked ?? false);
+
+  async function handleBlock() {
+    if (!confirm('¿Seguro que querés bloquear este contacto? El bot dejará de responderle.')) return;
+    await fetch('/api/conversations', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ contactId, blocked: true }),
+    });
+    setBlocked(true);
+    window.location.reload();
+  }
+
+  async function handleUnblock() {
+    await fetch('/api/conversations', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ contactId, blocked: false }),
+    });
+    setBlocked(false);
+    window.location.reload();
+  }
 
   async function save() {
     setLoading(true);
@@ -84,11 +108,26 @@ export default function ContactHeader({
               <p style={{ fontSize: '13px', color: '#999', margin: casinoUser ? '2px 0 0 0' : 0 }}>{phone}</p>
             </div>
             <button onClick={() => setEditing(true)} style={{
-              background: '#F0F0F0', color: '#666', fontWeight: 600, border: 'none',
+              background: '#F0F0F0', color: '#666', fontWeight: 700, border: 'none',
               borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
             }}>
               {casinoUser ? 'Editar usuario' : '+ Asignar usuario'}
             </button>
+            {blocked ? (
+              <button onClick={handleUnblock} style={{
+                background: '#22C55E', color: '#fff', fontWeight: 700, border: 'none',
+                borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
+              }}>
+                ✅ Desbloqueado
+              </button>
+            ) : (
+              <button onClick={handleBlock} style={{
+                background: '#FF4444', color: '#fff', fontWeight: 700, border: 'none',
+                borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
+              }}>
+                🚫 Bloquear
+              </button>
+            )}
           </div>
         )}
       </div>
