@@ -67,6 +67,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             color: '#000',
             lineHeight: 1,
             letterSpacing: '-1px',
+            textShadow: '0 2px 0 #7aa000, 0 4px 0 #5a8000, 0 6px 8px rgba(0,0,0,0.3)',
           }}>
             IRIS
           </span>
@@ -76,6 +77,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             color: '#1a3300',
             letterSpacing: '10px',
             textTransform: 'uppercase',
+            textShadow: '0 1px 0 #7aa000, 0 2px 4px rgba(0,0,0,0.2)',
           }}>
             CRM
           </span>
@@ -84,7 +86,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         {/* Toggle Bot/Humano */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <span style={{
-            fontSize: '18px',
+            fontSize: '20px',
             fontWeight: 900,
             color: '#000',
             letterSpacing: '2px',
@@ -92,6 +94,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             opacity: mounted ? 1 : 0,
             transition: 'opacity 0.2s',
             lineHeight: 1,
+            textShadow: '0 2px 0 #7aa000, 0 4px 6px rgba(0,0,0,0.25)',
           }}>
             {botEnabled ? 'BOT' : 'HUMANO'}
           </span>
