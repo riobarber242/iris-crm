@@ -16,7 +16,7 @@ const navLabels: Record<string, string> = {
   settings:      'Configuración',
 };
 
-const BANNER_H = 70;
+const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -55,14 +55,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 28px',
+        padding: '0 32px',
         flexShrink: 0,
       }}>
 
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
           <span style={{
-            fontSize: '36px',
+            fontSize: '42px',
             fontWeight: 900,
             color: '#000',
             lineHeight: 1,
@@ -71,10 +71,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
             IRIS
           </span>
           <span style={{
-            fontSize: '16px',
+            fontSize: '20px',
             fontWeight: 300,
             color: '#1a3300',
-            letterSpacing: '8px',
+            letterSpacing: '10px',
             textTransform: 'uppercase',
           }}>
             CRM
@@ -82,17 +82,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Toggle Bot/Humano */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <span style={{
-            fontSize: '11px',
-            fontWeight: 700,
+            fontSize: '14px',
+            fontWeight: 900,
             color: '#000',
-            letterSpacing: '0.12em',
+            letterSpacing: '2px',
             textTransform: 'uppercase',
             opacity: mounted ? 1 : 0,
             transition: 'opacity 0.2s',
           }}>
-            {botEnabled ? 'Bot' : 'Humano'}
+            {botEnabled ? 'BOT' : 'HUMANO'}
           </span>
           <button
             onClick={toggleBot}
@@ -102,9 +102,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
               position: 'relative',
               display: 'inline-flex',
               alignItems: 'center',
-              width: '80px',
-              height: '40px',
-              borderRadius: '20px',
+              width: '100px',
+              height: '48px',
+              borderRadius: '24px',
               border: 'none',
               cursor: 'pointer',
               padding: '4px',
@@ -114,11 +114,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
           >
             <span style={{
               display: 'block',
-              width: '32px',
-              height: '32px',
+              width: '40px',
+              height: '40px',
               borderRadius: '50%',
               background: botEnabled ? '#C8FF00' : '#FFFFFF',
-              transform: botEnabled ? 'translateX(40px)' : 'translateX(0)',
+              transform: botEnabled ? 'translateX(52px)' : 'translateX(0)',
               transition: 'transform 0.2s, background 0.2s',
               flexShrink: 0,
             }} />
