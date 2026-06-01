@@ -15,7 +15,8 @@ export async function POST(request: Request) {
       .update({ status: 'read' })
       .eq('contact_id', contactId)
       .eq('role', 'assistant')
-      .neq('status', 'read');
+      .neq('status', 'read')
+      .select('id');
 
     if (error) return new NextResponse(error.message, { status: 500 });
 
