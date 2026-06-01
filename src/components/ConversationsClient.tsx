@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { useRealtime } from '@/hooks/useRealtime';
 
 export default function ConversationsClient() {
   const [conversations, setConversations] = useState<any[]>([]);
-  const supabaseRef = useRef<SupabaseClient | null>(null);
-  const channelRef = useRef<any>(null);
 
   async function fetchConversations() {
     try {
@@ -17,23 +15,16 @@ export default function ConversationsClient() {
     } catch {}
   }
 
-  useEffect(() => {
-    fetchConversations();
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (!url || !key) return;
-    supabaseRef.current = createClient(url, key);
-    const channel = supabaseRef.current
-      .channel('realtime-conversations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => fetchConversations())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => fetchConversations())
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, () => fetchConversations())
-      .subscribe();
-    channelRef.current = channel;
-    return () => {
-      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
-    };
-  }, []);
+  useRealtime(
+    'realtime-conversations',
+    [
+      { table: 'contacts' },
+      { table: 'messages', event: 'INSERT' },
+      { table: 'messages', event: 'UPDATE' },
+    ],
+    fetchConversations,
+    15_000, // polling fallback every 15 s
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import type { ReactNode } from 'react';
 
 const navItems = ['dashboard', 'conversations', 'comprobantes', 'leads', 'campanas', 'settings'];
@@ -21,13 +22,46 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [botEnabled, setBotEnabled] = useState(true);
-  const [mounted, setMounted] = useState(false);
+  const [mounted, setMounted]       = useState(false);
+  const [unread, setUnread]         = useState(0);
+  const unreadChannelRef            = useRef<any>(null);
+  const unreadSupabaseRef           = useRef<any>(null);
 
   useEffect(() => {
     fetch('/api/settings/bot-enabled')
       .then((r) => r.json())
       .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
       .catch(() => setMounted(true));
+  }, []);
+
+  useEffect(() => {
+    async function fetchUnread() {
+      try {
+        const res = await fetch('/api/unread_counts');
+        if (!res.ok) return;
+        const data = await res.json();
+        setUnread(data.total ?? 0);
+      } catch {}
+    }
+
+    fetchUnread();
+    const timer = setInterval(fetchUnread, 15_000);
+
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (url && key) {
+      const sb = createClient(url, key);
+      unreadSupabaseRef.current = sb;
+      const ch = sb.channel('unread-badge')
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, fetchUnread)
+        .subscribe();
+      unreadChannelRef.current = ch;
+    }
+
+    return () => {
+      clearInterval(timer);
+      try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch {}
+    };
   }, []);
 
   async function toggleBot() {
@@ -178,7 +212,27 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     textDecoration: 'none',
                   }}
                 >
-                  {navLabels[item]}
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    {navLabels[item]}
+                    {item === 'conversations' && unread > 0 && (
+                      <span style={{
+                        background: '#ff3333',
+                        color: '#fff',
+                        borderRadius: '999px',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        minWidth: '18px',
+                        height: '18px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '0 5px',
+                        lineHeight: 1,
+                      }}>
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
+                  </span>
                 </Link>
               );
             })}
