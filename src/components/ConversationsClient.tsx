@@ -44,11 +44,14 @@ export default function ConversationsClient() {
         const lastMessage     = messages[0];
         const lastReadAt      = contact.last_read_at ? new Date(contact.last_read_at) : null;
 
-        // Count user messages received AFTER last_read_at (or all if never read)
+        // Count user messages received AFTER last_read_at.
+        // If last_read_at is null (never opened), treat as fully read — no badge.
         let unreadCount = 0;
-        for (const msg of messages) {
-          if (msg.role === 'user' && (!lastReadAt || new Date(msg.created_at) > lastReadAt)) {
-            unreadCount++;
+        if (lastReadAt) {
+          for (const msg of messages) {
+            if (msg.role === 'user' && new Date(msg.created_at) > lastReadAt) {
+              unreadCount++;
+            }
           }
         }
         const hasUnread = unreadCount > 0;
@@ -75,7 +78,7 @@ export default function ConversationsClient() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
                   <p style={{ fontSize: '15px', fontWeight: hasUnread ? 800 : 700, color: '#000', margin: 0 }}>
-                    {contact.name || contact.phone}
+                    {contact.casino_username || contact.phone}
                   </p>
                   <p style={{ fontSize: '12px', color: '#999', margin: '2px 0 0 0' }}>{contact.phone}</p>
                 </div>
