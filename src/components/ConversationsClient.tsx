@@ -180,6 +180,8 @@ export default function ConversationsClient() {
                   }}>
                     {contact.status === 'cliente_activo' ? 'CLIENTE ACTIVO'
                    : contact.status === 'inactivo'        ? 'INACTIVO'
+                   : contact.status === 'nuevo'           ? 'NUEVO'
+                   : contact.status === 'bloqueado'       ? 'BLOQUEADO'
                    : (contact.status ?? '').toUpperCase()}
                   </span>
                 </div>
