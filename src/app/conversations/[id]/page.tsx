@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 
+import Link from 'next/link';
 import { AdminShell } from '@/components/AdminShell';
 import { supabaseAdmin } from '@/lib/db';
 import ChatWindow from '@/components/ChatWindow';
@@ -17,28 +18,54 @@ async function fetchContact(id: string) {
 }
 
 export default async function ConversationPage({ params }: any) {
-  const contact = await fetchContact(params.id as string);
+  const id = params.id as string;
+
+  // Mark as read server-side so badge clears on next poll
+  await supabaseAdmin
+    .from('contacts')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('id', id);
+
+  const contact = await fetchContact(id);
 
   if (!contact) {
     return (
       <AdminShell>
-        <div className="py-10 text-center text-white">Contacto no encontrado.</div>
+        <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>Contacto no encontrado.</div>
       </AdminShell>
     );
   }
 
-  const messages = contact.messages ?? [];
-
   return (
     <AdminShell>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <ContactHeader contactId={contact.id} initialName={contact.name} phone={contact.phone} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+        {/* Back button */}
+        <div>
+          <Link
+            href="/conversations"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#555',
+              textDecoration: 'none',
+              background: '#fff',
+              border: '1px solid #e0e0e0',
+              borderRadius: '10px',
+              padding: '7px 14px',
+            }}
+          >
+            ← Conversaciones
+          </Link>
         </div>
 
-        <div>
-          <ChatWindow contactId={contact.id} />
-        </div>
+        <ContactHeader contactId={contact.id} initialName={contact.name} phone={contact.phone} />
+
+        <ChatWindow contactId={contact.id} />
+
       </div>
     </AdminShell>
   );

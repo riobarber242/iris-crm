@@ -1,89 +1,54 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
 
 export default function ConversationsClient() {
-  const [conversations,  setConversations]  = useState<any[]>([]);
-  const [viewedContacts, setViewedContacts] = useState<Set<string>>(new Set());
+  const [conversations, setConversations] = useState<any[]>([]);
 
-  // ── Refs so the Realtime callbacks never go stale ──────────────────────────
-  const fetchRef = useRef<() => void>(() => {});
-  fetchRef.current = async () => {
+  async function fetchConversations() {
     try {
       const res = await fetch('/api/conversations');
       if (!res.ok) return;
       setConversations(await res.json());
     } catch {}
-  };
+  }
 
-  // Optimistic INSERT handler: move contact to top immediately with the new
-  // message prepended, then do a background refetch for accurate unread counts.
-  const insertRef = useRef<(payload: any) => void>(() => {});
-  insertRef.current = (payload: any) => {
-    const contactId = payload.new?.contact_id as string | undefined;
-    if (contactId) {
-      setConversations(prev => {
-        const idx = prev.findIndex(c => c.id === contactId);
-        if (idx < 0) return prev; // contact not loaded yet — refetch handles it
-
-        const copy = [...prev];
-        const [contact] = copy.splice(idx, 1);
-        const updatedContact = {
-          ...contact,
-          messages: [payload.new, ...(contact.messages ?? [])],
-        };
-        return [updatedContact, ...copy];
-      });
-    }
-    // Background refetch for accurate data regardless of optimistic update
-    fetchRef.current();
-  };
-
+  // Simple polling every 5 s — reliable, no Realtime complexity
   useEffect(() => {
-    fetchRef.current();
-    const timer = setInterval(() => fetchRef.current(), 15_000);
-
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) return () => clearInterval(timer);
-
-    const supabase = createClient(url, key);
-    const ch = supabase.channel('conversations-live')
-      .on('postgres_changes' as any,
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (p: any) => insertRef.current(p))
-      .on('postgres_changes' as any,
-        { event: '*', schema: 'public', table: 'contacts' },
-        () => fetchRef.current())
-      .subscribe();
-
-    return () => {
-      clearInterval(timer);
-      try { supabase.removeChannel(ch); } catch {}
-    };
+    fetchConversations();
+    const timer = setInterval(fetchConversations, 5_000);
+    return () => clearInterval(timer);
   }, []);
 
-  // Mark contact as viewed → badge disappears instantly in this session
-  function markViewed(contactId: string) {
-    setViewedContacts(prev => new Set([...prev, contactId]));
+  // Persist last_read_at to DB and clear badge optimistically in local state
+  function markRead(contactId: string) {
+    setConversations(prev =>
+      prev.map(c =>
+        c.id === contactId
+          ? { ...c, last_read_at: new Date().toISOString() }
+          : c,
+      ),
+    );
+    fetch('/api/conversations', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId, markRead: true }),
+    }).catch(() => {});
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {conversations.map((contact) => {
-        const messages: any[]  = contact.messages ?? [];
-        const lastMessage      = messages[0];
-        const alreadyViewed    = viewedContacts.has(contact.id);
+        const messages: any[] = contact.messages ?? [];
+        const lastMessage     = messages[0];
+        const lastReadAt      = contact.last_read_at ? new Date(contact.last_read_at) : null;
 
-        // Consecutive user messages from top = unread count
-        // Badge is suppressed once the operator opens the conversation
+        // Count user messages received AFTER last_read_at (or all if never read)
         let unreadCount = 0;
-        if (!alreadyViewed) {
-          for (const msg of messages) {
-            if (msg.role === 'user') unreadCount++;
-            else break;
+        for (const msg of messages) {
+          if (msg.role === 'user' && (!lastReadAt || new Date(msg.created_at) > lastReadAt)) {
+            unreadCount++;
           }
         }
         const hasUnread = unreadCount > 0;
@@ -93,7 +58,7 @@ export default function ConversationsClient() {
             key={contact.id}
             href={`/conversations/${contact.id}`}
             style={{ textDecoration: 'none' }}
-            onClick={() => markViewed(contact.id)}
+            onClick={() => markRead(contact.id)}
           >
             <div
               style={{

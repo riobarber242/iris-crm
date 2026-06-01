@@ -55,6 +55,9 @@ export async function PATCH(request: Request) {
   if (body.joined_channel !== undefined) {
     updates.joined_channel = body.joined_channel;
   }
+  if (body.markRead) {
+    updates.last_read_at = new Date().toISOString();
+  }
 
   const { data, error } = await supabaseAdmin.from('contacts').update(updates).eq('id', contactId).select('*').single();
   if (error) {
