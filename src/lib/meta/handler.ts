@@ -346,10 +346,20 @@ async function findOrCreateContact(phone: string, name: string | null) {
 }
 
 async function getBotEnabled(): Promise<boolean> {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('settings')
     .select('value')
     .eq('key', BOT_ENABLED_KEY)
-    .single();
-  return data?.value !== 'false';
+    .maybeSingle();
+
+  if (error) {
+    console.error('[getBotEnabled] Error leyendo settings:', error.message);
+    return true;
+  }
+
+  const raw = data?.value;
+  // Handle both string ('true'/'false') and boolean (true/false)
+  const enabled = raw !== 'false' && raw !== false;
+  console.log(`[getBotEnabled] raw=${JSON.stringify(raw)} → enabled=${enabled}`);
+  return enabled;
 }
