@@ -242,10 +242,10 @@ async function processMessage(
   // ─── IMAGE / DOCUMENT ─────────────────────────────────────────────────────
   if (type === 'image' || type === 'document') {
     const mediaId = message.image?.id ?? message.document?.id ?? null;
-    console.log(`[image] Procesando: type=${type} mediaId=${mediaId}`);
+    const imgState = contact.conversation_state as string | null ?? null;
+    console.log(`[image] Procesando: type=${type} mediaId=${mediaId} conversation_state=${imgState}`);
 
-    // Full 4-step flow: Graph API → download → Supabase Storage → permanent URL
-    // NEVER saves a Facebook/lookaside URL — only the Supabase public URL or null
+    // Upload to Supabase Storage (4-step flow)
     const supabaseImageUrl = mediaId
       ? await saveComprobanteImage(mediaId, contact.id)
       : null;
@@ -253,10 +253,11 @@ async function processMessage(
     if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
     if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
 
+    // Save comprobante regardless of which flow we're in
     try {
       const { error } = await supabaseAdmin.from('comprobantes').insert({
         contact_id: contact.id,
-        image_url:  supabaseImageUrl,  // permanent Supabase URL, or null if upload failed
+        image_url:  supabaseImageUrl,
         monto:      0,
         estado:     'pendiente',
       });
@@ -266,8 +267,17 @@ async function processMessage(
       console.error('[image] Excepción guardando comprobante:', err);
     }
 
-    if (botEnabled) {
+    if (!botEnabled) return;
+
+    // Decide response based on conversation state:
+    // 'waiting_screenshot' → image is the channel screenshot → continue onboarding flow
+    // anything else        → image is a payment receipt → acknowledge and stop
+    if (imgState === 'waiting_screenshot') {
+      console.log('[image] Es captura del canal → continuando flujo de onboarding');
       await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?', { newState: 'asked_if_loader' });
+    } else {
+      console.log(`[image] Es comprobante de pago (state="${imgState}") → acuse de recibo`);
+      await replyAndSave('Comprobante recibido ✅ Un operador lo verifica enseguida.');
     }
     return;
   }
