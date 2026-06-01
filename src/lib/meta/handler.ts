@@ -63,29 +63,30 @@ async function uploadComprobanteImage(imageUrl: string, contactId: string) {
     await ensureStorageBucket();
     const { buffer, contentType } = await downloadMediaBuffer(imageUrl);
     const extension = getExtensionFromUrl(imageUrl, contentType);
-    const filePath = `comprobantes/${contactId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+    const filePath = `${contactId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+
+    console.log(`[uploadComprobanteImage] Subiendo → bucket=${COMPROBANTES_BUCKET} path=${filePath} contentType=${contentType}`);
 
     const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
       .from(COMPROBANTES_BUCKET)
       .upload(filePath, buffer, { contentType, upsert: false });
 
     if (uploadError) {
-      console.error('Error subiendo imagen a Supabase Storage:', uploadError);
+      console.error('[uploadComprobanteImage] Error subiendo:', uploadError.message);
       return null;
     }
 
-    const { data: publicUrlData, error: publicUrlError } = await supabaseAdmin.storage
+    console.log('[uploadComprobanteImage] Upload OK, path en storage:', uploadData?.path);
+
+    const { data: publicUrlData } = await supabaseAdmin.storage
       .from(COMPROBANTES_BUCKET)
       .getPublicUrl(filePath);
 
-    if (publicUrlError) {
-      console.error('Error obteniendo public URL:', publicUrlError);
-      return null;
-    }
-
-    return publicUrlData.publicUrl;
+    const publicUrl = publicUrlData?.publicUrl ?? null;
+    console.log('[uploadComprobanteImage] Public URL generada:', publicUrl);
+    return publicUrl;
   } catch (error) {
-    console.error('Error descargando o subiendo imagen:', error);
+    console.error('[uploadComprobanteImage] Error general:', error);
     return null;
   }
 }
@@ -209,6 +210,7 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     }
 
     const imageUrlToSave = storedImageUrl ?? imageUrl;
+    console.log(`[handleCaptureImageFlow] storedImageUrl=${storedImageUrl} fallback imageUrl=${imageUrl} → guardando=${imageUrlToSave}`);
     if (imageUrlToSave) {
       await supabaseAdmin.from('comprobantes').insert({
         contact_id: contact.id,

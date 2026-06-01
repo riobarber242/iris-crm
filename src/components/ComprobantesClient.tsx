@@ -101,6 +101,17 @@ export default function ComprobantesClient() {
                   src={item.image_url}
                   alt="Comprobante"
                   style={{ width: '100%', maxHeight: '280px', objectFit: 'cover', display: 'block' }}
+                  onError={(e) => {
+                    console.error('[ComprobantesClient] Imagen no cargó:', item.image_url);
+                    const parent = (e.target as HTMLImageElement).parentElement;
+                    if (parent) {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                      const fallback = document.createElement('div');
+                      fallback.style.cssText = 'padding:16px;color:#CC3333;font-size:12px;word-break:break-all;';
+                      fallback.textContent = `Error cargando imagen. URL: ${item.image_url}`;
+                      parent.appendChild(fallback);
+                    }
+                  }}
                 />
               ) : (
                 <div style={{ height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: '14px' }}>

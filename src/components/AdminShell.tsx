@@ -33,11 +33,22 @@ export function AdminShell({ children }: { children: ReactNode }) {
   async function toggleBot() {
     const next = !botEnabled;
     setBotEnabled(next);
-    await fetch('/api/settings/bot-enabled', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: next }),
-    });
+    try {
+      const res = await fetch('/api/settings/bot-enabled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const json = await res.json();
+      console.log('[toggleBot] API response:', json);
+      if (!res.ok || !json.ok) {
+        console.error('[toggleBot] Falló el guardado, revirtiendo estado');
+        setBotEnabled(!next);
+      }
+    } catch (err) {
+      console.error('[toggleBot] Error de red:', err);
+      setBotEnabled(!next);
+    }
   }
 
   return (
