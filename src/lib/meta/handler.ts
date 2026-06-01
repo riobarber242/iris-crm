@@ -392,14 +392,10 @@ async function processMessage(
       break;
     }
 
-    // ── Capture user name ─────────────────────────────────────────────────────
+    // ── Capture user name (bot reads it for the reply but never writes to DB) ──
     case 'asked_name': {
       const name = text.split('\n')[0].split(' ').slice(0, 3).join(' ').trim();
-      if (name) {
-        try {
-          await supabaseAdmin.from('contacts').update({ name }).eq('id', contact.id);
-        } catch {}
-      }
+      // Name intentionally NOT saved to contacts — operator assigns it manually from CRM
       await replyAndSave(
         `Perfecto ${name || 'amigo'}! 🎉 Un operador te crea el usuario enseguida y te manda los datos para entrar.`,
         { markInProgress: true },
@@ -422,7 +418,9 @@ async function processMessage(
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
-async function findOrCreateContact(phone: string, name: string | null) {
+async function findOrCreateContact(phone: string, _whatsappName: string | null) {
+  // _whatsappName is intentionally ignored — bot never writes name to contacts.
+  // Operators assign names manually from the CRM.
   try {
     const { data: existing } = await supabaseAdmin
       .from('contacts')
@@ -432,15 +430,12 @@ async function findOrCreateContact(phone: string, name: string | null) {
       .maybeSingle();
 
     if (existing) {
-      if (name && !existing.name) {
-        await supabaseAdmin.from('contacts').update({ name }).eq('id', existing.id).catch(() => {});
-      }
       return existing;
     }
 
     const { data: inserted, error } = await supabaseAdmin
       .from('contacts')
-      .insert({ phone, name, status: 'nuevo' })
+      .insert({ phone, name: null, status: 'nuevo' })
       .select('*')
       .single();
 
