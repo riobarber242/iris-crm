@@ -25,26 +25,32 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  console.log('[webhook route] POST recibido');
+
   const rawBody = await request.text();
   const signature = request.headers.get('x-hub-signature-256') ?? undefined;
+
+  console.log(`[webhook route] signature presente=${!!signature} rawBody.length=${rawBody.length}`);
 
   let payload: any;
   try {
     payload = JSON.parse(rawBody);
   } catch (error) {
+    console.error('[webhook route] JSON inválido:', error);
     return new NextResponse('JSON inválido', {
       status: 400,
-      headers: {
-        'Bypass-Tunnel-Reminder': 'bypass',
-      },
+      headers: { 'Bypass-Tunnel-Reminder': 'bypass' },
     });
   }
 
+  console.log('[webhook route] payload.entry count:', payload?.entry?.length ?? 0);
+
   const result = await handleWhatsappWebhook(rawBody, signature, payload);
+
+  console.log(`[webhook route] Respuesta: status=${result.status} body="${result.body}"`);
+
   return new NextResponse(result.body, {
     status: result.status,
-    headers: {
-      'Bypass-Tunnel-Reminder': 'bypass',
-    },
+    headers: { 'Bypass-Tunnel-Reminder': 'bypass' },
   });
 }
