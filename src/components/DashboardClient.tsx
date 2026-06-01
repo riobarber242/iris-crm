@@ -149,23 +149,23 @@ export default function DashboardClient() {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
 
-      {/* COLUMNA 1 — CONVERSACIONES */}
+      {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
       <Column title="Conversaciones" icon="💬">
         <MetricCard label="Hoy"          value={fmt(stats.convToday)}     highlight={stats.convToday > 0} href="/conversations" />
-        <MetricCard label="Esta semana"  value={fmt(stats.convWeek)}                                     href="/conversations" />
-        <MetricCard label="Este mes"     value={fmt(stats.convMonth)}                                    href="/conversations" />
-        <MetricCard label="Mes anterior" value={fmt(stats.convPrevMonth)}                                href="/conversations" />
+        <MetricCard label="Esta semana"  value={fmt(stats.convWeek)}                                      href="/conversations" />
+        <MetricCard label="Este mes"     value={fmt(stats.convMonth)}                                     href="/conversations" />
+        <MetricCard label="Mes anterior" value={fmt(stats.convPrevMonth)}                                 href="/conversations" />
       </Column>
 
-      {/* COLUMNA 2 — CONTACTOS NUEVOS */}
+      {/* COLUMNA 2 — CONTACTOS NUEVOS — sin highlight */}
       <Column title="Contactos nuevos" icon="👤">
-        <MetricCard label="Hoy"          value={fmt(stats.newToday)}     highlight={stats.newToday > 0} href="/conversations" />
-        <MetricCard label="Esta semana"  value={fmt(stats.newWeek)}                                     href="/conversations" />
-        <MetricCard label="Este mes"     value={fmt(stats.newMonth)}                                    href="/conversations" />
-        <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)}                                href="/conversations" />
+        <MetricCard label="Hoy"          value={fmt(stats.newToday)}     href="/conversations" />
+        <MetricCard label="Esta semana"  value={fmt(stats.newWeek)}      href="/conversations" />
+        <MetricCard label="Este mes"     value={fmt(stats.newMonth)}     href="/conversations" />
+        <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)} href="/conversations" />
       </Column>
 
-      {/* COLUMNA 3 — ESTADO DE CONTACTOS */}
+      {/* COLUMNA 3 — ESTADO DE CONTACTOS — verde lima solo en AGENDADOS */}
       <Column title="Estado contactos" icon="📊">
         <MetricCard label="Agendados" value={fmt(stats.scheduledTotal)} highlight={stats.scheduledTotal > 0} href="/contacts" />
         <MetricCard label="VIP"       value={fmt(stats.vipTotal)}                                            href="/conversations" />
@@ -173,7 +173,7 @@ export default function DashboardClient() {
         <MetricCard label="Frío"      value={fmt(stats.frioTotal)}                                           href="/conversations" />
       </Column>
 
-      {/* COLUMNA 4 — PENDIENTES MANUAL */}
+      {/* COLUMNA 4 — PENDIENTES MANUAL — verde en SIN RESPONDER y ACTIVOS HOY */}
       <Column title="Pendientes manual" icon="👤">
         <MetricCard label="Sin responder"    value={fmt(stats.sinResponder)}   highlight={stats.sinResponder > 0} href="/conversations" />
         <MetricCard label="Activos hoy"      value={fmt(stats.activosHoy)}     highlight={stats.activosHoy > 0}   href="/conversations" />
@@ -181,7 +181,7 @@ export default function DashboardClient() {
         <MetricCard label="Total done"       value={fmt(stats.totalDone)}                                         href="/conversations" />
       </Column>
 
-      {/* COLUMNA 5 — FINANZAS */}
+      {/* COLUMNA 5 — FINANZAS — verde solo en PENDIENTES */}
       <Column title="Finanzas" icon="💰">
         <MetricCard label="Pendientes"   value={fmt(stats.comprobantesPending)} highlight={stats.comprobantesPending > 0} href="/comprobantes" />
         <MetricCard label="Verif. hoy"   value={money(stats.montoVerifHoy)}                                               href="/comprobantes" />

@@ -286,7 +286,7 @@ export default function ComprobantesClient() {
                   ) : (
                     <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
                       <button
-                        onClick={() => { setConfirmingId(item.id); setMontoInput(String(item.monto ?? '')); }}
+                        onClick={() => { setConfirmingId(item.id); setMontoInput(item.monto && item.monto > 0 ? String(item.monto) : ''); }}
                         style={{
                           background: '#C8FF00', color: '#000',
                           fontWeight: 700, fontSize: '12px',
