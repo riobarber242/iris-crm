@@ -56,23 +56,55 @@ export function AdminShell({ children }: { children: ReactNode }) {
         height: '100vh',
         overflowY: 'auto',
       }}>
-        {/* Logo badge */}
+        {/* Logo */}
         <div style={{ marginBottom: '32px' }}>
           <div style={{
-            display: 'inline-block',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
             background: '#C8FF00',
-            borderRadius: '10px',
-            padding: '5px 14px',
-            fontSize: '12px',
-            fontWeight: 800,
-            letterSpacing: '0.14em',
-            color: '#000',
-            textTransform: 'uppercase',
-            marginBottom: '18px',
+            borderRadius: '14px',
+            padding: '14px 16px',
+            marginBottom: '12px',
           }}>
-            Iris CRM
+            {/* Ícono circular */}
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '50%',
+              background: '#000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '18px',
+              flexShrink: 0,
+            }}>
+              🎰
+            </div>
+            {/* Nombre en dos líneas */}
+            <div style={{ lineHeight: 1.1 }}>
+              <div style={{
+                fontSize: '22px',
+                fontWeight: 900,
+                color: '#000',
+                letterSpacing: '-0.02em',
+              }}>
+                IRIS
+              </div>
+              <div style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#3a5a00',
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+              }}>
+                CRM
+              </div>
+            </div>
           </div>
-          <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>Panel de gestión</p>
+          <p style={{ fontSize: '12px', color: '#bbb', margin: 0, paddingLeft: '4px' }}>
+            Panel de gestión
+          </p>
         </div>
 
         {/* Nav */}
