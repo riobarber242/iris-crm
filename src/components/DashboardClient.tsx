@@ -9,6 +9,7 @@ type Stats = {
   vipTotal: number;  activoTotal: number; frioTotal: number;
   comprobantesPending: number;
   montoVerifHoy: number; montoVerifMes: number; montoVerifMesAnterior: number;
+  sinResponder: number; activosHoy: number; totalEnProceso: number; totalDone: number;
 };
 
 function fmt(n: number) {
@@ -128,8 +129,8 @@ export default function DashboardClient() {
 
   if (!stats) {
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
-        {[0, 1, 2, 3].map((i) => (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+        {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {[0, 1, 2, 3].map((j) => (
               <div key={j} style={{ background: '#F0F0F0', borderRadius: '16px', height: '80px' }} />
@@ -141,7 +142,7 @@ export default function DashboardClient() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
 
       {/* COLUMNA 1 — CONVERSACIONES */}
       <Column title="Conversaciones" icon="💬">
@@ -166,7 +167,15 @@ export default function DashboardClient() {
         <MetricCard label="Frío"   value={fmt(stats.frioTotal)} />
       </Column>
 
-      {/* COLUMNA 4 — FINANZAS */}
+      {/* COLUMNA 4 — PENDIENTES MANUAL */}
+      <Column title="Pendientes manual" icon="👤">
+        <MetricCard label="Sin responder"   value={fmt(stats.sinResponder)}   highlight={stats.sinResponder > 0} />
+        <MetricCard label="Activos hoy"     value={fmt(stats.activosHoy)}     highlight={stats.activosHoy > 0} />
+        <MetricCard label="Total en proceso" value={fmt(stats.totalEnProceso)} />
+        <MetricCard label="Total done"       value={fmt(stats.totalDone)} />
+      </Column>
+
+      {/* COLUMNA 5 — FINANZAS */}
       <Column title="Finanzas" icon="💰">
         <MetricCard label="Pendientes"     value={fmt(stats.comprobantesPending)} highlight={stats.comprobantesPending > 0} />
         <MetricCard label="Verif. hoy"     value={money(stats.montoVerifHoy)} />
