@@ -6,7 +6,8 @@ export async function GET() {
     .from('settings')
     .select('value')
     .eq('key', 'bot_enabled')
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   const enabled = data?.value !== 'false';
   return NextResponse.json({ enabled });
@@ -18,13 +19,23 @@ export async function POST(request: Request) {
 
   console.log(`[bot-enabled POST] Setting bot_enabled → ${value}`);
 
-  const { error } = await supabaseAdmin
+  // DELETE + INSERT: more reliable than upsert (no unique constraint required)
+  const { error: delError } = await supabaseAdmin
     .from('settings')
-    .upsert({ key: 'bot_enabled', value }, { onConflict: 'key' });
+    .delete()
+    .eq('key', 'bot_enabled');
 
-  if (error) {
-    console.error('[bot-enabled POST] Upsert error:', error.message);
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  if (delError) {
+    console.error('[bot-enabled POST] Delete error:', delError.message);
+  }
+
+  const { error: insError } = await supabaseAdmin
+    .from('settings')
+    .insert({ key: 'bot_enabled', value });
+
+  if (insError) {
+    console.error('[bot-enabled POST] Insert error:', insError.message);
+    return NextResponse.json({ ok: false, error: insError.message }, { status: 500 });
   }
 
   // Verify what actually ended up in the DB
@@ -32,6 +43,7 @@ export async function POST(request: Request) {
     .from('settings')
     .select('value')
     .eq('key', 'bot_enabled')
+    .limit(1)
     .maybeSingle();
 
   console.log(`[bot-enabled POST] Verified in DB: ${JSON.stringify(verify?.value)}`);

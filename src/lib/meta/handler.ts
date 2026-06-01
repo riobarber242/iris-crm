@@ -174,51 +174,55 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     }
   }
 
-  async function resolveImageUrl() {
-    if (message.image?.link) return message.image.link;
-    if (message.image?.url) return message.image.url;
-    if (message.image?.id) {
-      try {
-        return await fetchWhatsAppMediaUrl(message.image.id);
-      } catch (error) {
-        console.error('Error fetching WhatsApp image URL:', error);
-      }
-    }
-
-    if (message.document?.link) return message.document.link;
-    if (message.document?.url) return message.document.url;
-    if (message.document?.id) {
-      try {
-        return await fetchWhatsAppMediaUrl(message.document.id);
-      } catch (error) {
-        console.error('Error fetching WhatsApp document URL:', error);
-      }
-    }
-
-    return null;
-  }
-
   const botEnabled = await getBotEnabled();
 
   async function handleCaptureImageFlow() {
-    const imageUrl = await resolveImageUrl();
-    const amount = imageUrl ? await generateAmountFromImage(imageUrl).catch(() => 0) : 0;
-    let storedImageUrl: string | null = null;
+    // Step 1: get the media ID from the webhook payload
+    const mediaId = message.image?.id ?? message.document?.id ?? null;
+    console.log(`[handleCaptureImageFlow] mediaId=${mediaId} type=${type}`);
 
-    if (imageUrl) {
-      storedImageUrl = await uploadComprobanteImage(imageUrl, contact.id);
-    }
-
-    const imageUrlToSave = storedImageUrl ?? imageUrl;
-    console.log(`[handleCaptureImageFlow] storedImageUrl=${storedImageUrl} fallback imageUrl=${imageUrl} → guardando=${imageUrlToSave}`);
-    if (imageUrlToSave) {
+    if (!mediaId) {
+      console.error('[handleCaptureImageFlow] No media ID en el mensaje — guardando sin imagen');
       await supabaseAdmin.from('comprobantes').insert({
         contact_id: contact.id,
-        image_url: imageUrlToSave,
-        monto: amount,
+        image_url: null,
+        monto: 0,
         estado: 'pendiente',
       });
+      if (botEnabled) await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
+      return;
     }
+
+    // Step 2: fetch temporary download URL from Graph API
+    let downloadUrl: string | null = null;
+    try {
+      downloadUrl = await fetchWhatsAppMediaUrl(mediaId);
+      console.log(`[handleCaptureImageFlow] downloadUrl obtenida: ${downloadUrl}`);
+    } catch (err) {
+      console.error('[handleCaptureImageFlow] Error obteniendo downloadUrl:', err);
+    }
+
+    // Step 3: download buffer + upload to Supabase Storage
+    // NEVER fall back to the Facebook URL — if upload fails, save null
+    let supabaseImageUrl: string | null = null;
+    if (downloadUrl) {
+      supabaseImageUrl = await uploadComprobanteImage(downloadUrl, contact.id);
+    }
+    console.log(`[handleCaptureImageFlow] supabaseImageUrl=${supabaseImageUrl}`);
+
+    // Step 4: run Groq on the Supabase public URL (public, always accessible)
+    // Fall back to 0 if Groq fails or image wasn't uploaded
+    const amount = supabaseImageUrl
+      ? await generateAmountFromImage(supabaseImageUrl).catch(() => 0)
+      : 0;
+
+    // Step 5: save comprobante — ONLY supabaseImageUrl, NEVER a Facebook URL
+    await supabaseAdmin.from('comprobantes').insert({
+      contact_id: contact.id,
+      image_url: supabaseImageUrl,
+      monto: amount,
+      estado: 'pendiente',
+    });
 
     if (botEnabled) {
       await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
@@ -352,6 +356,7 @@ async function getBotEnabled(): Promise<boolean> {
     .from('settings')
     .select('value')
     .eq('key', BOT_ENABLED_KEY)
+    .limit(1)
     .maybeSingle();
 
   if (error) {
