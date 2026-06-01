@@ -288,18 +288,23 @@ async function processMessage(
     return;
   }
 
-  // GREETING RESET — runs BEFORE en_proceso check so saludos always unblock
+  // Flujo completado → bot inactivo para mensajes de texto
+  // (las imágenes de comprobantes ya se manejan arriba con su propio acuse)
+  const textState = contact.conversation_state as string | null ?? null;
+  if (textState === 'done' || contact.status === 'en_proceso') {
+    console.log(`[bot] state="${textState}" status="${contact.status}" — flujo completado, mensaje guardado sin respuesta`);
+    return;
+  }
+
+  // GREETING RESET — reinicia el flujo para estados intermedios o null
   const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas|buenos)[!¡.,\s]*/i.test(text.trim());
 
   if (isGreeting) {
-    console.log(`[bot] Saludo — reseteando (status=${contact.status} state=${contact.conversation_state})`);
+    console.log(`[bot] Saludo — reseteando (status=${contact.status} state=${textState})`);
     await replyAndSave(
       'Buenas 🙌 mi nombre es Iris, agendame para poder seguir con la conversacion',
       { newState: 'greeting' },
     );
-    try {
-      await supabaseAdmin.from('contacts').update({ status: 'nuevo' }).eq('id', contact.id);
-    } catch {}
     return;
   }
 
