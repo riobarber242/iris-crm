@@ -115,6 +115,7 @@ async function processMessage(
   const text      = (message.text?.body ?? '').trim() as string;
 
   console.log(`[webhook] Entrante: from=${from} type=${type} text="${text.slice(0, 60)}"`);
+  console.log(`[webhook] EnvCheck: TOKEN=${!!process.env.WHATSAPP_ACCESS_TOKEN} PHONE_ID=${!!process.env.WHATSAPP_PHONE_NUMBER_ID} SUPABASE=${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
 
   if (!messageId || !from) {
     console.warn('[webhook] Mensaje sin id o from — ignorando');
@@ -429,22 +430,41 @@ async function findOrCreateContact(phone: string, name: string | null) {
 
 async function getBotEnabled(): Promise<boolean> {
   try {
-    const { data, error } = await supabaseAdmin
+    // Read ALL possible key formats for bot control
+    const { data: rows, error } = await supabaseAdmin
       .from('settings')
-      .select('value')
-      .eq('key', BOT_ENABLED_KEY)
-      .limit(1)
-      .maybeSingle();
+      .select('key, value')
+      .in('key', [BOT_ENABLED_KEY, 'bot_mode'])
+      .limit(10);
 
     if (error) {
-      console.error('[getBotEnabled] Error:', error.message);
+      console.error('[getBotEnabled] Error leyendo settings:', error.message);
       return true; // fail open
     }
 
-    const raw     = data?.value;
-    const enabled = raw !== 'false' && raw !== false;
-    console.log(`[getBotEnabled] raw=${JSON.stringify(raw)} → enabled=${enabled}`);
-    return enabled;
+    const map: Record<string, string> = {};
+    for (const row of rows ?? []) map[row.key] = row.value;
+
+    console.log('[getBotEnabled] settings encontrados:', JSON.stringify(map));
+
+    // Priority 1: bot_enabled (our canonical key)
+    if ('bot_enabled' in map) {
+      const raw     = map.bot_enabled;
+      const enabled = raw !== 'false' && raw !== false as any;
+      console.log(`[getBotEnabled] via bot_enabled="${raw}" → enabled=${enabled}`);
+      return enabled;
+    }
+
+    // Priority 2: bot_mode (alternative format, 'bot'=enabled, 'human'=disabled)
+    if ('bot_mode' in map) {
+      const raw     = map.bot_mode;
+      const enabled = raw === 'bot' || raw === 'true';
+      console.log(`[getBotEnabled] via bot_mode="${raw}" → enabled=${enabled}`);
+      return enabled;
+    }
+
+    console.log('[getBotEnabled] Sin fila en settings → default enabled=true');
+    return true;
   } catch (err) {
     console.error('[getBotEnabled] Excepción:', err);
     return true; // fail open
