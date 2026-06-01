@@ -26,7 +26,7 @@ export async function GET() {
   const [
     convTodayRes, convWeekRes, convMonthRes, convPrevMonthRes,
     newToday, newWeek, newMonth, newPrevMonth,
-    vipLeads, activeLeads, coldLeads,
+    vipLeads, activeLeads, coldLeads, scheduledContacts,
     comprobantesPending,
     montoHoyRes, montoMesRes, montoPrevRes,
     totalEnProcesoRes, totalDoneRes,
@@ -49,6 +49,7 @@ export async function GET() {
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'vip'),
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'activo'),
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'frio'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).not('name', 'is', null).neq('name', ''),
 
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
 
@@ -119,9 +120,10 @@ export async function GET() {
     newMonth:     newMonth.count     ?? 0,
     newPrevMonth: newPrevMonth.count ?? 0,
 
-    vipTotal:    vipLeads.count    ?? 0,
-    activoTotal: activeLeads.count ?? 0,
-    frioTotal:   coldLeads.count   ?? 0,
+    vipTotal:        vipLeads.count        ?? 0,
+    activoTotal:     activeLeads.count     ?? 0,
+    frioTotal:       coldLeads.count       ?? 0,
+    scheduledTotal:  scheduledContacts.count ?? 0,
 
     comprobantesPending:   comprobantesPending.count ?? 0,
     montoVerifHoy:         sumMonto(montoHoyRes.data  ?? []),

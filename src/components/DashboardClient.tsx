@@ -7,7 +7,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 type Stats = {
   convToday: number; convWeek: number; convMonth: number; convPrevMonth: number;
   newToday: number;  newWeek: number;  newMonth: number;  newPrevMonth: number;
-  vipTotal: number;  activoTotal: number; frioTotal: number;
+  vipTotal: number;  activoTotal: number; frioTotal: number; scheduledTotal: number;
   comprobantesPending: number;
   montoVerifHoy: number; montoVerifMes: number; montoVerifMesAnterior: number;
   sinResponder: number; activosHoy: number; totalEnProceso: number; totalDone: number;
@@ -167,9 +167,10 @@ export default function DashboardClient() {
 
       {/* COLUMNA 3 — ESTADO DE CONTACTOS */}
       <Column title="Estado contactos" icon="📊">
-        <MetricCard label="VIP"    value={fmt(stats.vipTotal)}    highlight={stats.vipTotal > 0} href="/conversations" />
-        <MetricCard label="Activo" value={fmt(stats.activoTotal)}                                href="/conversations" />
-        <MetricCard label="Frío"   value={fmt(stats.frioTotal)}                                  href="/conversations" />
+        <MetricCard label="Agendados" value={fmt(stats.scheduledTotal)} highlight={stats.scheduledTotal > 0} href="/contacts" />
+        <MetricCard label="VIP"       value={fmt(stats.vipTotal)}                                            href="/conversations" />
+        <MetricCard label="Activo"    value={fmt(stats.activoTotal)}                                         href="/conversations" />
+        <MetricCard label="Frío"      value={fmt(stats.frioTotal)}                                           href="/conversations" />
       </Column>
 
       {/* COLUMNA 4 — PENDIENTES MANUAL */}

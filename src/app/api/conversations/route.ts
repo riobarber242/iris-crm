@@ -55,6 +55,9 @@ export async function PATCH(request: Request) {
   if (body.joined_channel !== undefined) {
     updates.joined_channel = body.joined_channel;
   }
+  if (body.casino_username !== undefined) {
+    updates.casino_username = body.casino_username;
+  }
   if (body.markRead) {
     updates.last_read_at = new Date().toISOString();
   }

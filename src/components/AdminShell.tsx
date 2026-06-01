@@ -6,11 +6,12 @@ import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import type { ReactNode } from 'react';
 
-const navItems = ['dashboard', 'conversations', 'comprobantes', 'leads', 'campanas', 'settings'];
+const navItems = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'settings'];
 
 const navLabels: Record<string, string> = {
   dashboard:     'Dashboard',
   conversations: 'Conversaciones',
+  contacts:      'Contactos',
   comprobantes:  'Comprobantes',
   leads:         'Leads',
   campanas:      'Campañas',

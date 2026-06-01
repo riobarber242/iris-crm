@@ -9,7 +9,7 @@ import ContactHeader from '@/components/ContactHeader';
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, name, phone, status, blocked, messages(content, created_at, role)')
+    .select('id, name, phone, status, blocked, casino_username, messages(content, created_at, role)')
     .eq('id', id)
     .single();
 
@@ -62,7 +62,12 @@ export default async function ConversationPage({ params }: any) {
           </Link>
         </div>
 
-        <ContactHeader contactId={contact.id} initialName={contact.name} phone={contact.phone} />
+        <ContactHeader
+          contactId={contact.id}
+          initialName={contact.name}
+          phone={contact.phone}
+          initialCasinoUsername={contact.casino_username}
+        />
 
         <ChatWindow contactId={contact.id} />
 
