@@ -238,16 +238,31 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return;
   }
 
+  // If a human operator took over, don't respond automatically
+  if (contact.status === 'en_proceso') {
+    console.log(`[bot] Contacto ${contact.id} en_proceso — respuesta omitida, humano atendiendo`);
+    return;
+  }
+
   const { data: lastAssistant } = await supabaseAdmin
     .from('messages')
-    .select('*')
+    .select('content')
     .eq('contact_id', contact.id)
     .eq('role', 'assistant')
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   const lastAssistantText = lastAssistant?.content ?? '';
+  console.log(`[bot] from=${from} lastAssistantText="${lastAssistantText.slice(0, 80)}" text="${text.slice(0, 60)}"`);
+
+  // GREETING RESET: any saludo restarts the flow from the beginning
+  const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas)[!¡.,\s]*/i.test(text.trim());
+  if (isGreeting) {
+    console.log(`[bot] Saludo detectado — reiniciando flujo`);
+    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
+    return;
+  }
 
   if (!lastAssistantText) {
     await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
@@ -283,6 +298,16 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return;
   }
 
+  // Explicit handler: bot is waiting for the screenshot, user sent text instead
+  if (lastAssistantText.toLowerCase().includes('captura del canal') || lastAssistantText.toLowerCase().includes('para poder seguir')) {
+    if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(text.toLowerCase())) {
+      await replyAndSave('Entendido, dame un momento', true);
+      return;
+    }
+    await replyAndSave('Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podes mandarmela, avisame.');
+    return;
+  }
+
   if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(text.toLowerCase())) {
     await replyAndSave('Entendido, dame un momento', true);
     return;
@@ -291,14 +316,14 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   if (lastAssistantText.toLowerCase().includes('sos de cargar y jugar') || lastAssistantText.toLowerCase().includes('sos de cargar y jugar seguido')) {
     const lowerText = text.toLowerCase();
 
-    if (/(si|si|obvio|claro|siempre|si,)/.test(lowerText)) {
+    if (/(si|sí|obvio|claro|siempre|dale)/.test(lowerText)) {
       await replyAndSave(
         'Buenisimo porque lo que estoy buscando son clientes que carguen conmigo. Las fichas de regalo son solo para probar la plataforma. Los premios se retiran cuando ganas jugando con una carga. Si estas de acuerdo, decime tu nombre y te creo el usuario. Aprovecha despues a cargar que les doy un 20% mas de lo que carguen'
       );
       return;
     }
 
-    if (/(no|nono|no puedo|no gracias)/.test(lowerText)) {
+    if (/(^no$|nono|no puedo|no gracias)/.test(lowerText)) {
       await replyAndSave('Entendido, dame un momento', true);
       return;
     }
@@ -308,7 +333,7 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   }
 
   if (lastAssistantText.toLowerCase().includes('decime tu nombre') || lastAssistantText.toLowerCase().includes('decime tu nombre y te creo el usuario')) {
-    const name = text.split('\\n')[0].split(' ').slice(0, 3).join(' ').trim();
+    const name = text.split('\n')[0].split(' ').slice(0, 3).join(' ').trim();
 
     if (name) {
       await supabaseAdmin.from('contacts').update({ name }).eq('id', contact.id);
@@ -318,18 +343,9 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return;
   }
 
-  try {
-    const fallback = await generateBotResponse(
-      irisSystemPrompt + `\\nContacto: ${contact.name ?? 'cliente'}\\nMensaje: ${text}`,
-      text
-    );
-    await replyAndSave(fallback);
-    return;
-  } catch (e) {
-    console.error('Groq fallback error', e);
-  }
-
-  await replyAndSave('Perdon, no entendi. Podes repetir?');
+  // Unhandled state — log it clearly so we can debug
+  console.warn(`[bot] Estado no mapeado para contacto ${contact.id}. lastAssistantText="${lastAssistantText.slice(0, 120)}"`);
+  await replyAndSave('Hola! En que te puedo ayudar?');
 }
 
 async function findOrCreateContact(phone: string, name: string | null) {
