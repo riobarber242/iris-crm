@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 export default function ConversationsClient() {
-  const [conversations, setConversations] = useState<any[]>([]);
+  const [conversations,  setConversations]  = useState<any[]>([]);
+  const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'en_proceso' | 'bloqueado'>('todos');
 
   async function fetchConversations() {
     try {
@@ -41,9 +42,47 @@ export default function ConversationsClient() {
     window.dispatchEvent(new Event('refresh-unread'));
   }
 
+  const FILTERS: { key: typeof activeFilter; label: string }[] = [
+    { key: 'todos',      label: 'Todos' },
+    { key: 'nuevo',      label: 'Nuevo' },
+    { key: 'en_proceso', label: 'En proceso' },
+    { key: 'bloqueado',  label: 'Bloqueado' },
+  ];
+
+  const filtered = conversations.filter((c) => {
+    if (activeFilter === 'todos')      return true;
+    if (activeFilter === 'bloqueado')  return c.blocked === true;
+    if (activeFilter === 'nuevo')      return c.status?.toLowerCase() === 'nuevo';
+    if (activeFilter === 'en_proceso') return c.status?.toLowerCase() === 'en_proceso';
+    return true;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      {conversations.map((contact) => {
+
+      {/* Filter bar */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        {FILTERS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setActiveFilter(key)}
+            style={{
+              background:   activeFilter === key ? '#C8FF00' : '#F0F0F0',
+              color:        activeFilter === key ? '#000'    : '#888',
+              border:       'none',
+              borderRadius: '999px',
+              padding:      '6px 16px',
+              fontSize:     '13px',
+              fontWeight:   600,
+              cursor:       'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {filtered.map((contact) => {
         const messages: any[] = contact.messages ?? [];
         const lastMessage     = messages[0];
         const lastMsgInbound  = lastMessage?.role === 'user';
