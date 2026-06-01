@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
-  const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'en_proceso' | 'bloqueado'>('todos');
+  const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
 
   async function fetchConversations() {
     try {
@@ -43,17 +43,19 @@ export default function ConversationsClient() {
   }
 
   const FILTERS: { key: typeof activeFilter; label: string }[] = [
-    { key: 'todos',      label: 'Todos' },
-    { key: 'nuevo',      label: 'Nuevo' },
-    { key: 'en_proceso', label: 'En proceso' },
-    { key: 'bloqueado',  label: 'Bloqueado' },
+    { key: 'todos',          label: 'Todos' },
+    { key: 'nuevo',          label: 'Nuevo' },
+    { key: 'cliente_activo', label: 'Cliente activo' },
+    { key: 'inactivo',       label: 'Inactivo' },
+    { key: 'bloqueado',      label: 'Bloqueado' },
   ];
 
   const filtered = conversations.filter((c) => {
-    if (activeFilter === 'todos')      return true;
-    if (activeFilter === 'bloqueado')  return c.blocked === true;
-    if (activeFilter === 'nuevo')      return c.status?.toLowerCase() === 'nuevo';
-    if (activeFilter === 'en_proceso') return c.status?.toLowerCase() === 'en_proceso';
+    if (activeFilter === 'todos')          return true;
+    if (activeFilter === 'bloqueado')      return c.blocked === true;
+    if (activeFilter === 'nuevo')          return c.status?.toLowerCase() === 'nuevo';
+    if (activeFilter === 'cliente_activo') return c.status?.toLowerCase() === 'cliente_activo';
+    if (activeFilter === 'inactivo')       return c.status?.toLowerCase() === 'inactivo';
     return true;
   });
 
@@ -163,10 +165,12 @@ export default function ConversationsClient() {
                     </span>
                   )}
                   <span style={{
-                    background: contact.status === 'activo' || contact.status === 'en_proceso'
-                      ? '#C8FF00' : '#F0F0F0',
-                    color: contact.status === 'activo' || contact.status === 'en_proceso'
-                      ? '#000' : '#888',
+                    background: contact.status === 'cliente_activo' ? '#C8FF00'
+                              : contact.status === 'inactivo'        ? '#888'
+                              : '#F0F0F0',
+                    color: contact.status === 'cliente_activo' ? '#000'
+                         : contact.status === 'inactivo'        ? '#fff'
+                         : '#888',
                     borderRadius: '999px',
                     padding: '4px 12px',
                     fontSize: '11px',
@@ -174,7 +178,9 @@ export default function ConversationsClient() {
                     textTransform: 'uppercase',
                     letterSpacing: '0.06em',
                   }}>
-                    {contact.status}
+                    {contact.status === 'cliente_activo' ? 'CLIENTE ACTIVO'
+                   : contact.status === 'inactivo'        ? 'INACTIVO'
+                   : (contact.status ?? '').toUpperCase()}
                   </span>
                 </div>
               </div>
