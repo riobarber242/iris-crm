@@ -103,7 +103,11 @@ export async function handleWhatsappWebhook(rawBody: string, signature: string |
       const value = change.value;
       const messages = value.messages ?? [];
       for (const message of messages) {
-        await processIncomingWhatsAppMessage(value.metadata?.phone_number_id, message, value.contacts?.[0]);
+        try {
+          await processIncomingWhatsAppMessage(value.metadata?.phone_number_id, message, value.contacts?.[0]);
+        } catch (err) {
+          console.error('[webhook] Error no manejado procesando mensaje:', err);
+        }
       }
     }
   }
@@ -116,6 +120,8 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   const from = message.from;
   const type = message.type;
   const text = message.text?.body?.trim() ?? '';
+
+  console.log(`[webhook] Entrante: from=${from} type=${type} text="${text.slice(0, 60)}"`);
 
   if (!messageId || !from) {
     return;
@@ -175,6 +181,7 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
   }
 
   const botEnabled = await getBotEnabled();
+  console.log(`[webhook] bot_enabled=${botEnabled} contact.id=${contact?.id} contact.status=${contact?.status}`);
 
   async function handleCaptureImageFlow() {
     // Step 1: get the media ID from the webhook payload
@@ -238,9 +245,19 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     return;
   }
 
-  // If a human operator took over, don't respond automatically
+  // GREETING RESET — evaluated FIRST, before any status check.
+  // A saludo always resets the flow regardless of contact.status.
+  const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas)[!¡.,\s]*/i.test(text.trim());
+  if (isGreeting) {
+    console.log(`[bot] Saludo detectado — reseteando estado de contacto ${contact.id} (era status=${contact.status})`);
+    await supabaseAdmin.from('contacts').update({ status: 'nuevo' }).eq('id', contact.id);
+    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
+    return;
+  }
+
+  // If a human operator took over, silently skip bot response (not a greeting)
   if (contact.status === 'en_proceso') {
-    console.log(`[bot] Contacto ${contact.id} en_proceso — respuesta omitida, humano atendiendo`);
+    console.log(`[bot] Contacto ${contact.id} en_proceso y no es saludo — bot silenciado`);
     return;
   }
 
@@ -254,15 +271,7 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     .maybeSingle();
 
   const lastAssistantText = lastAssistant?.content ?? '';
-  console.log(`[bot] from=${from} lastAssistantText="${lastAssistantText.slice(0, 80)}" text="${text.slice(0, 60)}"`);
-
-  // GREETING RESET: any saludo restarts the flow from the beginning
-  const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas)[!¡.,\s]*/i.test(text.trim());
-  if (isGreeting) {
-    console.log(`[bot] Saludo detectado — reiniciando flujo`);
-    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
-    return;
-  }
+  console.log(`[bot] lastAssistantText="${lastAssistantText.slice(0, 80)}"`);
 
   if (!lastAssistantText) {
     await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
@@ -349,7 +358,12 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
 }
 
 async function findOrCreateContact(phone: string, name: string | null) {
-  const { data: existing } = await supabaseAdmin.from('contacts').select('*').eq('phone', phone).single();
+  const { data: existing } = await supabaseAdmin
+    .from('contacts')
+    .select('*')
+    .eq('phone', phone)
+    .limit(1)
+    .maybeSingle();
 
   if (existing) {
     if (name && !existing.name) {
@@ -358,11 +372,23 @@ async function findOrCreateContact(phone: string, name: string | null) {
     return existing;
   }
 
-  const { data: inserted } = await supabaseAdmin
+  const { data: inserted, error: insertError } = await supabaseAdmin
     .from('contacts')
     .insert({ phone, name, status: 'nuevo' })
     .select('*')
     .single();
+
+  if (insertError) {
+    console.error('[findOrCreateContact] Error insertando contacto:', insertError.message);
+    // Could be a race condition — try fetching again
+    const { data: retry } = await supabaseAdmin
+      .from('contacts')
+      .select('*')
+      .eq('phone', phone)
+      .limit(1)
+      .maybeSingle();
+    return retry as any;
+  }
 
   return inserted as any;
 }
