@@ -1,12 +1,21 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText, fetchWhatsAppMediaUrl } from './client';
 import { supabaseAdmin } from '../db';
-import { generateBotResponse, generateAmountFromImage } from '../groq';
-import { irisSystemPrompt } from '../system-prompt';
+import { generateAmountFromImage } from '../groq';
 
 const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY = 'bot_enabled';
+
+// Explicit conversation state machine values stored in contacts.conversation_state
+// null          → no conversation started yet, send greeting on next message
+// 'greeting'    → bot sent initial greeting, waiting for any response
+// 'asked_intention' → bot asked "fichas o cargar?", waiting for choice
+// 'sent_channel_link' → bot sent channel link, waiting for any reply
+// 'waiting_screenshot' → bot asked for screenshot, waiting for image
+// 'asked_if_loader' → bot asked "sos de cargar?", waiting for yes/no
+// 'asked_name'  → bot asked for name, waiting for name text
+// 'done'        → flow completed, human takes over (status = en_proceso)
 
 function getExtensionFromUrl(url: string, contentType?: string) {
   try {
@@ -18,27 +27,20 @@ function getExtensionFromUrl(url: string, contentType?: string) {
   } catch {
     // ignore
   }
-
   if (contentType) {
     if (contentType.includes('jpeg')) return 'jpg';
     if (contentType.includes('png')) return 'png';
     if (contentType.includes('gif')) return 'gif';
     if (contentType.includes('webp')) return 'webp';
   }
-
   return 'jpg';
 }
 
 async function downloadMediaBuffer(url: string) {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   const headers: Record<string, string> = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  const response = await axios.get<ArrayBuffer>(url, {
-    responseType: 'arraybuffer',
-    headers,
-  });
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const response = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', headers });
   return {
     buffer: Buffer.from(response.data),
     contentType: response.headers['content-type'] as string | undefined,
@@ -47,18 +49,16 @@ async function downloadMediaBuffer(url: string) {
 
 async function ensureStorageBucket() {
   try {
-    const { data, error } = await supabaseAdmin.storage.getBucket(COMPROBANTES_BUCKET);
+    const { error } = await supabaseAdmin.storage.getBucket(COMPROBANTES_BUCKET);
     if (error && /not found|404/i.test(error.message)) {
       await supabaseAdmin.storage.createBucket(COMPROBANTES_BUCKET, { public: true });
     }
-    return data;
-  } catch (error) {
-    console.error('Error asegurando bucket de storage:', error);
-    return null;
+  } catch (err) {
+    console.error('[ensureStorageBucket] Error:', err);
   }
 }
 
-async function uploadComprobanteImage(imageUrl: string, contactId: string) {
+async function uploadComprobanteImage(imageUrl: string, contactId: string): Promise<string | null> {
   try {
     await ensureStorageBucket();
     const { buffer, contentType } = await downloadMediaBuffer(imageUrl);
@@ -76,35 +76,41 @@ async function uploadComprobanteImage(imageUrl: string, contactId: string) {
       return null;
     }
 
-    console.log('[uploadComprobanteImage] Upload OK, path en storage:', uploadData?.path);
+    console.log('[uploadComprobanteImage] Upload OK path:', uploadData?.path);
 
     const { data: publicUrlData } = await supabaseAdmin.storage
       .from(COMPROBANTES_BUCKET)
       .getPublicUrl(filePath);
 
     const publicUrl = publicUrlData?.publicUrl ?? null;
-    console.log('[uploadComprobanteImage] Public URL generada:', publicUrl);
+    console.log('[uploadComprobanteImage] Public URL:', publicUrl);
     return publicUrl;
-  } catch (error) {
-    console.error('[uploadComprobanteImage] Error general:', error);
+  } catch (err) {
+    console.error('[uploadComprobanteImage] Error general:', err);
     return null;
   }
 }
 
-export async function handleWhatsappWebhook(rawBody: string, signature: string | undefined, payload: any) {
+export async function handleWhatsappWebhook(
+  rawBody: string,
+  signature: string | undefined,
+  payload: any,
+) {
   if (!verifyMetaSignature(signature, rawBody)) {
     return { status: 401, body: 'Firma no valida' };
   }
 
   const entries = payload.entry ?? [];
   for (const entry of entries) {
-    const changes = entry.changes ?? [];
-    for (const change of changes) {
+    for (const change of entry.changes ?? []) {
       const value = change.value;
-      const messages = value.messages ?? [];
-      for (const message of messages) {
+      for (const message of value.messages ?? []) {
         try {
-          await processIncomingWhatsAppMessage(value.metadata?.phone_number_id, message, value.contacts?.[0]);
+          await processIncomingWhatsAppMessage(
+            value.metadata?.phone_number_id,
+            message,
+            value.contacts?.[0],
+          );
         } catch (err) {
           console.error('[webhook] Error no manejado procesando mensaje:', err);
         }
@@ -115,7 +121,11 @@ export async function handleWhatsappWebhook(rawBody: string, signature: string |
   return { status: 200, body: 'EVENT_RECEIVED' };
 }
 
-async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined, message: any, contactMeta: any) {
+async function processIncomingWhatsAppMessage(
+  _phoneNumberId: string | undefined,
+  message: any,
+  contactMeta: any,
+) {
   const messageId = message.id;
   const from = message.from;
   const type = message.type;
@@ -123,22 +133,23 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
 
   console.log(`[webhook] Entrante: from=${from} type=${type} text="${text.slice(0, 60)}"`);
 
-  if (!messageId || !from) {
-    return;
-  }
+  if (!messageId || !from) return;
 
-  const existingMessage = await supabaseAdmin
+  // Deduplicate
+  const { data: existingMsg } = await supabaseAdmin
     .from('messages')
     .select('id')
     .eq('whatsapp_message_id', messageId)
     .maybeSingle();
+  if (existingMsg) return;
 
-  if (existingMessage.data) {
+  const contact = await findOrCreateContact(from, contactMeta?.profile?.name ?? null);
+  if (!contact) {
+    console.error('[webhook] No se pudo obtener/crear contacto para', from);
     return;
   }
 
-  const contact = await findOrCreateContact(from, contactMeta?.profile?.name ?? null);
-
+  // Save incoming user message
   await supabaseAdmin.from('messages').insert({
     contact_id: contact.id,
     role: 'user',
@@ -146,84 +157,79 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     whatsapp_message_id: messageId,
   });
 
-  async function replyAndSave(textResp: string, markInProgress = false) {
+  const botEnabled = await getBotEnabled();
+  console.log(
+    `[webhook] bot_enabled=${botEnabled} contact.id=${contact.id} ` +
+    `status=${contact.status} conversation_state=${contact.conversation_state}`,
+  );
+
+  // ─── helper: send reply, save to DB, update conversation_state ───────────
+  async function replyAndSave(
+    textResp: string,
+    opts: { newState?: string | null; markInProgress?: boolean } = {},
+  ) {
     const { data: inserted, error: insertError } = await supabaseAdmin
       .from('messages')
-      .insert({
-        contact_id: contact.id,
-        role: 'assistant',
-        content: textResp,
-      })
-      .select('*')
+      .insert({ contact_id: contact.id, role: 'assistant', content: textResp })
+      .select('id')
       .single();
 
     if (insertError || !inserted) {
-      console.error('Error inserting assistant message', insertError);
-      // attempt to send even if DB insert failed
+      console.error('[replyAndSave] Error insertando mensaje:', insertError?.message);
+      try { await sendWhatsAppText(from, textResp); } catch (e) {
+        console.error('[replyAndSave] Error enviando WhatsApp (sin DB row):', e);
+      }
+    } else {
       try {
         await sendWhatsAppText(from, textResp);
-      } catch (e) {
-        console.error('Error sending WhatsApp message (no DB row):', e);
+        await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+      } catch (err) {
+        console.error('[replyAndSave] Error enviando WhatsApp:', err);
+        await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
       }
-      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
-      return;
     }
 
-    try {
-      await sendWhatsAppText(from, textResp);
-      if (inserted?.id) await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
-      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
-    } catch (err) {
-      console.error('Error sending WhatsApp message:', err);
-      if (inserted?.id) await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
-      if (markInProgress) await supabaseAdmin.from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
+    // Update conversation_state and/or status
+    const updates: Record<string, any> = {};
+    if ('newState' in opts) updates.conversation_state = opts.newState ?? null;
+    if (opts.markInProgress) {
+      updates.status = 'en_proceso';
+      updates.conversation_state = 'done';
+    }
+    if (Object.keys(updates).length > 0) {
+      await supabaseAdmin.from('contacts').update(updates).eq('id', contact.id);
     }
   }
 
-  const botEnabled = await getBotEnabled();
-  console.log(`[webhook] bot_enabled=${botEnabled} contact.id=${contact?.id} contact.status=${contact?.status}`);
-
-  async function handleCaptureImageFlow() {
-    // Step 1: get the media ID from the webhook payload
+  // ─── IMAGE / DOCUMENT ────────────────────────────────────────────────────
+  if (type === 'image' || type === 'document') {
     const mediaId = message.image?.id ?? message.document?.id ?? null;
     console.log(`[handleCaptureImageFlow] mediaId=${mediaId} type=${type}`);
 
-    if (!mediaId) {
-      console.error('[handleCaptureImageFlow] No media ID en el mensaje — guardando sin imagen');
-      await supabaseAdmin.from('comprobantes').insert({
-        contact_id: contact.id,
-        image_url: null,
-        monto: 0,
-        estado: 'pendiente',
-      });
-      if (botEnabled) await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
-      return;
-    }
-
-    // Step 2: fetch temporary download URL from Graph API
-    let downloadUrl: string | null = null;
-    try {
-      downloadUrl = await fetchWhatsAppMediaUrl(mediaId);
-      console.log(`[handleCaptureImageFlow] downloadUrl obtenida: ${downloadUrl}`);
-    } catch (err) {
-      console.error('[handleCaptureImageFlow] Error obteniendo downloadUrl:', err);
-    }
-
-    // Step 3: download buffer + upload to Supabase Storage
-    // NEVER fall back to the Facebook URL — if upload fails, save null
     let supabaseImageUrl: string | null = null;
-    if (downloadUrl) {
-      supabaseImageUrl = await uploadComprobanteImage(downloadUrl, contact.id);
+
+    if (mediaId) {
+      let downloadUrl: string | null = null;
+      try {
+        downloadUrl = await fetchWhatsAppMediaUrl(mediaId);
+        console.log(`[handleCaptureImageFlow] downloadUrl=${downloadUrl}`);
+      } catch (err) {
+        console.error('[handleCaptureImageFlow] Error obteniendo downloadUrl:', err);
+      }
+
+      if (downloadUrl) {
+        supabaseImageUrl = await uploadComprobanteImage(downloadUrl, contact.id);
+      }
+    } else {
+      console.error('[handleCaptureImageFlow] Sin mediaId — guardando sin imagen');
     }
+
     console.log(`[handleCaptureImageFlow] supabaseImageUrl=${supabaseImageUrl}`);
 
-    // Step 4: run Groq on the Supabase public URL (public, always accessible)
-    // Fall back to 0 if Groq fails or image wasn't uploaded
     const amount = supabaseImageUrl
       ? await generateAmountFromImage(supabaseImageUrl).catch(() => 0)
       : 0;
 
-    // Step 5: save comprobante — ONLY supabaseImageUrl, NEVER a Facebook URL
     await supabaseAdmin.from('comprobantes').insert({
       contact_id: contact.id,
       image_url: supabaseImageUrl,
@@ -232,129 +238,122 @@ async function processIncomingWhatsAppMessage(phoneNumberId: string | undefined,
     });
 
     if (botEnabled) {
-      await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?');
+      await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?', {
+        newState: 'asked_if_loader',
+      });
     }
-  }
-
-  if (type === 'image' || type === 'document') {
-    await handleCaptureImageFlow();
     return;
   }
 
-  if (!botEnabled) {
-    return;
-  }
+  // ─── TEXT: bot must be enabled to continue ───────────────────────────────
+  if (!botEnabled) return;
 
-  // GREETING RESET — evaluated FIRST, before any status check.
-  // A saludo always resets the flow regardless of contact.status.
-  const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas)[!¡.,\s]*/i.test(text.trim());
+  // GREETING RESET — evaluated FIRST, before any status guard.
+  // A saludo always resets the flow regardless of conversation_state or status.
+  const isGreeting =
+    /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas|buenos)[!¡.,\s]*/i.test(
+      text.trim(),
+    );
+
   if (isGreeting) {
-    console.log(`[bot] Saludo detectado — reseteando estado de contacto ${contact.id} (era status=${contact.status})`);
+    console.log(`[bot] Saludo — reseteando estado (era status=${contact.status} state=${contact.conversation_state})`);
+    await replyAndSave(
+      'Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion',
+      { newState: 'greeting' },
+    );
+    // Also reset status so bot is no longer silenced
     await supabaseAdmin.from('contacts').update({ status: 'nuevo' }).eq('id', contact.id);
-    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
     return;
   }
 
-  // If a human operator took over, silently skip bot response (not a greeting)
+  // If human operator took over (and it's not a greeting), bot stays silent
   if (contact.status === 'en_proceso') {
-    console.log(`[bot] Contacto ${contact.id} en_proceso y no es saludo — bot silenciado`);
+    console.log(`[bot] en_proceso y no es saludo — bot silenciado`);
     return;
   }
 
-  const { data: lastAssistant } = await supabaseAdmin
-    .from('messages')
-    .select('content')
-    .eq('contact_id', contact.id)
-    .eq('role', 'assistant')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // ─── EXPLICIT STATE MACHINE ───────────────────────────────────────────────
+  const state: string | null = contact.conversation_state ?? null;
+  const lowerText = text.toLowerCase();
+  console.log(`[bot] state="${state}" text="${text.slice(0, 60)}"`);
 
-  const lastAssistantText = lastAssistant?.content ?? '';
-  console.log(`[bot] lastAssistantText="${lastAssistantText.slice(0, 80)}"`);
-
-  if (!lastAssistantText) {
-    await replyAndSave('Buenas mi nombre es Iris, por favor agendame para poder seguir con la conversacion');
-    return;
-  }
-
-  if (lastAssistantText.toLowerCase().includes('mi nombre es iris')) {
-    await replyAndSave('Venis por las fichas de prueba o queres cargar?');
-    return;
-  }
-
-  if (lastAssistantText.toLowerCase().includes('fichas de prueba') || lastAssistantText.toLowerCase().includes('queres cargar')) {
-    const lowerText = text.toLowerCase();
-
-    if (/carg(ar|a)|quiero cargar|quiero recarg/.test(lowerText)) {
-      await replyAndSave('Perfecto! Dame un momento que te atiendo enseguida', true);
-      return;
+  switch (state) {
+    case null:
+    case 'greeting': {
+      // Any message after greeting → ask what they want
+      await replyAndSave('Venis por las fichas de prueba o queres cargar?', {
+        newState: 'asked_intention',
+      });
+      break;
     }
 
-    if (/fichas|prueba|proba|prueb/.test(lowerText)) {
+    case 'asked_intention': {
+      if (/carg(ar|a)|quiero cargar|quiero recarg/.test(lowerText)) {
+        await replyAndSave('Perfecto! Dame un momento que te atiendo enseguida', {
+          markInProgress: true,
+        });
+      } else if (/fichas|prueba|proba|prueb/.test(lowerText)) {
+        await replyAndSave(
+          'Unite a mi canal de WhatsApp y mandame captura. Ahi subo promos, horarios de atencion y lineas disponibles: https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F',
+          { newState: 'sent_channel_link' },
+        );
+      } else {
+        await replyAndSave('Venis por las fichas de prueba o queres cargar?');
+      }
+      break;
+    }
+
+    case 'sent_channel_link': {
       await replyAndSave(
-        'Unite a mi canal de WhatsApp y mandame captura. Ahi subo promos, horarios de atencion y lineas disponibles: https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F'
+        'Para poder seguir necesito que me mandes la captura del canal',
+        { newState: 'waiting_screenshot' },
       );
-      return;
+      break;
     }
 
-    await replyAndSave('Venis por las fichas de prueba o queres cargar?');
-    return;
-  }
-
-  if (lastAssistantText.toLowerCase().includes('unite a mi canal')) {
-    await replyAndSave('Para poder seguir necesito que me mandes la captura del canal');
-    return;
-  }
-
-  // Explicit handler: bot is waiting for the screenshot, user sent text instead
-  if (lastAssistantText.toLowerCase().includes('captura del canal') || lastAssistantText.toLowerCase().includes('para poder seguir')) {
-    if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(text.toLowerCase())) {
-      await replyAndSave('Entendido, dame un momento', true);
-      return;
-    }
-    await replyAndSave('Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podes mandarmela, avisame.');
-    return;
-  }
-
-  if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(text.toLowerCase())) {
-    await replyAndSave('Entendido, dame un momento', true);
-    return;
-  }
-
-  if (lastAssistantText.toLowerCase().includes('sos de cargar y jugar') || lastAssistantText.toLowerCase().includes('sos de cargar y jugar seguido')) {
-    const lowerText = text.toLowerCase();
-
-    if (/(si|sí|obvio|claro|siempre|dale)/.test(lowerText)) {
-      await replyAndSave(
-        'Buenisimo porque lo que estoy buscando son clientes que carguen conmigo. Las fichas de regalo son solo para probar la plataforma. Los premios se retiran cuando ganas jugando con una carga. Si estas de acuerdo, decime tu nombre y te creo el usuario. Aprovecha despues a cargar que les doy un 20% mas de lo que carguen'
-      );
-      return;
+    case 'waiting_screenshot': {
+      if (/no puedo|no puedo mandar|no puedo enviar|no puedo mandarlo|no puedo subir/.test(lowerText)) {
+        await replyAndSave('Entendido, dame un momento', { markInProgress: true });
+      } else {
+        await replyAndSave(
+          'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podes, avisame.',
+        );
+      }
+      break;
     }
 
-    if (/(^no$|nono|no puedo|no gracias)/.test(lowerText)) {
-      await replyAndSave('Entendido, dame un momento', true);
-      return;
+    case 'asked_if_loader': {
+      if (/(^si$|^sí$|obvio|claro|siempre|dale|si!|sí!)/.test(lowerText)) {
+        await replyAndSave(
+          'Buenisimo porque lo que estoy buscando son clientes que carguen conmigo. Las fichas de regalo son solo para probar la plataforma. Los premios se retiran cuando ganas jugando con una carga. Si estas de acuerdo, decime tu nombre y te creo el usuario. Aprovecha despues a cargar que les doy un 20% mas de lo que carguen',
+          { newState: 'asked_name' },
+        );
+      } else if (/(^no$|nono|no puedo|no gracias)/.test(lowerText)) {
+        await replyAndSave('Entendido, dame un momento', { markInProgress: true });
+      } else {
+        await replyAndSave('Sos de cargar y jugar seguido?');
+      }
+      break;
     }
 
-    await replyAndSave('Sos de cargar y jugar seguido?');
-    return;
-  }
-
-  if (lastAssistantText.toLowerCase().includes('decime tu nombre') || lastAssistantText.toLowerCase().includes('decime tu nombre y te creo el usuario')) {
-    const name = text.split('\n')[0].split(' ').slice(0, 3).join(' ').trim();
-
-    if (name) {
-      await supabaseAdmin.from('contacts').update({ name }).eq('id', contact.id);
+    case 'asked_name': {
+      const name = text.split('\n')[0].split(' ').slice(0, 3).join(' ').trim();
+      if (name) {
+        await supabaseAdmin.from('contacts').update({ name }).eq('id', contact.id);
+      }
+      await replyAndSave(`Perfecto ${name || 'amigo'}! Dame un momento que te preparo todo`, {
+        markInProgress: true,
+      });
+      break;
     }
 
-    await replyAndSave(`Perfecto ${name}! Dame un momento que te preparo todo`, true);
-    return;
+    case 'done':
+    default: {
+      console.warn(`[bot] Estado no mapeado: "${state}" — respondiendo genérico`);
+      await replyAndSave('Hola! En que te puedo ayudar?', { newState: null });
+      break;
+    }
   }
-
-  // Unhandled state — log it clearly so we can debug
-  console.warn(`[bot] Estado no mapeado para contacto ${contact.id}. lastAssistantText="${lastAssistantText.slice(0, 120)}"`);
-  await replyAndSave('Hola! En que te puedo ayudar?');
 }
 
 async function findOrCreateContact(phone: string, name: string | null) {
@@ -379,8 +378,8 @@ async function findOrCreateContact(phone: string, name: string | null) {
     .single();
 
   if (insertError) {
-    console.error('[findOrCreateContact] Error insertando contacto:', insertError.message);
-    // Could be a race condition — try fetching again
+    console.error('[findOrCreateContact] Error insertando:', insertError.message);
+    // Race condition — try fetching again
     const { data: retry } = await supabaseAdmin
       .from('contacts')
       .select('*')
@@ -402,12 +401,11 @@ async function getBotEnabled(): Promise<boolean> {
     .maybeSingle();
 
   if (error) {
-    console.error('[getBotEnabled] Error leyendo settings:', error.message);
+    console.error('[getBotEnabled] Error:', error.message);
     return true;
   }
 
   const raw = data?.value;
-  // Handle both string ('true'/'false') and boolean (true/false)
   const enabled = raw !== 'false' && raw !== false;
   console.log(`[getBotEnabled] raw=${JSON.stringify(raw)} → enabled=${enabled}`);
   return enabled;
