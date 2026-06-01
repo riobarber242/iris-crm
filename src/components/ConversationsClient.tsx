@@ -52,6 +52,12 @@ export default function ConversationsClient() {
                               || contact.conversation_state === 'en_proceso'
                               || contact.status === 'en_proceso';
 
+        // Badge clears when operator opened the conversation AFTER the last message
+        // markRead() sets last_read_at = NOW() optimistically, which triggers this
+        const lastReadAt   = contact.last_read_at ? new Date(contact.last_read_at) : null;
+        const lastMsgTime  = lastMessage ? new Date(lastMessage.created_at) : null;
+        const readAfterMsg = !!(lastReadAt && lastMsgTime && lastReadAt >= lastMsgTime);
+
         // Count consecutive inbound messages from top (unanswered)
         let pendingCount = 0;
         for (const msg of messages) {
@@ -59,11 +65,11 @@ export default function ConversationsClient() {
           else break;
         }
 
-        // Badge type based on business rules (independent of last_read_at)
+        // Badge type based on business rules — clears once conversation is opened
         // 🟠 Orange: new contact, bot finished, operator's turn
         // 🔴 Red: recurring (has casino_username), waiting for manual reply
         let badgeType: 'orange' | 'red' | null = null;
-        if (lastMsgInbound && pendingCount > 0) {
+        if (lastMsgInbound && pendingCount > 0 && !readAfterMsg) {
           if (hasCasinoUser)    badgeType = 'red';
           else if (botFlowDone) badgeType = 'orange';
         }

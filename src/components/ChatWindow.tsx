@@ -16,6 +16,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
@@ -71,16 +72,22 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!input.trim()) return;
-    const temp: Message = { role: 'human', content: input.trim(), status: 'sending' };
-    setMessages((m) => [...m, temp]);
-    setLoading(true);
+    const content = input.trim();
+    if (!content || loading || cooldown) return;
+
+    // Clear input immediately for instant visual feedback
     setInput('');
+    setLoading(true);
+    setCooldown(true);
+
+    const temp: Message = { role: 'human', content, status: 'sending' };
+    setMessages((m) => [...m, temp]);
+
     try {
       const res = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId, content: temp.content }),
+        body: JSON.stringify({ contactId, content }),
       });
       if (res.ok) {
         const saved = await res.json();
@@ -91,7 +98,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     } catch {
       setMessages((m) => m.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg)));
     }
+
     setLoading(false);
+    // 2-second cooldown to prevent double-clicks even after fast API responses
+    setTimeout(() => setCooldown(false), 2000);
   }
 
   return (
@@ -165,21 +175,21 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         />
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || cooldown}
           style={{
-            background: '#C8FF00',
+            background: loading || cooldown ? '#e0e0e0' : '#C8FF00',
             color: '#000',
             fontWeight: 700,
             fontSize: '14px',
             border: 'none',
             borderRadius: '12px',
             padding: '12px 20px',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.7 : 1,
-            boxShadow: '0 4px 12px rgba(200,255,0,0.3)',
+            cursor: loading || cooldown ? 'not-allowed' : 'pointer',
+            opacity: loading || cooldown ? 0.6 : 1,
+            boxShadow: loading || cooldown ? 'none' : '0 4px 12px rgba(200,255,0,0.3)',
           }}
         >
-          {loading ? '...' : 'Enviar'}
+          {loading ? '...' : cooldown ? '✓' : 'Enviar'}
         </button>
       </form>
     </div>

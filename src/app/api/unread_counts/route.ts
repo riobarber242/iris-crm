@@ -13,39 +13,42 @@ export async function GET() {
       argNow.getUTCFullYear(), argNow.getUTCMonth(), argNow.getUTCDate(), 3, 0, 0, 0,
     ));
 
-    // 1. All contacts with relevant fields
+    // 1. All contacts with relevant fields including last_read_at
     const { data: contacts, error: cErr } = await supabaseAdmin
       .from('contacts')
-      .select('id, casino_username, status, conversation_state');
+      .select('id, casino_username, status, conversation_state, last_read_at');
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
 
     const contactMap = new Map<string, any>(
       (contacts ?? []).map((c: any) => [c.id, c]),
     );
 
-    // 2. Today's messages — latest per contact (descending)
+    // 2. Today's messages — latest per contact (descending), with created_at
     const { data: msgs, error: mErr } = await supabaseAdmin
       .from('messages')
-      .select('contact_id, role')
+      .select('contact_id, role, created_at')
       .gte('created_at', todayStart.toISOString())
       .order('created_at', { ascending: false });
     if (mErr) return new NextResponse(mErr.message, { status: 500 });
 
-    // Build last-role map per contact
-    const lastRole = new Map<string, string>();
+    // Build last-message map per contact (role + created_at)
+    const lastMsg = new Map<string, { role: string; created_at: string }>();
     for (const m of (msgs ?? [])) {
-      if (!lastRole.has(m.contact_id)) lastRole.set(m.contact_id, m.role);
+      if (!lastMsg.has(m.contact_id)) lastMsg.set(m.contact_id, { role: m.role, created_at: m.created_at });
     }
 
-    // 3. Classify
+    // 3. Classify — skip contacts already read after the last message
     let newPending       = 0;
     let recurringPending = 0;
 
-    for (const [cId, role] of lastRole.entries()) {
-      if (role !== 'user') continue; // last message is outbound → no badge
+    for (const [cId, msg] of lastMsg.entries()) {
+      if (msg.role !== 'user') continue; // last message is outbound → no badge
 
       const c = contactMap.get(cId);
       if (!c) continue;
+
+      // Skip if operator already opened after this message
+      if (c.last_read_at && new Date(c.last_read_at) >= new Date(msg.created_at)) continue;
 
       if (c.casino_username) {
         recurringPending++; // 🔴 recurring user waiting for manual reply
