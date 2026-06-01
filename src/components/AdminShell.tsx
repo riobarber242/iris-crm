@@ -35,6 +35,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
       .catch(() => setMounted(true));
   }, []);
 
+  const fetchUnreadRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     async function fetchUnread() {
       try {
@@ -44,6 +46,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         setUnread(data.total ?? 0);
       } catch {}
     }
+    fetchUnreadRef.current = fetchUnread;
 
     fetchUnread();
     const timer = setInterval(fetchUnread, 15_000);
@@ -64,6 +67,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
       try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch {}
     };
   }, []);
+
+  // Refresh unread badge immediately on every route change
+  // (when operator opens/closes a conversation, last_read_at updates → count drops)
+  useEffect(() => {
+    fetchUnreadRef.current();
+  }, [pathname]);
 
   async function toggleBot() {
     const next = !botEnabled;

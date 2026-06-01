@@ -155,6 +155,7 @@ async function processMessage(
     console.error('[webhook] No se pudo crear/obtener contacto para', from);
     return;
   }
+  console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} casino_username=${JSON.stringify(contact.casino_username ?? null)} status=${contact.status}`);
 
   // ── Save user message ──────────────────────────────────────────────────────
   try {
@@ -302,8 +303,10 @@ async function processMessage(
   // USUARIO CASINO ASIGNADO = contacto ya fue atendido manualmente → bot inactivo.
   // Regla definitiva: si el operador asignó casino_username, el bot no interfiere.
   // Las imágenes ya fueron procesadas arriba (siempre se guardan como comprobantes).
-  if (contact.casino_username && contact.casino_username.trim() !== '') {
-    console.log(`[bot] Contacto con casino_username "${contact.casino_username}" — bot silenciado`);
+  const casinoUser = contact.casino_username ?? null;
+  console.log(`[bot] casino_username check: value=${JSON.stringify(casinoUser)} → silenced=${!!(casinoUser && casinoUser.trim() !== '')}`);
+  if (casinoUser && casinoUser.trim() !== '') {
+    console.log(`[bot] Bot silenciado — casino_username="${casinoUser}"`);
     return;
   }
 
@@ -420,11 +423,11 @@ async function processMessage(
 
 async function findOrCreateContact(phone: string, _whatsappName: string | null) {
   // _whatsappName is intentionally ignored — bot never writes name to contacts.
-  // Operators assign names manually from the CRM.
+  // Explicit column list avoids PostgREST schema-cache issues with recently added columns.
   try {
     const { data: existing } = await supabaseAdmin
       .from('contacts')
-      .select('*')
+      .select('id, phone, name, status, casino_username, conversation_state, last_read_at, blocked')
       .eq('phone', phone)
       .limit(1)
       .maybeSingle();
