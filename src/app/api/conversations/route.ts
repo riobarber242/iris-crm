@@ -23,7 +23,15 @@ export async function GET(request: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  // Sort contacts by their most recent message DESC.
+  // messages[0] is already the latest per contact (ordered by foreignTable above).
+  const sorted = (data ?? []).sort((a: any, b: any) => {
+    const aTs = a.messages?.[0]?.created_at ?? a.created_at;
+    const bTs = b.messages?.[0]?.created_at ?? b.created_at;
+    return new Date(bTs).getTime() - new Date(aTs).getTime();
+  });
+
+  return NextResponse.json(sorted);
 }
 
 export async function PATCH(request: Request) {

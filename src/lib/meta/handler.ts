@@ -299,6 +299,14 @@ async function processMessage(
     return;
   }
 
+  // NOMBRE ASIGNADO = contacto ya fue atendido manualmente → bot inactivo.
+  // Regla definitiva: si el contacto tiene nombre, un operador lo atendió.
+  // Las imágenes ya fueron procesadas arriba (siempre se guardan como comprobantes).
+  if (contact.name && contact.name.trim() !== '') {
+    console.log(`[bot] Contacto con nombre "${contact.name}" — bot silenciado`);
+    return;
+  }
+
   // ── COMPLETED CHECK (MUST be before isGreeting) ──────────────────────────
   // conversation_state 'done'/'en_proceso' OR status 'en_proceso' → silent.
   // No greeting reset, no response — only save the message (already done above).
