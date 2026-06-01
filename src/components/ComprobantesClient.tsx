@@ -25,6 +25,9 @@ export default function ComprobantesClient() {
   const [lightbox, setLightbox]               = useState<string | null>(null);
   const [confirmingId, setConfirmingId]       = useState<string | null>(null);
   const [montoInput, setMontoInput]           = useState('');
+  const [montoError, setMontoError]           = useState('');
+  const [editingMontoId, setEditingMontoId]   = useState<string | null>(null);
+  const [editMontoInput, setEditMontoInput]   = useState('');
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
 
@@ -69,10 +72,33 @@ export default function ComprobantesClient() {
   }
 
   async function confirmVerify(id: string) {
-    const monto = parseFloat(montoInput.replace(',', '.')) || 0;
+    const monto = parseFloat(montoInput.replace(',', '.'));
+    if (!monto || monto <= 0) {
+      setMontoError('Ingresá el monto antes de confirmar');
+      return;
+    }
+    setMontoError('');
     setConfirmingId(null);
     setMontoInput('');
     await updateComprobante(id, 'verificar', monto);
+  }
+
+  async function saveMonto(id: string) {
+    const monto = parseFloat(editMontoInput.replace(',', '.'));
+    if (!monto || monto <= 0) return;
+    try {
+      const res = await fetch('/api/comprobantes', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ comprobanteId: id, action: 'update_monto', monto }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setEditingMontoId(null);
+      setEditMontoInput('');
+      await fetchSilent();
+    } catch {
+      setError('No se pudo actualizar el monto.');
+    }
   }
 
   useEffect(() => {
@@ -230,58 +256,73 @@ export default function ComprobantesClient() {
                   </span>
                 </div>
 
-                {/* Row 2: fecha + monto */}
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                {/* Row 2: fecha + monto + editar monto para verificados sin monto */}
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px', color: '#888' }}>{fecha}</span>
-                  <span style={{ fontSize: '15px', fontWeight: 900, color: '#111' }}>
-                    ${item.monto ?? 0}
-                  </span>
+                  {editingMontoId === item.id ? (
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        type="number" min="0.01" step="0.01"
+                        value={editMontoInput}
+                        onChange={(e) => setEditMontoInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveMonto(item.id); if (e.key === 'Escape') setEditingMontoId(null); }}
+                        placeholder="Monto $" autoFocus
+                        style={{ width: '110px', padding: '4px 8px', border: '2px solid #C8FF00', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#f9ffe0' }}
+                      />
+                      <button onClick={() => saveMonto(item.id)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '11px', border: 'none', borderRadius: '8px', padding: '4px 10px', cursor: 'pointer' }}>✓</button>
+                      <button onClick={() => setEditingMontoId(null)} style={{ background: 'transparent', color: '#888', fontWeight: 600, fontSize: '11px', border: '1px solid #ddd', borderRadius: '8px', padding: '4px 8px', cursor: 'pointer' }}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '15px', fontWeight: 900, color: (!item.monto || item.monto === 0) ? '#E53935' : '#111' }}>
+                        ${item.monto ?? 0}
+                      </span>
+                      {item.estado === 'verificado' && (!item.monto || item.monto === 0) && (
+                        <button
+                          onClick={() => { setEditingMontoId(item.id); setEditMontoInput(''); }}
+                          style={{ background: '#fff3cd', color: '#856404', fontWeight: 700, fontSize: '11px', border: '1px solid #ffc107', borderRadius: '8px', padding: '3px 8px', cursor: 'pointer' }}
+                        >
+                          ✏ Editar monto
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Row 3: action buttons (only for pending) */}
                 {item.estado === 'pendiente' && (
                   confirmingId === item.id ? (
                     /* Inline monto input before confirming */
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={montoInput}
-                        onChange={(e) => setMontoInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') confirmVerify(item.id); if (e.key === 'Escape') setConfirmingId(null); }}
-                        placeholder="Monto $"
-                        autoFocus
-                        style={{
-                          width: '110px', padding: '5px 10px',
-                          border: '2px solid #C8FF00', borderRadius: '8px',
-                          fontSize: '13px', fontWeight: 700, outline: 'none',
-                          background: '#f9ffe0',
-                        }}
-                      />
-                      <button
-                        onClick={() => confirmVerify(item.id)}
-                        style={{
-                          background: '#C8FF00', color: '#000',
-                          fontWeight: 700, fontSize: '12px',
-                          border: 'none', borderRadius: '8px',
-                          padding: '5px 12px', cursor: 'pointer',
-                          boxShadow: '0 2px 0 #8ab000',
-                        }}
-                      >
-                        ✓ OK
-                      </button>
-                      <button
-                        onClick={() => setConfirmingId(null)}
-                        style={{
-                          background: 'transparent', color: '#888',
-                          fontWeight: 700, fontSize: '12px',
-                          border: '1px solid #ddd', borderRadius: '8px',
-                          padding: '5px 10px', cursor: 'pointer',
-                        }}
-                      >
-                        Cancelar
-                      </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={montoInput}
+                          onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') confirmVerify(item.id); if (e.key === 'Escape') { setConfirmingId(null); setMontoError(''); } }}
+                          placeholder="Monto $"
+                          autoFocus
+                          style={{
+                            width: '120px', padding: '5px 10px',
+                            border: `2px solid ${montoError ? '#E53935' : '#C8FF00'}`,
+                            borderRadius: '8px', fontSize: '13px', fontWeight: 700,
+                            outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
+                          }}
+                        />
+                        <button onClick={() => confirmVerify(item.id)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>
+                          ✓ OK
+                        </button>
+                        <button onClick={() => { setConfirmingId(null); setMontoError(''); }} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '12px', border: '1px solid #ddd', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>
+                          Cancelar
+                        </button>
+                      </div>
+                      {montoError && (
+                        <p style={{ margin: 0, fontSize: '11px', color: '#E53935', fontWeight: 600 }}>
+                          {montoError}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>

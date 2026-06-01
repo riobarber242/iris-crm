@@ -25,8 +25,20 @@ export async function PATCH(request: Request) {
   const comprobanteId = body.comprobanteId;
   const action = body.action;
 
-  if (!comprobanteId || !['verificar', 'rechazar'].includes(action)) {
+  if (!comprobanteId || !['verificar', 'rechazar', 'update_monto'].includes(action)) {
     return new NextResponse('Faltan comprobanteId o acción válida', { status: 400 });
+  }
+
+  // update_monto: only update monto, no estado change
+  if (action === 'update_monto') {
+    const monto = Number(body.monto);
+    if (isNaN(monto) || monto <= 0) {
+      return new NextResponse('Monto inválido', { status: 400 });
+    }
+    const { data, error } = await supabaseAdmin
+      .from('comprobantes').update({ monto }).eq('id', comprobanteId).select('*').single();
+    if (error) return new NextResponse(error.message, { status: 500 });
+    return NextResponse.json(data);
   }
 
   const estado = action === 'verificar' ? 'verificado' : 'rechazado';

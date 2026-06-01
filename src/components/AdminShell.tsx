@@ -24,7 +24,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [botEnabled, setBotEnabled] = useState(true);
   const [mounted, setMounted]       = useState(false);
-  const [unread, setUnread]         = useState(0);
+  const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0 });
   const unreadChannelRef            = useRef<any>(null);
   const unreadSupabaseRef           = useRef<any>(null);
 
@@ -43,7 +43,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
         const res = await fetch('/api/unread_counts');
         if (!res.ok) return;
         const data = await res.json();
-        setUnread(data.total ?? 0);
+        setUnread({
+          total:            data.total            ?? 0,
+          newPending:       data.newPending        ?? 0,
+          recurringPending: data.recurringPending  ?? 0,
+        });
       } catch {}
     }
     fetchUnreadRef.current = fetchUnread;
@@ -229,22 +233,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 >
                   <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     {navLabels[item]}
-                    {item === 'conversations' && unread > 0 && (
-                      <span style={{
-                        background: '#ff3333',
-                        color: '#fff',
-                        borderRadius: '999px',
-                        fontSize: '10px',
-                        fontWeight: 800,
-                        minWidth: '18px',
-                        height: '18px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '0 5px',
-                        lineHeight: 1,
-                      }}>
-                        {unread > 99 ? '99+' : unread}
+                    {item === 'conversations' && (unread.newPending > 0 || unread.recurringPending > 0) && (
+                      <span style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                        {unread.newPending > 0 && (
+                          <span style={{
+                            background: '#FF8C00', color: '#fff', borderRadius: '999px',
+                            fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            padding: '0 5px', lineHeight: 1,
+                          }}>
+                            {unread.newPending > 99 ? '99+' : unread.newPending}
+                          </span>
+                        )}
+                        {unread.recurringPending > 0 && (
+                          <span style={{
+                            background: '#E53935', color: '#fff', borderRadius: '999px',
+                            fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            padding: '0 5px', lineHeight: 1,
+                          }}>
+                            {unread.recurringPending > 99 ? '99+' : unread.recurringPending}
+                          </span>
+                        )}
                       </span>
                     )}
                   </span>
