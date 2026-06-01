@@ -226,13 +226,24 @@ async function processMessage(
     }
 
     // 3. Update contact state
+    // Two-step: status first (column always exists), then conversation_state separately.
+    // This ensures en_proceso is always set even if conversation_state column is missing.
     try {
-      const updates: Record<string, any> = {};
-      if ('newState' in opts)   updates.conversation_state = opts.newState ?? null;
-      if (opts.markInProgress) { updates.status = 'en_proceso'; updates.conversation_state = 'done'; }
-      if (Object.keys(updates).length > 0) {
-        const { error } = await supabaseAdmin.from('contacts').update(updates).eq('id', contact.id);
-        if (error) console.warn('[replyAndSave] Contact update error:', error.message);
+      if (opts.markInProgress) {
+        const { error: stErr } = await supabaseAdmin
+          .from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
+        if (stErr) console.warn('[replyAndSave] status update error:', stErr.message);
+        else       console.log('[replyAndSave] contact.status → en_proceso');
+      }
+
+      const stateUpdate: Record<string, any> = {};
+      if ('newState' in opts)  stateUpdate.conversation_state = opts.newState ?? null;
+      if (opts.markInProgress) stateUpdate.conversation_state = 'done';
+
+      if (Object.keys(stateUpdate).length > 0) {
+        const { error: csErr } = await supabaseAdmin
+          .from('contacts').update(stateUpdate).eq('id', contact.id);
+        if (csErr) console.warn('[replyAndSave] conversation_state update error (columna puede no existir):', csErr.message);
       }
     } catch (err) {
       console.error('[replyAndSave] Contact update excepción:', err);

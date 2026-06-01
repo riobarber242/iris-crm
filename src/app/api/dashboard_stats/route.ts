@@ -58,12 +58,15 @@ export async function GET() {
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
-    // Pendientes manual — counts
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('conversation_state', 'en_proceso'),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('conversation_state', 'done'),
+    // Pendientes manual — counts (include status fallback for contacts without conversation_state column)
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
+      .or('conversation_state.eq.en_proceso,status.eq.en_proceso'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
+      .or('conversation_state.eq.done,status.eq.en_proceso'),
 
     // IDs of contacts being handled by operators (needed for phase 2)
-    supabaseAdmin.from('contacts').select('id').in('conversation_state', ['done', 'en_proceso']),
+    supabaseAdmin.from('contacts').select('id')
+      .or('conversation_state.eq.done,conversation_state.eq.en_proceso,status.eq.en_proceso'),
   ]);
 
   // ── Phase 2: metrics that depend on op contact IDs ─────────────────────────

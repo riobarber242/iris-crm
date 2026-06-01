@@ -29,40 +29,72 @@ export default function ConversationsClient() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       {conversations.map((contact) => {
-        const lastMessage = contact.messages?.[0];
+        const messages: any[] = contact.messages ?? [];
+        const lastMessage     = messages[0];
+
+        // Count consecutive inbound messages from the top (user spoke last, no reply yet)
+        let unreadCount = 0;
+        for (const msg of messages) {
+          if (msg.role === 'user') unreadCount++;
+          else break;
+        }
+        const hasUnread = unreadCount > 0;
+
         return (
           <Link key={contact.id} href={`/conversations/${contact.id}`} style={{ textDecoration: 'none' }}>
             <div
               style={{
-                background: '#FFFFFF',
+                background: hasUnread ? '#fffef5' : '#FFFFFF',
                 borderRadius: '16px',
                 padding: '16px 20px',
-                boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
+                boxShadow: hasUnread
+                  ? '0 1px 8px rgba(0,0,0,0.06), inset 3px 0 0 #C8FF00'
+                  : '0 1px 8px rgba(0,0,0,0.06)',
                 transition: 'box-shadow 0.15s',
                 cursor: 'pointer',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  <p style={{ fontSize: '15px', fontWeight: 700, color: '#000', margin: 0 }}>
+                  <p style={{ fontSize: '15px', fontWeight: hasUnread ? 800 : 700, color: '#000', margin: 0 }}>
                     {contact.name || contact.phone}
                   </p>
                   <p style={{ fontSize: '12px', color: '#999', margin: '2px 0 0 0' }}>{contact.phone}</p>
                 </div>
-                <span
-                  style={{
-                    background: contact.status === 'activo' || contact.status === 'en_proceso' ? '#C8FF00' : '#F0F0F0',
-                    color: contact.status === 'activo' || contact.status === 'en_proceso' ? '#000' : '#888',
-                    borderRadius: '999px',
-                    padding: '4px 12px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  {contact.status}
-                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {hasUnread && (
+                    <span style={{
+                      background: '#25D366',
+                      color: '#fff',
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      minWidth: '20px',
+                      height: '20px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 6px',
+                    }}>
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                  <span
+                    style={{
+                      background: contact.status === 'activo' || contact.status === 'en_proceso' ? '#C8FF00' : '#F0F0F0',
+                      color: contact.status === 'activo' || contact.status === 'en_proceso' ? '#000' : '#888',
+                      borderRadius: '999px',
+                      padding: '4px 12px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                    }}
+                  >
+                    {contact.status}
+                  </span>
+                </div>
               </div>
 
               {lastMessage && (
@@ -74,7 +106,7 @@ export default function ConversationsClient() {
                     padding: '10px 14px',
                   }}
                 >
-                  <p style={{ fontSize: '13px', color: '#666', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <p style={{ fontSize: '13px', color: hasUnread ? '#333' : '#666', fontWeight: hasUnread ? 600 : 400, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {lastMessage.content}
                   </p>
                   <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0' }}>
