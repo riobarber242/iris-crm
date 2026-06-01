@@ -1,78 +1,90 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
-import { sendWhatsAppText, fetchWhatsAppMediaUrl } from './client';
+import { sendWhatsAppText } from './client';
 import { supabaseAdmin } from '../db';
-import { generateAmountFromImage } from '../groq';
 
 const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY     = 'bot_enabled';
 
-// ─── Storage helpers ──────────────────────────────────────────────────────────
+// ─── Image: full 4-step flow ──────────────────────────────────────────────────
+// Step 1: GET graph.facebook.com/v18.0/{mediaId}?fields=url  → temporary download URL
+// Step 2: GET that download URL with Bearer token             → image buffer
+// Step 3: Upload buffer to Supabase Storage (service role)   → stored file
+// Step 4: Construct permanent public URL manually             → saved to DB
 
-function getExtensionFromUrl(url: string, contentType?: string) {
-  try {
-    const ext = new URL(url).pathname.split('.').pop();
-    if (ext && ext.length <= 5) return ext.split('?')[0];
-  } catch {}
-  if (contentType?.includes('jpeg')) return 'jpg';
-  if (contentType?.includes('png'))  return 'png';
-  if (contentType?.includes('gif'))  return 'gif';
-  if (contentType?.includes('webp')) return 'webp';
-  return 'jpg';
-}
+async function saveComprobanteImage(mediaId: string, contactId: string): Promise<string | null> {
+  const waToken  = process.env.WHATSAPP_ACCESS_TOKEN;
+  const supaUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-async function downloadMediaBuffer(url: string) {
-  const token   = process.env.WHATSAPP_ACCESS_TOKEN;
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  const response = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer', headers });
-  return {
-    buffer:      Buffer.from(response.data),
-    contentType: response.headers['content-type'] as string | undefined,
-  };
-}
-
-async function ensureStorageBucket() {
-  try {
-    const { error } = await supabaseAdmin.storage.getBucket(COMPROBANTES_BUCKET);
-    if (error && /not found|404/i.test(error.message)) {
-      await supabaseAdmin.storage.createBucket(COMPROBANTES_BUCKET, { public: true });
-      console.log(`[storage] Bucket '${COMPROBANTES_BUCKET}' creado`);
-    }
-  } catch (err) {
-    console.error('[ensureStorageBucket]', err);
-  }
-}
-
-async function uploadComprobanteImage(imageUrl: string, contactId: string): Promise<string | null> {
-  try {
-    await ensureStorageBucket();
-    const { buffer, contentType } = await downloadMediaBuffer(imageUrl);
-    const ext      = getExtensionFromUrl(imageUrl, contentType);
-    const filePath = `${contactId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-    console.log(`[uploadComprobanteImage] Subiendo → path=${filePath} contentType=${contentType}`);
-
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-      .from(COMPROBANTES_BUCKET)
-      .upload(filePath, buffer, { contentType, upsert: false });
-
-    if (uploadError) {
-      console.error('[uploadComprobanteImage] Upload error:', uploadError.message);
-      return null;
-    }
-
-    console.log('[uploadComprobanteImage] OK path:', uploadData?.path);
-
-    const { data: pub } = await supabaseAdmin.storage
-      .from(COMPROBANTES_BUCKET)
-      .getPublicUrl(filePath);
-
-    console.log('[uploadComprobanteImage] Public URL:', pub?.publicUrl);
-    return pub?.publicUrl ?? null;
-  } catch (err) {
-    console.error('[uploadComprobanteImage] Error general:', err);
+  if (!waToken) {
+    console.error('[saveComprobanteImage] WHATSAPP_ACCESS_TOKEN no configurado');
     return null;
   }
+  if (!supaUrl) {
+    console.error('[saveComprobanteImage] NEXT_PUBLIC_SUPABASE_URL no configurado');
+    return null;
+  }
+
+  // ── Step 1: resolve download URL from Graph API ──────────────────────────
+  let downloadUrl: string;
+  try {
+    const metaRes = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${waToken}` },
+      params:  { fields: 'url' },
+      timeout: 15000,
+    });
+    downloadUrl = metaRes.data?.url as string;
+    if (!downloadUrl) throw new Error('Graph API no devolvió url en la respuesta');
+    console.log(`[saveComprobanteImage] Step1 ✓ downloadUrl: ${downloadUrl.slice(0, 80)}`);
+  } catch (err: any) {
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[saveComprobanteImage] Step1 ✗ Error Graph API: ${detail}`);
+    return null;
+  }
+
+  // ── Step 2: download image buffer with Bearer token ──────────────────────
+  let buffer: Buffer;
+  let contentType: string;
+  try {
+    const imgRes = await axios.get<ArrayBuffer>(downloadUrl, {
+      responseType: 'arraybuffer',
+      headers:      { Authorization: `Bearer ${waToken}` },
+      timeout:      30000,
+    });
+    buffer      = Buffer.from(imgRes.data);
+    contentType = (imgRes.headers['content-type'] as string) || 'image/jpeg';
+    console.log(`[saveComprobanteImage] Step2 ✓ ${buffer.length} bytes, contentType=${contentType}`);
+  } catch (err: any) {
+    const detail = err?.response?.data ? JSON.stringify(err.response.data) : err.message;
+    console.error(`[saveComprobanteImage] Step2 ✗ Error descargando imagen: ${detail}`);
+    return null;
+  }
+
+  // ── Step 3: upload to Supabase Storage ───────────────────────────────────
+  const ext      = contentType.includes('png') ? 'png'
+                 : contentType.includes('webp') ? 'webp'
+                 : contentType.includes('gif')  ? 'gif'
+                 : 'jpg';
+  const filePath = `${contactId}/${Date.now()}.${ext}`;
+
+  console.log(`[saveComprobanteImage] Step3 uploading → comprobantes/${filePath}`);
+
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from(COMPROBANTES_BUCKET)
+    .upload(filePath, buffer, { contentType, upsert: true });
+
+  if (uploadError) {
+    console.error(`[saveComprobanteImage] Step3 ✗ Supabase Storage error: ${uploadError.message}`);
+    return null;
+  }
+
+  console.log(`[saveComprobanteImage] Step3 ✓ archivo guardado en Storage`);
+
+  // ── Step 4: build permanent public URL ───────────────────────────────────
+  // Format: {SUPABASE_URL}/storage/v1/object/public/comprobantes/{filePath}
+  const publicUrl = `${supaUrl}/storage/v1/object/public/${COMPROBANTES_BUCKET}/${filePath}`;
+  console.log(`[saveComprobanteImage] Step4 ✓ publicUrl: ${publicUrl}`);
+  return publicUrl;
 }
 
 // ─── Webhook entry ────────────────────────────────────────────────────────────
@@ -230,40 +242,26 @@ async function processMessage(
   // ─── IMAGE / DOCUMENT ─────────────────────────────────────────────────────
   if (type === 'image' || type === 'document') {
     const mediaId = message.image?.id ?? message.document?.id ?? null;
-    console.log(`[image] mediaId=${mediaId}`);
+    console.log(`[image] Procesando: type=${type} mediaId=${mediaId}`);
 
-    let supabaseImageUrl: string | null = null;
+    // Full 4-step flow: Graph API → download → Supabase Storage → permanent URL
+    // NEVER saves a Facebook/lookaside URL — only the Supabase public URL or null
+    const supabaseImageUrl = mediaId
+      ? await saveComprobanteImage(mediaId, contact.id)
+      : null;
 
-    if (mediaId) {
-      let downloadUrl: string | null = null;
-      try {
-        downloadUrl = await fetchWhatsAppMediaUrl(mediaId);
-        console.log(`[image] downloadUrl=${downloadUrl?.slice(0, 80)}`);
-      } catch (err) {
-        console.error('[image] Error obteniendo downloadUrl:', err);
-      }
-
-      if (downloadUrl) {
-        supabaseImageUrl = await uploadComprobanteImage(downloadUrl, contact.id);
-      }
-    } else {
-      console.warn('[image] Sin mediaId en el mensaje');
-    }
-
-    console.log(`[image] supabaseImageUrl=${supabaseImageUrl}`);
-
-    const amount = supabaseImageUrl
-      ? await generateAmountFromImage(supabaseImageUrl).catch(() => 0)
-      : 0;
+    if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
+    if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
 
     try {
       const { error } = await supabaseAdmin.from('comprobantes').insert({
         contact_id: contact.id,
-        image_url:  supabaseImageUrl,   // null if upload failed — NEVER a Facebook URL
-        monto:      amount,
+        image_url:  supabaseImageUrl,  // permanent Supabase URL, or null if upload failed
+        monto:      0,
         estado:     'pendiente',
       });
-      if (error) console.error('[image] Error guardando comprobante:', error.message);
+      if (error) console.error('[image] Error guardando comprobante en DB:', error.message);
+      else       console.log('[image] Comprobante guardado OK');
     } catch (err) {
       console.error('[image] Excepción guardando comprobante:', err);
     }
