@@ -299,11 +299,11 @@ async function processMessage(
     return;
   }
 
-  // NOMBRE ASIGNADO = contacto ya fue atendido manualmente → bot inactivo.
-  // Regla definitiva: si el contacto tiene nombre, un operador lo atendió.
+  // USUARIO CASINO ASIGNADO = contacto ya fue atendido manualmente → bot inactivo.
+  // Regla definitiva: si el operador asignó casino_username, el bot no interfiere.
   // Las imágenes ya fueron procesadas arriba (siempre se guardan como comprobantes).
-  if (contact.name && contact.name.trim() !== '') {
-    console.log(`[bot] Contacto con nombre "${contact.name}" — bot silenciado`);
+  if (contact.casino_username && contact.casino_username.trim() !== '') {
+    console.log(`[bot] Contacto con casino_username "${contact.casino_username}" — bot silenciado`);
     return;
   }
 

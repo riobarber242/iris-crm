@@ -64,7 +64,6 @@ export default async function ConversationPage({ params }: any) {
 
         <ContactHeader
           contactId={contact.id}
-          initialName={contact.name}
           phone={contact.phone}
           initialCasinoUsername={contact.casino_username}
         />

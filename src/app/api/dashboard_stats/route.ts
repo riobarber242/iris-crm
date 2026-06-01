@@ -49,7 +49,7 @@ export async function GET() {
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'vip'),
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'activo'),
     supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'frio'),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).not('name', 'is', null).neq('name', ''),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).not('casino_username', 'is', null).neq('casino_username', ''),
 
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
 

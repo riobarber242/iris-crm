@@ -4,12 +4,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 
 type ContactRow = {
-  id:             string;
-  name:           string;
-  phone:          string;
-  status:         string;
-  casino_username: string | null;
-  created_at:     string;
+  id:              string;
+  phone:           string;
+  status:          string;
+  casino_username: string;
+  created_at:      string;
 };
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
@@ -43,9 +42,8 @@ export default function ContactsClient() {
     const q = query.toLowerCase().trim();
     if (!q) return contacts;
     return contacts.filter(c =>
-      c.name?.toLowerCase().includes(q) ||
-      c.phone?.includes(q) ||
-      (c.casino_username ?? '').toLowerCase().includes(q),
+      c.casino_username?.toLowerCase().includes(q) ||
+      c.phone?.includes(q),
     );
   }, [contacts, query]);
 
@@ -84,7 +82,7 @@ export default function ContactsClient() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '44px 1fr 1fr 1fr 100px 130px 44px',
+            gridTemplateColumns: '44px 1fr 1fr 100px 130px 44px',
             gap: '12px',
             padding: '8px 16px',
             fontSize: '11px',
@@ -94,7 +92,6 @@ export default function ContactsClient() {
             letterSpacing: '0.06em',
           }}>
             <span />
-            <span>Nombre</span>
             <span>Usuario casino</span>
             <span>Teléfono</span>
             <span>Estado</span>
@@ -103,12 +100,12 @@ export default function ContactsClient() {
           </div>
 
           {filtered.map((c) => {
-            const initial = c.name.charAt(0).toUpperCase();
+            const initial = (c.casino_username || c.phone).charAt(0).toUpperCase();
             const sc      = STATUS_COLOR[c.status] ?? STATUS_COLOR.nuevo;
             return (
               <div key={c.id} style={{
                 display: 'grid',
-                gridTemplateColumns: '44px 1fr 1fr 1fr 100px 130px 44px',
+                gridTemplateColumns: '44px 1fr 1fr 100px 130px 44px',
                 gap: '12px',
                 alignItems: 'center',
                 background: '#fff',
@@ -125,14 +122,9 @@ export default function ContactsClient() {
                   {initial}
                 </div>
 
-                {/* Nombre */}
+                {/* Usuario casino */}
                 <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {c.name}
-                </p>
-
-                {/* Casino username */}
-                <p style={{ margin: 0, fontSize: '13px', color: c.casino_username ? '#444' : '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {c.casino_username || '—'}
+                  🎰 {c.casino_username}
                 </p>
 
                 {/* Teléfono */}
