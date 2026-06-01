@@ -19,12 +19,14 @@ const ESTADO_STYLE: Record<string, React.CSSProperties> = {
 };
 
 export default function ComprobantesClient() {
-  const [comprobantes, setComprobantes] = useState<ComprobanteItem[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState<string | null>(null);
-  const [lightbox, setLightbox]         = useState<string | null>(null);
-  const supabaseRef                     = useRef<SupabaseClient | null>(null);
-  const channelRef                      = useRef<any>(null);
+  const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState<string | null>(null);
+  const [lightbox, setLightbox]               = useState<string | null>(null);
+  const [confirmingId, setConfirmingId]       = useState<string | null>(null);
+  const [montoInput, setMontoInput]           = useState('');
+  const supabaseRef                           = useRef<SupabaseClient | null>(null);
+  const channelRef                            = useRef<any>(null);
 
   // Full fetch — shows spinner (initial load only)
   async function fetchComprobantes() {
@@ -50,18 +52,27 @@ export default function ComprobantesClient() {
     } catch {}
   }
 
-  async function updateComprobante(id: string, action: 'verificar' | 'rechazar') {
+  async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number) {
     try {
+      const body: Record<string, any> = { comprobanteId: id, action };
+      if (monto !== undefined) body.monto = monto;
       const res = await fetch('/api/comprobantes', {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ comprobanteId: id, action }),
+        body:    JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-      await fetchComprobantes();
+      await fetchSilent();
     } catch {
       setError('No se pudo actualizar el comprobante.');
     }
+  }
+
+  async function confirmVerify(id: string) {
+    const monto = parseFloat(montoInput.replace(',', '.')) || 0;
+    setConfirmingId(null);
+    setMontoInput('');
+    await updateComprobante(id, 'verificar', monto);
   }
 
   useEffect(() => {
@@ -229,32 +240,77 @@ export default function ComprobantesClient() {
 
                 {/* Row 3: action buttons (only for pending) */}
                 {item.estado === 'pendiente' && (
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
-                    <button
-                      onClick={() => updateComprobante(item.id, 'verificar')}
-                      style={{
-                        background: '#C8FF00', color: '#000',
-                        fontWeight: 700, fontSize: '12px',
-                        border: 'none', borderRadius: '8px',
-                        padding: '5px 14px', cursor: 'pointer',
-                        boxShadow: '0 2px 0 #8ab000',
-                      }}
-                    >
-                      ✓ Verificar
-                    </button>
-                    <button
-                      onClick={() => updateComprobante(item.id, 'rechazar')}
-                      style={{
-                        background: '#1a1a1a', color: '#fff',
-                        fontWeight: 700, fontSize: '12px',
-                        border: 'none', borderRadius: '8px',
-                        padding: '5px 14px', cursor: 'pointer',
-                        boxShadow: '0 2px 0 #000',
-                      }}
-                    >
-                      ✕ Rechazar
-                    </button>
-                  </div>
+                  confirmingId === item.id ? (
+                    /* Inline monto input before confirming */
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={montoInput}
+                        onChange={(e) => setMontoInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') confirmVerify(item.id); if (e.key === 'Escape') setConfirmingId(null); }}
+                        placeholder="Monto $"
+                        autoFocus
+                        style={{
+                          width: '110px', padding: '5px 10px',
+                          border: '2px solid #C8FF00', borderRadius: '8px',
+                          fontSize: '13px', fontWeight: 700, outline: 'none',
+                          background: '#f9ffe0',
+                        }}
+                      />
+                      <button
+                        onClick={() => confirmVerify(item.id)}
+                        style={{
+                          background: '#C8FF00', color: '#000',
+                          fontWeight: 700, fontSize: '12px',
+                          border: 'none', borderRadius: '8px',
+                          padding: '5px 12px', cursor: 'pointer',
+                          boxShadow: '0 2px 0 #8ab000',
+                        }}
+                      >
+                        ✓ OK
+                      </button>
+                      <button
+                        onClick={() => setConfirmingId(null)}
+                        style={{
+                          background: 'transparent', color: '#888',
+                          fontWeight: 700, fontSize: '12px',
+                          border: '1px solid #ddd', borderRadius: '8px',
+                          padding: '5px 10px', cursor: 'pointer',
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                      <button
+                        onClick={() => { setConfirmingId(item.id); setMontoInput(String(item.monto ?? '')); }}
+                        style={{
+                          background: '#C8FF00', color: '#000',
+                          fontWeight: 700, fontSize: '12px',
+                          border: 'none', borderRadius: '8px',
+                          padding: '5px 14px', cursor: 'pointer',
+                          boxShadow: '0 2px 0 #8ab000',
+                        }}
+                      >
+                        ✓ Verificar
+                      </button>
+                      <button
+                        onClick={() => updateComprobante(item.id, 'rechazar')}
+                        style={{
+                          background: '#1a1a1a', color: '#fff',
+                          fontWeight: 700, fontSize: '12px',
+                          border: 'none', borderRadius: '8px',
+                          padding: '5px 14px', cursor: 'pointer',
+                          boxShadow: '0 2px 0 #000',
+                        }}
+                      >
+                        ✕ Rechazar
+                      </button>
+                    </div>
+                  )
                 )}
               </div>
             </div>

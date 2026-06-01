@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 type Stats = {
@@ -19,16 +20,17 @@ function money(n: number) {
   return `$${n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
-type MetricCardProps = { label: string; value: string; highlight?: boolean };
+type MetricCardProps = { label: string; value: string; highlight?: boolean; href?: string };
 
-function MetricCard({ label, value, highlight }: MetricCardProps) {
-  return (
+function MetricCard({ label, value, highlight, href }: MetricCardProps) {
+  const inner = (
     <div
       className={highlight ? 'card-3d-lime' : 'card-3d'}
       style={{
         background: highlight ? '#C8FF00' : '#FFFFFF',
         borderRadius: '16px',
         padding: '16px 18px',
+        cursor: href ? 'pointer' : 'default',
       }}
     >
       <p style={{
@@ -52,6 +54,9 @@ function MetricCard({ label, value, highlight }: MetricCardProps) {
       </p>
     </div>
   );
+  return href
+    ? <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>{inner}</Link>
+    : inner;
 }
 
 type ColumnProps = { title: string; icon: string; children: React.ReactNode };
@@ -146,41 +151,41 @@ export default function DashboardClient() {
 
       {/* COLUMNA 1 — CONVERSACIONES */}
       <Column title="Conversaciones" icon="💬">
-        <MetricCard label="Hoy"          value={fmt(stats.convToday)}     highlight={stats.convToday > 0} />
-        <MetricCard label="Esta semana"  value={fmt(stats.convWeek)} />
-        <MetricCard label="Este mes"     value={fmt(stats.convMonth)} />
-        <MetricCard label="Mes anterior" value={fmt(stats.convPrevMonth)} />
+        <MetricCard label="Hoy"          value={fmt(stats.convToday)}     highlight={stats.convToday > 0} href="/conversations" />
+        <MetricCard label="Esta semana"  value={fmt(stats.convWeek)}                                     href="/conversations" />
+        <MetricCard label="Este mes"     value={fmt(stats.convMonth)}                                    href="/conversations" />
+        <MetricCard label="Mes anterior" value={fmt(stats.convPrevMonth)}                                href="/conversations" />
       </Column>
 
       {/* COLUMNA 2 — CONTACTOS NUEVOS */}
       <Column title="Contactos nuevos" icon="👤">
-        <MetricCard label="Hoy"          value={fmt(stats.newToday)}     highlight={stats.newToday > 0} />
-        <MetricCard label="Esta semana"  value={fmt(stats.newWeek)} />
-        <MetricCard label="Este mes"     value={fmt(stats.newMonth)} />
-        <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)} />
+        <MetricCard label="Hoy"          value={fmt(stats.newToday)}     highlight={stats.newToday > 0} href="/conversations" />
+        <MetricCard label="Esta semana"  value={fmt(stats.newWeek)}                                     href="/conversations" />
+        <MetricCard label="Este mes"     value={fmt(stats.newMonth)}                                    href="/conversations" />
+        <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)}                                href="/conversations" />
       </Column>
 
       {/* COLUMNA 3 — ESTADO DE CONTACTOS */}
       <Column title="Estado contactos" icon="📊">
-        <MetricCard label="VIP"    value={fmt(stats.vipTotal)}    highlight={stats.vipTotal > 0} />
-        <MetricCard label="Activo" value={fmt(stats.activoTotal)} />
-        <MetricCard label="Frío"   value={fmt(stats.frioTotal)} />
+        <MetricCard label="VIP"    value={fmt(stats.vipTotal)}    highlight={stats.vipTotal > 0} href="/conversations" />
+        <MetricCard label="Activo" value={fmt(stats.activoTotal)}                                href="/conversations" />
+        <MetricCard label="Frío"   value={fmt(stats.frioTotal)}                                  href="/conversations" />
       </Column>
 
       {/* COLUMNA 4 — PENDIENTES MANUAL */}
       <Column title="Pendientes manual" icon="👤">
-        <MetricCard label="Sin responder"   value={fmt(stats.sinResponder)}   highlight={stats.sinResponder > 0} />
-        <MetricCard label="Activos hoy"     value={fmt(stats.activosHoy)}     highlight={stats.activosHoy > 0} />
-        <MetricCard label="Total en proceso" value={fmt(stats.totalEnProceso)} />
-        <MetricCard label="Total done"       value={fmt(stats.totalDone)} />
+        <MetricCard label="Sin responder"    value={fmt(stats.sinResponder)}   highlight={stats.sinResponder > 0} href="/conversations" />
+        <MetricCard label="Activos hoy"      value={fmt(stats.activosHoy)}     highlight={stats.activosHoy > 0}   href="/conversations" />
+        <MetricCard label="Total en proceso" value={fmt(stats.totalEnProceso)}                                    href="/conversations" />
+        <MetricCard label="Total done"       value={fmt(stats.totalDone)}                                         href="/conversations" />
       </Column>
 
       {/* COLUMNA 5 — FINANZAS */}
       <Column title="Finanzas" icon="💰">
-        <MetricCard label="Pendientes"     value={fmt(stats.comprobantesPending)} highlight={stats.comprobantesPending > 0} />
-        <MetricCard label="Verif. hoy"     value={money(stats.montoVerifHoy)} />
-        <MetricCard label="Verif. mes"     value={money(stats.montoVerifMes)} />
-        <MetricCard label="Mes anterior"   value={money(stats.montoVerifMesAnterior)} />
+        <MetricCard label="Pendientes"   value={fmt(stats.comprobantesPending)} highlight={stats.comprobantesPending > 0} href="/comprobantes" />
+        <MetricCard label="Verif. hoy"   value={money(stats.montoVerifHoy)}                                               href="/comprobantes" />
+        <MetricCard label="Verif. mes"   value={money(stats.montoVerifMes)}                                               href="/comprobantes" />
+        <MetricCard label="Mes anterior" value={money(stats.montoVerifMesAnterior)}                                       href="/comprobantes" />
       </Column>
 
     </div>

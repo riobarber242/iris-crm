@@ -30,36 +30,30 @@ export async function PATCH(request: Request) {
   }
 
   const estado = action === 'verificar' ? 'verificado' : 'rechazado';
-  const { data: comprobante, error: fetchError } = await supabaseAdmin
-    .from('comprobantes')
-    .select('*')
-    .eq('id', comprobanteId)
-    .single();
 
+  const { data: comprobante, error: fetchError } = await supabaseAdmin
+    .from('comprobantes').select('*').eq('id', comprobanteId).single();
   if (fetchError || !comprobante) {
     return new NextResponse('Comprobante no encontrado', { status: 404 });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from('comprobantes')
-    .update({ estado })
-    .eq('id', comprobanteId)
-    .select('*')
-    .single();
-
-  if (error) {
-    return new NextResponse(error.message, { status: 500 });
+  // Accept optional monto from operator input
+  const updatePayload: Record<string, any> = { estado };
+  if (body.monto !== undefined) {
+    const parsed = Number(body.monto);
+    if (!isNaN(parsed) && parsed >= 0) updatePayload.monto = parsed;
   }
 
-  if (estado === 'verificado' && comprobante.monto) {
-    const { data: contact, error: contactError } = await supabaseAdmin
-      .from('contacts')
-      .select('phone')
-      .eq('id', comprobante.contact_id)
-      .single();
+  const { data, error } = await supabaseAdmin
+    .from('comprobantes').update(updatePayload).eq('id', comprobanteId).select('*').single();
+  if (error) return new NextResponse(error.message, { status: 500 });
 
+  const efectiveMonto = updatePayload.monto ?? comprobante.monto;
+  if (estado === 'verificado' && efectiveMonto) {
+    const { data: contact, error: contactError } = await supabaseAdmin
+      .from('contacts').select('phone').eq('id', comprobante.contact_id).single();
     if (!contactError && contact?.phone) {
-      await sendMetaPurchaseEvent(contact.phone, Number(comprobante.monto));
+      await sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto));
     }
   }
 
