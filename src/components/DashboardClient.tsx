@@ -102,22 +102,26 @@ export default function DashboardClient() {
   useEffect(() => {
     fetchStats();
 
+    // Polling every 15 s — guaranteed refresh regardless of Realtime status
+    const interval = setInterval(fetchStats, 15_000);
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (!url || !key) return;
-
-    supabaseRef.current = createClient(url, key);
-    const channel = supabaseRef.current
-      .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     fetchStats)
-      .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, fetchStats)
-      .on('postgres_changes', { event: '*',      schema: 'public', table: 'leads' },        fetchStats)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },     fetchStats)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' },     fetchStats)
-      .subscribe();
-    channelRef.current = channel;
+    if (url && key) {
+      supabaseRef.current = createClient(url, key);
+      const channel = supabaseRef.current
+        .channel('realtime-dashboard')
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     fetchStats)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, fetchStats)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'leads' },        fetchStats)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },     fetchStats)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' },     fetchStats)
+        .subscribe();
+      channelRef.current = channel;
+    }
 
     return () => {
+      clearInterval(interval);
       try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
     };
   }, []);

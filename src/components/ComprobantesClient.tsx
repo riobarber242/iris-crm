@@ -26,6 +26,7 @@ export default function ComprobantesClient() {
   const supabaseRef                     = useRef<SupabaseClient | null>(null);
   const channelRef                      = useRef<any>(null);
 
+  // Full fetch — shows spinner (initial load only)
   async function fetchComprobantes() {
     setLoading(true);
     setError(null);
@@ -38,6 +39,15 @@ export default function ComprobantesClient() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Silent refresh — no spinner, no flicker (used by polling & Realtime)
+  async function fetchSilent() {
+    try {
+      const res = await fetch('/api/comprobantes');
+      if (!res.ok) return;
+      setComprobantes(await res.json());
+    } catch {}
   }
 
   async function updateComprobante(id: string, action: 'verificar' | 'rechazar') {
@@ -56,16 +66,23 @@ export default function ComprobantesClient() {
 
   useEffect(() => {
     fetchComprobantes();
+
+    // Polling every 10 s — works even if Supabase Realtime isn't configured
+    const interval = setInterval(fetchSilent, 10_000);
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (!url || !key) return;
-    supabaseRef.current = createClient(url, key);
-    const ch = supabaseRef.current
-      .channel('realtime-comprobantes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, fetchComprobantes)
-      .subscribe();
-    channelRef.current = ch;
+    if (url && key) {
+      supabaseRef.current = createClient(url, key);
+      const ch = supabaseRef.current
+        .channel('realtime-comprobantes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, fetchSilent)
+        .subscribe();
+      channelRef.current = ch;
+    }
+
     return () => {
+      clearInterval(interval);
       try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
     };
   }, []);
