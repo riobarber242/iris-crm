@@ -82,15 +82,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Toggle Bot/Humano */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           <span style={{
-            fontSize: '14px',
+            fontSize: '18px',
             fontWeight: 900,
             color: '#000',
             letterSpacing: '2px',
             textTransform: 'uppercase',
             opacity: mounted ? 1 : 0,
             transition: 'opacity 0.2s',
+            lineHeight: 1,
           }}>
             {botEnabled ? 'BOT' : 'HUMANO'}
           </span>
