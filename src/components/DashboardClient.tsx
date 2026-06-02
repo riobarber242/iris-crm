@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import DashboardCharts from './DashboardCharts';
 
 type Stats = {
   convToday: number; convWeek: number; convMonth: number; convPrevMonth: number;
@@ -190,5 +191,6 @@ export default function DashboardClient() {
       </Column>
 
     </div>
+    <DashboardCharts />
   );
 }
