@@ -2,6 +2,17 @@ import axios from 'axios';
 import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText } from './client';
 import { supabaseAdmin } from '../db';
+import { irisSystemPrompt } from '../system-prompt';
+
+async function getSystemPrompt(): Promise<string> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('settings').select('value').eq('key', 'system_prompt').limit(1).maybeSingle();
+    return data?.value ?? irisSystemPrompt;
+  } catch {
+    return irisSystemPrompt;
+  }
+}
 
 const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY     = 'bot_enabled';

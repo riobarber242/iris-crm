@@ -55,7 +55,7 @@ export async function GET() {
   const [
     convTodayRes, convWeekRes, convMonthRes, convPrevMonthRes,
     newToday, newWeek, newMonth, newPrevMonth,
-    vipLeads, activeLeads, coldLeads, scheduledContacts,
+    clienteActivoRes, inactivoRes, nuevoStatusRes, scheduledContacts,
     comprobantesPending,
     montoHoyRes, montoMesRes, montoPrevRes,
     totalEnProcesoRes, totalDoneRes,
@@ -77,10 +77,10 @@ export async function GET() {
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
-    // Leads
-    supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'vip'),
-    supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'activo'),
-    supabaseAdmin.from('leads').select('id', { count: 'exact', head: true }).eq('score', 'frio'),
+    // Contactos por status real
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'cliente_activo'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'inactivo'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'nuevo'),
     // Agendados: contacts with casino_username assigned by operator
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
       .not('casino_username', 'is', null).neq('casino_username', ''),
@@ -142,10 +142,14 @@ export async function GET() {
     newMonth:     newMonth.count     ?? 0,
     newPrevMonth: newPrevMonth.count ?? 0,
 
-    vipTotal:       vipLeads.count        ?? 0,
-    activoTotal:    activeLeads.count     ?? 0,
-    frioTotal:      coldLeads.count       ?? 0,
-    scheduledTotal: scheduledContacts.count ?? 0,
+    clienteActivoTotal: clienteActivoRes.count ?? 0,
+    inactivoTotal:      inactivoRes.count      ?? 0,
+    nuevoTotal:         nuevoStatusRes.count   ?? 0,
+    scheduledTotal:     scheduledContacts.count ?? 0,
+    // Legacy aliases kept for type compat — now equal to real status counts
+    vipTotal:   clienteActivoRes.count ?? 0,
+    activoTotal: inactivoRes.count     ?? 0,
+    frioTotal:   nuevoStatusRes.count  ?? 0,
 
     comprobantesPending:   comprobantesPending.count ?? 0,
     montoVerifHoy:         sumMonto(montoHoyRes.data  ?? []),

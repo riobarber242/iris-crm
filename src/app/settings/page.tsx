@@ -4,6 +4,7 @@ import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import BotToggle from '@/components/BotToggle';
 import CronRunner from '@/components/CronRunner';
+import SystemPromptEditor from '@/components/SystemPromptEditor';
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
@@ -24,6 +25,10 @@ export default async function SettingsPage() {
 
         <SectionCard title="Clasificación de contactos" description="Forzá la actualización de estados sin esperar el cron diario.">
           <CronRunner />
+        </SectionCard>
+
+        <SectionCard title="Prompt del bot" description="Texto base que define la personalidad y reglas de Iris. Se guarda en la base de datos y tiene prioridad sobre el código.">
+          <SystemPromptEditor />
         </SectionCard>
 
         <SectionCard title="Variables de sistema" description="Configuración interna del CRM.">

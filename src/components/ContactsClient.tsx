@@ -12,10 +12,11 @@ type ContactRow = {
 };
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
-  nuevo:       { bg: '#F0F0F0', fg: '#888' },
-  en_proceso:  { bg: '#C8FF00', fg: '#000' },
-  activo:      { bg: '#C8FF00', fg: '#000' },
-  done:        { bg: '#e8f5e9', fg: '#2e7d32' },
+  nuevo:          { bg: '#F0F0F0', fg: '#888' },
+  en_proceso:     { bg: '#fff8d6', fg: '#b8860b' },
+  cliente_activo: { bg: '#C8FF00', fg: '#000' },
+  inactivo:       { bg: '#888',    fg: '#fff' },
+  bloqueado:      { bg: '#FF4444', fg: '#fff' },
 };
 
 export default function ContactsClient() {
