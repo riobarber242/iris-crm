@@ -61,6 +61,23 @@ export async function sendWhatsAppImage(to: string, imageUrl: string, caption: s
   }
 }
 
+export async function sendWhatsAppAudio(to: string, audioUrl: string) {
+  const token   = getToken();
+  const phoneId = getPhoneNumberId();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  try {
+    await axios.post(
+      `${BASE_URL}/${phoneId}/messages`,
+      { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } },
+      { headers },
+    );
+  } catch (err: any) {
+    logApiError('sendWhatsAppAudio', err);
+    throw err;
+  }
+}
+
 export async function fetchWhatsAppMediaUrl(mediaId: string): Promise<string> {
   const token   = getToken();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
