@@ -61,6 +61,38 @@ export async function sendWhatsAppImage(to: string, imageUrl: string, caption: s
   }
 }
 
+export async function sendWhatsAppTemplate(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  variables: string[],
+) {
+  const token   = getToken();
+  const phoneId = getPhoneNumberId();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  const body: any = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: { name: templateName, language: { code: languageCode } },
+  };
+
+  if (variables.length > 0) {
+    body.template.components = [{
+      type: 'body',
+      parameters: variables.map((text) => ({ type: 'text', text })),
+    }];
+  }
+
+  try {
+    await axios.post(`${BASE_URL}/${phoneId}/messages`, body, { headers });
+  } catch (err: any) {
+    logApiError('sendWhatsAppTemplate', err);
+    throw err;
+  }
+}
+
 export async function sendWhatsAppAudio(to: string, audioUrl: string) {
   const token   = getToken();
   const phoneId = getPhoneNumberId();

@@ -7,32 +7,37 @@ export async function GET(request: Request) {
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (error) {
-    return new NextResponse(error.message, { status: 500 });
-  }
-
+  if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data);
 }
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { name, message, target_filter } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables } = body;
 
-  if (!name || !message) {
-    return new NextResponse('Faltan nombre o mensaje', { status: 400 });
+  if (!name) return new NextResponse('Falta nombre', { status: 400 });
+
+  const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
+
+  if (campaignType === 'texto_libre' && !message?.trim()) {
+    return new NextResponse('Falta mensaje', { status: 400 });
+  }
+  if (campaignType === 'template_meta' && !template_name?.trim()) {
+    return new NextResponse('Falta nombre de template', { status: 400 });
   }
 
   const { data, error } = await supabaseAdmin.from('campaigns').insert({
     name,
-    message,
-    target_filter: target_filter ?? 'todos',
-    status: 'borrador',
+    message:            campaignType === 'texto_libre' ? message : null,
+    target_filter:      target_filter ?? 'todos',
+    status:             'borrador',
+    type:               campaignType,
+    template_name:      campaignType === 'template_meta' ? template_name.trim() : null,
+    template_language:  campaignType === 'template_meta' ? (template_language ?? 'es') : null,
+    template_variables: campaignType === 'template_meta' ? (template_variables ?? []) : null,
   }).select('*').single();
 
-  if (error) {
-    return new NextResponse(error.message, { status: 500 });
-  }
-
+  if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data);
 }
 
@@ -40,7 +45,6 @@ export async function DELETE(request: Request) {
   const { campaignId } = await request.json();
   if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
 
-  // Only allow deleting drafts
   const { data: campaign } = await supabaseAdmin
     .from('campaigns').select('status').eq('id', campaignId).single();
   if (!campaign) return new NextResponse('No encontrada', { status: 404 });
@@ -55,23 +59,15 @@ export async function DELETE(request: Request) {
 
 export async function PATCH(request: Request) {
   const body = await request.json();
-  const campaignId = body.campaignId;
-  const status = body.status;
+  const { campaignId, status } = body;
 
   if (!campaignId || !['borrador', 'enviando', 'completada'].includes(status)) {
     return new NextResponse('Falta campaignId o estado válido', { status: 400 });
   }
 
   const { data, error } = await supabaseAdmin
-    .from('campaigns')
-    .update({ status })
-    .eq('id', campaignId)
-    .select('*')
-    .single();
+    .from('campaigns').update({ status }).eq('id', campaignId).select('*').single();
 
-  if (error) {
-    return new NextResponse(error.message, { status: 500 });
-  }
-
+  if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data);
 }

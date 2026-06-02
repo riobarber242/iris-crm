@@ -2,10 +2,16 @@
 
 import React, { useEffect, useState } from 'react';
 
+type CampaignType = 'texto_libre' | 'template_meta';
+
 type Campaign = {
   id: string;
   name: string;
-  message: string;
+  message: string | null;
+  type: CampaignType;
+  template_name: string | null;
+  template_language: string | null;
+  template_variables: string[] | null;
   target_filter: string;
   status: 'borrador' | 'enviando' | 'completada';
   sent_count: number;
@@ -22,21 +28,40 @@ const FILTERS = [
   { value: 'todos',          label: 'Todos los contactos' },
   { value: 'cliente_activo', label: 'Cliente activo' },
   { value: 'inactivo',       label: 'Inactivo' },
+  { value: 'inactivo_30d',   label: 'Inactivo sin recargar 30+ días' },
+  { value: 'inactivo_45d',   label: 'Inactivo sin recargar 45+ días' },
   { value: 'nuevo',          label: 'Nuevo' },
 ];
+
+const inputStyle: React.CSSProperties = {
+  background: '#F5F5F5', border: 'none', borderRadius: '10px',
+  padding: '10px 14px', fontSize: '14px', color: '#000', outline: 'none', width: '100%',
+  boxSizing: 'border-box',
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: '11px', fontWeight: 700, color: '#999',
+  textTransform: 'uppercase', letterSpacing: '0.08em',
+};
 
 export default function CampanasClient() {
   const [campaigns,      setCampaigns]      = useState<Campaign[]>([]);
   const [showForm,       setShowForm]       = useState(false);
   const [sending,        setSending]        = useState<string | null>(null);
-  const [name,           setName]           = useState('');
-  const [message,        setMessage]        = useState('');
-  const [filter,         setFilter]         = useState('todos');
-  const [creating,       setCreating]       = useState(false);
-  const [error,          setError]          = useState('');
   const [sendResult,     setSendResult]     = useState<{ campaignId: string; sent: number; total: number } | null>(null);
   const [recipientCount, setRecipientCount] = useState<number | null>(null);
   const [countLoading,   setCountLoading]   = useState(false);
+  const [creating,       setCreating]       = useState(false);
+  const [error,          setError]          = useState('');
+
+  // Form state
+  const [name,             setName]             = useState('');
+  const [campaignType,     setCampaignType]     = useState<CampaignType>('texto_libre');
+  const [filter,           setFilter]           = useState('todos');
+  const [message,          setMessage]          = useState('');
+  const [templateName,     setTemplateName]     = useState('');
+  const [templateLang,     setTemplateLang]     = useState('es');
+  const [templateVars,     setTemplateVars]     = useState<string[]>(['']);
 
   async function fetchCampaigns() {
     try {
@@ -56,7 +81,10 @@ export default function CampanasClient() {
     setCountLoading(true);
     setRecipientCount(null);
     try {
-      const param = f === 'todos' ? '?all=true' : `?status=${f}`;
+      const isInactivoDays = f === 'inactivo_30d' || f === 'inactivo_45d';
+      const param = isInactivoDays
+        ? `?status=inactivo`
+        : f === 'todos' ? '?all=true' : `?status=${f}`;
       const res = await fetch(`/api/contacts${param}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -70,13 +98,28 @@ export default function CampanasClient() {
     fetchRecipientCount(f);
   }
 
+  function resetForm() {
+    setName(''); setCampaignType('texto_libre'); setFilter('todos');
+    setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
+    setError(''); setRecipientCount(null);
+  }
+
+  function prefillReactivacion() {
+    setCampaignType('template_meta');
+    setName('Reactivación — Bono 20%');
+    setFilter('inactivo_30d');
+    setTemplateLang('es');
+    setTemplateName('');
+    setTemplateVars(['20%']);
+    fetchRecipientCount('inactivo_30d');
+  }
+
   async function handleDelete(campaign: Campaign) {
-    if (!confirm(`¿Eliminar la campaña "${campaign.name}"? Esta acción no se puede deshacer.`)) return;
+    if (!confirm(`¿Eliminar la campaña "${campaign.name}"?`)) return;
     try {
       await fetch('/api/campaigns', {
-        method:  'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ campaignId: campaign.id }),
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: campaign.id }),
       });
       await fetchCampaigns();
     } catch {}
@@ -84,24 +127,26 @@ export default function CampanasClient() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !message.trim()) {
-      setError('Completá el nombre y el mensaje.');
-      return;
-    }
-    setCreating(true);
-    setError('');
+    if (!name.trim()) { setError('Completá el nombre.'); return; }
+    if (campaignType === 'texto_libre' && !message.trim()) { setError('Completá el mensaje.'); return; }
+    if (campaignType === 'template_meta' && !templateName.trim()) { setError('Completá el nombre del template.'); return; }
+
+    setCreating(true); setError('');
     try {
+      const body: any = { name: name.trim(), target_filter: filter, type: campaignType };
+      if (campaignType === 'texto_libre') {
+        body.message = message.trim();
+      } else {
+        body.template_name      = templateName.trim();
+        body.template_language  = templateLang.trim() || 'es';
+        body.template_variables = templateVars.filter(Boolean);
+      }
       const res = await fetch('/api/campaigns', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name: name.trim(), message: message.trim(), target_filter: filter }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-      setName('');
-      setMessage('');
-      setFilter('todos');
-      setShowForm(false);
-      await fetchCampaigns();
+      resetForm(); setShowForm(false); await fetchCampaigns();
     } catch (err: any) {
       setError(err.message ?? 'Error al crear la campaña.');
     }
@@ -109,203 +154,219 @@ export default function CampanasClient() {
   }
 
   async function handleSend(campaign: Campaign) {
-    if (!confirm(`¿Enviar "${campaign.name}" a todos los contactos con filtro "${campaign.target_filter}"? Esta acción no se puede deshacer.`)) return;
-    setSending(campaign.id);
-    setSendResult(null);
+    const desc = campaign.type === 'template_meta'
+      ? `template "${campaign.template_name}"`
+      : 'este mensaje';
+    if (!confirm(`¿Enviar ${desc} a los contactos con filtro "${campaign.target_filter}"? Esta acción no se puede deshacer.`)) return;
+    setSending(campaign.id); setSendResult(null);
     try {
       const res = await fetch('/api/campaigns/send', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ campaignId: campaign.id }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: campaign.id }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setSendResult({ campaignId: campaign.id, sent: data.sent, total: data.total });
-      } else {
-        alert(`Error: ${data?.error ?? res.statusText}`);
-      }
-    } catch {
-      alert('Error de red al enviar la campaña.');
-    }
-    setSending(null);
-    await fetchCampaigns();
+      if (res.ok) setSendResult({ campaignId: campaign.id, sent: data.sent, total: data.total });
+      else alert(`Error: ${data?.error ?? res.statusText}`);
+    } catch { alert('Error de red al enviar la campaña.'); }
+    setSending(null); await fetchCampaigns();
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-      {/* Header + botón nueva campaña */}
+      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 900, color: '#000', margin: 0 }}>Campañas</h1>
-          <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
-            Mensajes masivos segmentados por tipo de contacto.
-          </p>
+          <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>Mensajes masivos segmentados por tipo de contacto.</p>
         </div>
-        <button
-          onClick={() => { setShowForm((v) => { if (!v) fetchRecipientCount('todos'); return !v; }); setError(''); }}
-          style={{
-            background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px',
-            border: 'none', borderRadius: '12px', padding: '10px 20px', cursor: 'pointer',
-          }}
-        >
-          {showForm ? '✕ Cancelar' : '+ Nueva campaña'}
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {!showForm && (
+            <button
+              onClick={() => { prefillReactivacion(); setShowForm(true); }}
+              style={{ background: '#f0fff4', color: '#1a7a3a', fontWeight: 700, fontSize: '13px', border: '1px solid #86efac', borderRadius: '12px', padding: '10px 16px', cursor: 'pointer' }}
+            >
+              ♻️ Reactivación
+            </button>
+          )}
+          <button
+            onClick={() => { if (showForm) { resetForm(); setShowForm(false); } else { setShowForm(true); fetchRecipientCount('todos'); } }}
+            style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '12px', padding: '10px 20px', cursor: 'pointer' }}
+          >
+            {showForm ? '✕ Cancelar' : '+ Nueva campaña'}
+          </button>
+        </div>
       </div>
 
-      {/* Formulario nueva campaña */}
+      {/* Formulario */}
       {showForm && (
-        <form
-          onSubmit={handleCreate}
-          style={{
-            background: '#fff', borderRadius: '16px', padding: '20px 24px',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
-            display: 'flex', flexDirection: 'column', gap: '14px',
-          }}
-        >
+        <form onSubmit={handleCreate} style={{ background: '#fff', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: 0 }}>Nueva campaña</p>
 
+          {/* Nombre */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Nombre
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ej: Promo junio 2026"
-              style={{
-                background: '#F5F5F5', border: 'none', borderRadius: '10px',
-                padding: '10px 14px', fontSize: '14px', color: '#000', outline: 'none',
-              }}
-            />
+            <label style={labelStyle}>Nombre</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Promo junio 2026" style={inputStyle} />
           </div>
 
+          {/* Tipo */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Destinatarios
-            </label>
-            <select
-              value={filter}
-              onChange={(e) => handleFilterChange(e.target.value)}
-              style={{
-                background: '#F5F5F5', border: 'none', borderRadius: '10px',
-                padding: '10px 14px', fontSize: '14px', color: '#000', outline: 'none', cursor: 'pointer',
-              }}
-            >
-              {FILTERS.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
+            <label style={labelStyle}>Tipo de mensaje</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {(['texto_libre', 'template_meta'] as CampaignType[]).map((t) => (
+                <button
+                  key={t} type="button"
+                  onClick={() => setCampaignType(t)}
+                  style={{
+                    flex: 1, padding: '10px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '13px', cursor: 'pointer',
+                    border: campaignType === t ? '2px solid #C8FF00' : '2px solid #e0e0e0',
+                    background: campaignType === t ? '#f9ffe0' : '#F5F5F5',
+                    color: campaignType === t ? '#000' : '#888',
+                  }}
+                >
+                  {t === 'texto_libre' ? '✏️ Texto libre' : '📋 Template Meta'}
+                </button>
               ))}
+            </div>
+            {campaignType === 'texto_libre' && (
+              <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Solo funciona si el contacto te escribió en las últimas 24 hs.</p>
+            )}
+            {campaignType === 'template_meta' && (
+              <p style={{ fontSize: '11px', color: '#1a7a3a', margin: 0, fontWeight: 600 }}>Puede llegar a cualquier contacto. Requiere un template aprobado por Meta.</p>
+            )}
+          </div>
+
+          {/* Destinatarios */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={labelStyle}>Destinatarios</label>
+            <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+              {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
-            {recipientCount !== null && (
+            {(countLoading || recipientCount !== null) && (
               <p style={{ fontSize: '12px', color: '#555', margin: 0, fontWeight: 600 }}>
-                {countLoading ? 'Contando...' : `${recipientCount} contacto${recipientCount !== 1 ? 's' : ''} recibirán este mensaje`}
+                {countLoading ? 'Contando...' : `~${recipientCount} contacto${recipientCount !== 1 ? 's' : ''}`}
+                {(filter === 'inactivo_30d' || filter === 'inactivo_45d') && !countLoading && (
+                  <span style={{ color: '#888', fontWeight: 400 }}> (estimado — el filtro exacto aplica al enviar)</span>
+                )}
               </p>
             )}
-            {countLoading && recipientCount === null && (
-              <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>Contando destinatarios...</p>
-            )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Mensaje
-            </label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              placeholder="Escribí el mensaje que van a recibir..."
-              rows={4}
-              style={{
-                background: '#F5F5F5', border: 'none', borderRadius: '10px',
-                padding: '10px 14px', fontSize: '14px', color: '#000', outline: 'none',
-                resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5,
-              }}
-            />
-            <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>
-              {message.length} caracteres
-            </p>
-          </div>
+          {/* Contenido según tipo */}
+          {campaignType === 'texto_libre' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={labelStyle}>Mensaje</label>
+              <textarea
+                value={message} onChange={(e) => setMessage(e.target.value)}
+                placeholder="Escribí el mensaje que van a recibir..." rows={4}
+                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+              />
+              <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>{message.length} caracteres</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 2 }}>
+                  <label style={labelStyle}>Nombre del template</label>
+                  <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Ej: reactivacion_bono" style={inputStyle} />
+                  <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Debe coincidir exactamente con el nombre en Meta Business Manager.</p>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                  <label style={labelStyle}>Idioma</label>
+                  <input value={templateLang} onChange={(e) => setTemplateLang(e.target.value)} placeholder="es" style={inputStyle} />
+                </div>
+              </div>
 
-          {error && (
-            <p style={{ fontSize: '13px', color: '#E53935', fontWeight: 600, margin: 0 }}>{error}</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={labelStyle}>Variables del template <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(una por línea en el template)</span></label>
+                {templateVars.map((v, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: '#aaa', minWidth: '28px' }}>{`{{${i + 1}}}`}</span>
+                    <input
+                      value={v}
+                      onChange={(e) => { const next = [...templateVars]; next[i] = e.target.value; setTemplateVars(next); }}
+                      placeholder={`Valor de {{${i + 1}}}`}
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    {templateVars.length > 1 && (
+                      <button type="button" onClick={() => setTemplateVars(templateVars.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '18px', cursor: 'pointer', padding: '0 4px' }}>×</button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setTemplateVars([...templateVars, ''])}
+                  style={{ background: 'none', border: '1px dashed #ccc', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', color: '#888', cursor: 'pointer', alignSelf: 'flex-start' }}
+                >
+                  + Agregar variable
+                </button>
+              </div>
+            </>
           )}
 
-          <button
-            type="submit"
-            disabled={creating}
-            style={{
-              background: creating ? '#e0e0e0' : '#C8FF00', color: '#000',
-              fontWeight: 800, fontSize: '14px', border: 'none',
-              borderRadius: '12px', padding: '12px 20px', cursor: creating ? 'not-allowed' : 'pointer',
-              opacity: creating ? 0.6 : 1, alignSelf: 'flex-start',
-            }}
-          >
+          {error && <p style={{ fontSize: '13px', color: '#E53935', fontWeight: 600, margin: 0 }}>{error}</p>}
+
+          <button type="submit" disabled={creating} style={{ background: creating ? '#e0e0e0' : '#C8FF00', color: '#000', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '12px 20px', cursor: creating ? 'not-allowed' : 'pointer', opacity: creating ? 0.6 : 1, alignSelf: 'flex-start' }}>
             {creating ? 'Guardando...' : 'Guardar campaña'}
           </button>
         </form>
       )}
 
-      {/* Aviso límite WhatsApp */}
-      <div style={{
-        background: '#fffbe6', border: '1px solid #f0c040',
-        borderRadius: '12px', padding: '12px 16px',
-        display: 'flex', gap: '10px', alignItems: 'flex-start',
-      }}>
+      {/* Aviso WhatsApp */}
+      <div style={{ background: '#fffbe6', border: '1px solid #f0c040', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
         <span style={{ fontSize: '16px', flexShrink: 0 }}>⚠️</span>
         <p style={{ fontSize: '13px', color: '#7a5c00', margin: 0, lineHeight: 1.6 }}>
-          <strong>Límite de WhatsApp:</strong> Solo podés enviar mensajes libres a contactos que te escribieron en las últimas 24 horas.
-          Para contactos inactivos es necesario usar plantillas (templates) aprobadas por Meta.
-          Los envíos a contactos fuera de ventana pueden fallar silenciosamente.
+          <strong>Límite de WhatsApp:</strong> Los mensajes de texto libre solo llegan a contactos activos en las últimas 24 hs.
+          Para reactivación usá <strong>Template Meta</strong> — creá el template en Meta Business Manager y esperá aprobación antes de enviar.
         </p>
       </div>
 
       {/* Lista de campañas */}
       {campaigns.length === 0 && !showForm && (
-        <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: '14px' }}>
-          No hay campañas. Creá la primera con el botón de arriba.
-        </div>
+        <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: '14px' }}>No hay campañas. Creá la primera con el botón de arriba.</div>
       )}
 
       {campaigns.map((campaign) => {
-        const estilo   = STATUS_STYLE[campaign.status] ?? STATUS_STYLE.borrador;
+        const estilo    = STATUS_STYLE[campaign.status] ?? STATUS_STYLE.borrador;
         const isSending = sending === campaign.id;
         const result    = sendResult?.campaignId === campaign.id ? sendResult : null;
+        const isTemplate = campaign.type === 'template_meta';
 
         return (
-          <div
-            key={campaign.id}
-            style={{
-              background: '#fff', borderRadius: '16px', padding: '18px 22px',
-              boxShadow: '0 2px 10px rgba(0,0,0,0.07)',
-              display: 'flex', flexDirection: 'column', gap: '10px',
-            }}
-          >
+          <div key={campaign.id} style={{ background: '#fff', borderRadius: '16px', padding: '18px 22px', boxShadow: '0 2px 10px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <div>
-                <p style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: 0 }}>{campaign.name}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <p style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: 0 }}>{campaign.name}</p>
+                  <span style={{ fontSize: '11px', background: isTemplate ? '#f0fff4' : '#F5F5F5', color: isTemplate ? '#1a7a3a' : '#888', border: isTemplate ? '1px solid #86efac' : '1px solid #e0e0e0', borderRadius: '6px', padding: '2px 8px', fontWeight: 700 }}>
+                    {isTemplate ? '📋 Template' : '✏️ Texto'}
+                  </span>
+                </div>
                 <p style={{ fontSize: '12px', color: '#aaa', margin: '3px 0 0 0' }}>
-                  Filtro: <strong>{campaign.target_filter}</strong>
-                  {' · '}
-                  {new Date(campaign.created_at).toLocaleDateString('es-AR')}
-                  {campaign.sent_count > 0 && ` · Enviados: ${campaign.sent_count}`}
+                  Filtro: <strong>{FILTERS.find(f => f.value === campaign.target_filter)?.label ?? campaign.target_filter}</strong>
+                  {' · '}{new Date(campaign.created_at).toLocaleDateString('es-AR')}
+                  {campaign.sent_count > 0 && ` · ${campaign.sent_count} enviados`}
                 </p>
               </div>
-              <span style={{
-                ...estilo,
-                fontSize: '11px', fontWeight: 800,
-                letterSpacing: '0.06em', textTransform: 'uppercase',
-                padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap',
-              }}>
+              <span style={{ ...estilo, fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
                 {campaign.status}
               </span>
             </div>
 
-            <p style={{
-              fontSize: '13px', color: '#555', lineHeight: 1.6,
-              background: '#F8F8F8', borderRadius: '10px', padding: '10px 14px', margin: 0,
-            }}>
-              {campaign.message}
-            </p>
+            {isTemplate ? (
+              <div style={{ background: '#F8F8F8', borderRadius: '10px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>Template: <strong style={{ color: '#333' }}>{campaign.template_name}</strong> · lang: {campaign.template_language}</p>
+                {campaign.template_variables && campaign.template_variables.length > 0 && (
+                  <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>
+                    Variables: {campaign.template_variables.map((v, i) => <span key={i} style={{ marginRight: '8px' }}><code>{`{{${i + 1}}}`}</code> = <strong>{v}</strong></span>)}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p style={{ fontSize: '13px', color: '#555', lineHeight: 1.6, background: '#F8F8F8', borderRadius: '10px', padding: '10px 14px', margin: 0 }}>
+                {campaign.message}
+              </p>
+            )}
 
             {result && (
               <p style={{ fontSize: '13px', color: '#1a7a3a', fontWeight: 700, margin: 0 }}>
@@ -318,22 +379,11 @@ export default function CampanasClient() {
                 <button
                   onClick={() => handleSend(campaign)}
                   disabled={isSending}
-                  style={{
-                    background: isSending ? '#e0e0e0' : '#1a1a1a', color: isSending ? '#999' : '#C8FF00',
-                    fontWeight: 800, fontSize: '13px', border: 'none',
-                    borderRadius: '10px', padding: '9px 18px', cursor: isSending ? 'not-allowed' : 'pointer',
-                    opacity: isSending ? 0.6 : 1,
-                  }}
+                  style={{ background: isSending ? '#e0e0e0' : '#1a1a1a', color: isSending ? '#999' : '#C8FF00', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '9px 18px', cursor: isSending ? 'not-allowed' : 'pointer', opacity: isSending ? 0.6 : 1 }}
                 >
                   {isSending ? 'Enviando...' : 'Enviar campaña'}
                 </button>
-                <button
-                  onClick={() => handleDelete(campaign)}
-                  style={{
-                    background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px',
-                    border: '1px solid #f08080', borderRadius: '10px', padding: '9px 14px', cursor: 'pointer',
-                  }}
-                >
+                <button onClick={() => handleDelete(campaign)} style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '9px 14px', cursor: 'pointer' }}>
                   Eliminar
                 </button>
               </div>
