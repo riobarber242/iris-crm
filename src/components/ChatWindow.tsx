@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useRef, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
 type Message = {
   id?: string;
@@ -16,16 +19,6 @@ type Message = {
 type QuickReply = { id: string; title: string; content: string };
 type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
 
-const EMOJIS = [
-  '👋','🙌','👍','👏','🙏','💪','🤝','🫂',
-  '😊','😁','😂','🤣','😍','🥰','😎','🤩',
-  '😅','😆','🙂','😉','😋','😄','😀','😃',
-  '🎰','🎲','💰','💵','💸','🤑','🏆','⭐',
-  '🌟','✨','🔥','💯','🎉','🎊','🥳','🎁',
-  '✅','❌','⚠️','💬','📞','📱','⏰','📢',
-  '❤️','🧡','💛','💚','💙','💜','🤍','💔',
-  '👀','🙈','😴','🤔','😮','😲','🤯','🫡',
-];
 
 function parseMedia(raw: string): MediaContent | null {
   try {
@@ -397,19 +390,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
         {/* Emoji picker panel */}
         {showEmoji && (
-          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.13)', padding: '12px', zIndex: 50, display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '2px' }}>
-            {EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => insertEmoji(emoji)}
-                style={{ background: 'none', border: 'none', borderRadius: '8px', padding: '6px', fontSize: '20px', cursor: 'pointer', lineHeight: 1, transition: 'background 0.1s' }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-              >
-                {emoji}
-              </button>
-            ))}
+          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 50 }}>
+            <EmojiPicker
+              onEmojiClick={(data) => insertEmoji(data.emoji)}
+              searchPlaceholder="Buscar emoji..."
+              lazyLoadEmojis
+            />
           </div>
         )}
 
