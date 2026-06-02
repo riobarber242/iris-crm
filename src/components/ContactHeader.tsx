@@ -34,6 +34,8 @@ export default function ContactHeader({
   initialStatus,
   conversationState,
   initialNotes,
+  recargasCount,
+  recargasMonto,
 }: {
   contactId:              string;
   phone:                  string;
@@ -42,6 +44,8 @@ export default function ContactHeader({
   initialStatus?:         string | null;
   conversationState?:     string | null;
   initialNotes?:          string;
+  recargasCount?:         number;
+  recargasMonto?:         number;
 }) {
   const [casinoUser,    setCasinoUser]    = useState(initialCasinoUsername ?? '');
   const [editing,       setEditing]       = useState(false);
@@ -133,6 +137,7 @@ export default function ContactHeader({
   const display  = casinoUser || phone;
   const initial  = display.charAt(0).toUpperCase();
   const botLabel = botState ? (BOT_STATE_LABEL[botState] ?? botState) : null;
+  const hasRecargas = (recargasCount ?? 0) > 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -143,13 +148,25 @@ export default function ContactHeader({
         boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex',
         alignItems: 'center', gap: '16px', width: '100%',
       }}>
-        {/* Avatar */}
-        <div style={{
-          width: '44px', height: '44px', borderRadius: '50%', background: '#C8FF00',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 800, fontSize: '18px', color: '#000', flexShrink: 0,
-        }}>
-          {initial}
+        {/* Avatar + resumen recargas */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <div style={{
+            width: '44px', height: '44px', borderRadius: '50%', background: '#C8FF00',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontWeight: 800, fontSize: '18px', color: '#000',
+          }}>
+            {initial}
+          </div>
+          {hasRecargas && (
+            <span style={{
+              background: '#1a1a1a', color: '#C8FF00',
+              fontSize: '10px', fontWeight: 800,
+              borderRadius: '6px', padding: '2px 6px',
+              whiteSpace: 'nowrap', letterSpacing: '0.02em',
+            }}>
+              {recargasCount} ✓
+            </span>
+          )}
         </div>
 
         <div style={{ flex: 1 }}>
@@ -188,6 +205,11 @@ export default function ContactHeader({
                   </p>
                 )}
                 <p style={{ fontSize: '13px', color: '#999', margin: casinoUser ? '2px 0 0 0' : 0 }}>{phone}</p>
+                {hasRecargas && (
+                  <p style={{ fontSize: '12px', color: '#1a7a3a', fontWeight: 700, margin: '2px 0 0 0' }}>
+                    {recargasCount} recarga{(recargasCount ?? 0) !== 1 ? 's' : ''} verificada{(recargasCount ?? 0) !== 1 ? 's' : ''} · ${(recargasMonto ?? 0).toLocaleString('es-AR')} total
+                  </p>
+                )}
               </div>
 
               {/* Status selector */}

@@ -17,6 +17,20 @@ async function fetchContact(id: string) {
   return data;
 }
 
+async function fetchRecargasResumen(contactId: string) {
+  const { data } = await supabaseAdmin
+    .from('comprobantes')
+    .select('monto')
+    .eq('contact_id', contactId)
+    .eq('estado', 'verificado');
+
+  const items = data ?? [];
+  return {
+    count:      items.length,
+    montoTotal: items.reduce((s: number, r: any) => s + Number(r.monto ?? 0), 0),
+  };
+}
+
 export default async function ConversationPage({ params }: any) {
   const id = params.id as string;
 
@@ -26,7 +40,10 @@ export default async function ConversationPage({ params }: any) {
     .update({ last_read_at: new Date().toISOString() })
     .eq('id', id);
 
-  const contact = await fetchContact(id);
+  const [contact, recargas] = await Promise.all([
+    fetchContact(id),
+    fetchRecargasResumen(id),
+  ]);
 
   if (!contact) {
     return (
@@ -70,6 +87,8 @@ export default async function ConversationPage({ params }: any) {
           initialStatus={contact.status ?? 'nuevo'}
           conversationState={contact.conversation_state ?? null}
           initialNotes={contact.notes ?? ''}
+          recargasCount={recargas.count}
+          recargasMonto={recargas.montoTotal}
         />
 
         <ChatWindow contactId={contact.id} />
