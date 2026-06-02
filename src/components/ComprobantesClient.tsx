@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 type ComprobanteItem = {
   id: string;
@@ -32,6 +33,7 @@ const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
 export default function ComprobantesClient() {
   const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
   const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
+  const [query,        setQuery]              = useState('');
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [lightbox, setLightbox]               = useState<string | null>(null);
@@ -187,26 +189,34 @@ export default function ComprobantesClient() {
 
   return (
     <>
-      {/* ── Filter bar ── */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-        {ESTADO_FILTERS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => handleFilterChange(key)}
-            style={{
-              background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
-              color:        estadoFilter === key ? '#000'    : '#888',
-              border:       'none',
-              borderRadius: '999px',
-              padding:      '6px 16px',
-              fontSize:     '13px',
-              fontWeight:   600,
-              cursor:       'pointer',
-            }}
-          >
-            {label}
-          </button>
-        ))}
+      {/* ── Filter bar + search ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '4px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {ESTADO_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => handleFilterChange(key)}
+              style={{
+                background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
+                color:        estadoFilter === key ? '#000'    : '#888',
+                border:       'none', borderRadius: '999px',
+                padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar por usuario casino o teléfono..."
+          style={{
+            width: '100%', padding: '10px 14px', fontSize: '14px',
+            border: '2px solid #e0e0e0', borderRadius: '12px',
+            outline: 'none', background: '#fff', boxSizing: 'border-box',
+          }}
+        />
       </div>
 
       {/* ── Lightbox ── */}
@@ -248,14 +258,16 @@ export default function ComprobantesClient() {
 
       {/* ── Card list ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {comprobantes.map((item) => {
+        {comprobantes.filter((item) => {
+          if (!query.trim()) return true;
+          const q    = query.toLowerCase();
+          const name = (item.contacts?.casino_username ?? '').toLowerCase();
+          const ph   = (item.contacts?.phone ?? '').toLowerCase();
+          return name.includes(q) || ph.includes(q);
+        }).map((item) => {
           const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
           const displayName = item.contacts?.casino_username || item.contacts?.phone || '—';
           const phone       = item.contacts?.phone;
-          const fecha       = new Date(item.created_at).toLocaleString('es-AR', {
-            day: '2-digit', month: '2-digit', year: '2-digit',
-            hour: '2-digit', minute: '2-digit',
-          });
 
           return (
             <div
@@ -339,7 +351,9 @@ export default function ComprobantesClient() {
 
                 {/* Row 2: fecha + monto + editar monto para verificados sin monto */}
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12px', color: '#888' }}>{fecha}</span>
+                  <span style={{ fontSize: '12px', color: '#888' }} title={new Date(item.created_at).toLocaleString('es-AR')}>
+                    {formatRelativeTime(item.created_at)}
+                  </span>
                   {editingMontoId === item.id ? (
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <input

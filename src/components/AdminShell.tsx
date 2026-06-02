@@ -29,10 +29,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const unreadSupabaseRef           = useRef<any>(null);
 
   useEffect(() => {
-    fetch('/api/settings/bot-enabled')
-      .then((r) => r.json())
-      .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
-      .catch(() => setMounted(true));
+    function fetchBotStatus() {
+      fetch('/api/settings/bot-enabled')
+        .then((r) => r.json())
+        .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
+        .catch(() => setMounted(true));
+    }
+
+    fetchBotStatus();
+    // Poll every 30s so header stays in sync if toggled from Settings
+    const timer = setInterval(fetchBotStatus, 30_000);
+
+    // Instant sync when BotToggle in Settings fires the event
+    function handleBotChange(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail?.enabled === 'boolean') setBotEnabled(detail.enabled);
+    }
+    window.addEventListener('bot-status-changed', handleBotChange);
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('bot-status-changed', handleBotChange);
+    };
   }, []);
 
   const fetchUnreadRef = useRef<() => void>(() => {});
@@ -87,21 +105,21 @@ export function AdminShell({ children }: { children: ReactNode }) {
   async function toggleBot() {
     const next = !botEnabled;
     setBotEnabled(next);
+    window.dispatchEvent(new CustomEvent('bot-status-changed', { detail: { enabled: next } }));
     try {
-      const res = await fetch('/api/settings/bot-enabled', {
+      const res  = await fetch('/api/settings/bot-enabled', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
       });
       const json = await res.json();
-      console.log('[toggleBot] API response:', json);
       if (!res.ok || !json.ok) {
-        console.error('[toggleBot] Falló el guardado, revirtiendo estado');
         setBotEnabled(!next);
+        window.dispatchEvent(new CustomEvent('bot-status-changed', { detail: { enabled: !next } }));
       }
-    } catch (err) {
-      console.error('[toggleBot] Error de red:', err);
+    } catch {
       setBotEnabled(!next);
+      window.dispatchEvent(new CustomEvent('bot-status-changed', { detail: { enabled: !next } }));
     }
   }
 

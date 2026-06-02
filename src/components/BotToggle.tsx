@@ -11,6 +11,13 @@ export default function BotToggle() {
       .then((r) => r.json())
       .then((d) => setEnabled(d.enabled))
       .catch(() => {});
+
+    function handleChange(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail?.enabled === 'boolean') setEnabled(detail.enabled);
+    }
+    window.addEventListener('bot-status-changed', handleChange);
+    return () => window.removeEventListener('bot-status-changed', handleChange);
   }, []);
 
   async function toggle() {
@@ -23,7 +30,10 @@ export default function BotToggle() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ enabled: next }),
       });
-      if (res.ok) setEnabled(next);
+      if (res.ok) {
+        setEnabled(next);
+        window.dispatchEvent(new CustomEvent('bot-status-changed', { detail: { enabled: next } }));
+      }
     } catch {}
     setLoading(false);
   }
