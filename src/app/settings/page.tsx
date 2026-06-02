@@ -6,6 +6,7 @@ import BotToggle from '@/components/BotToggle';
 import CronRunner from '@/components/CronRunner';
 import SystemPromptEditor from '@/components/SystemPromptEditor';
 import AutoMsgToggle from '@/components/AutoMsgToggle';
+import QuickRepliesManager from '@/components/QuickRepliesManager';
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
@@ -30,6 +31,10 @@ export default async function SettingsPage() {
 
         <SectionCard title="Clasificación de contactos" description="Forzá la actualización de estados sin esperar el cron diario.">
           <CronRunner />
+        </SectionCard>
+
+        <SectionCard title="Respuestas rápidas" description="Plantillas de mensajes predefinidas. Usalas desde el chat con el botón ⚡.">
+          <QuickRepliesManager />
         </SectionCard>
 
         <SectionCard title="Prompt del bot" description="Texto base que define la personalidad y reglas de Iris. Se guarda en la base de datos y tiene prioridad sobre el código.">

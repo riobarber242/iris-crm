@@ -13,14 +13,19 @@ type Message = {
   status?: string;
 };
 
+type QuickReply = { id: string; title: string; content: string };
+
 export default function ChatWindow({ contactId }: { contactId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(false);
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const [showQR, setShowQR] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
+  const qrPanelRef = useRef<HTMLDivElement | null>(null);
 
   async function fetchMessages() {
     try {
@@ -29,6 +34,25 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       setMessages((await res.json()).reverse());
     } catch {}
   }
+
+  useEffect(() => {
+    fetch('/api/quick-replies')
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data)) setQuickReplies(data); })
+      .catch(() => {});
+  }, []);
+
+  // Close quick-reply panel on outside click
+  useEffect(() => {
+    if (!showQR) return;
+    function handleClick(e: MouseEvent) {
+      if (qrPanelRef.current && !qrPanelRef.current.contains(e.target as Node)) {
+        setShowQR(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showQR]);
 
   useEffect(() => {
     fetchMessages();
@@ -164,41 +188,115 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribí un mensaje..."
-          style={{
-            flex: 1,
-            background: '#F5F5F5',
-            border: 'none',
-            borderRadius: '12px',
-            padding: '12px 16px',
-            fontSize: '14px',
-            color: '#1a1a1a',
-            outline: 'none',
-          }}
-        />
-        <button
-          type="submit"
-          disabled={loading || cooldown}
-          style={{
-            background: loading || cooldown ? '#e0e0e0' : '#C8FF00',
-            color: '#000',
-            fontWeight: 700,
-            fontSize: '14px',
-            border: 'none',
-            borderRadius: '12px',
-            padding: '12px 20px',
-            cursor: loading || cooldown ? 'not-allowed' : 'pointer',
-            opacity: loading || cooldown ? 0.6 : 1,
-            boxShadow: loading || cooldown ? 'none' : '0 4px 12px rgba(200,255,0,0.3)',
-          }}
-        >
-          {loading ? '...' : cooldown ? '✓' : 'Enviar'}
-        </button>
-      </form>
+      <div style={{ position: 'relative' }} ref={qrPanelRef}>
+        {/* Quick-reply panel */}
+        {showQR && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 8px)',
+              left: 0,
+              right: 0,
+              background: '#fff',
+              borderRadius: '16px',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.13)',
+              padding: '8px',
+              zIndex: 50,
+              maxHeight: '240px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+            }}
+          >
+            {quickReplies.length === 0 ? (
+              <p style={{ fontSize: '13px', color: '#999', padding: '10px 12px', margin: 0 }}>
+                No hay respuestas rápidas. Creá una en Configuración.
+              </p>
+            ) : (
+              quickReplies.map((qr) => (
+                <button
+                  key={qr.id}
+                  type="button"
+                  onClick={() => { setInput(qr.content); setShowQR(false); }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '10px 14px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                >
+                  <p style={{ fontSize: '11px', fontWeight: 700, color: '#C8FF00', margin: '0 0 2px 0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    {qr.title}
+                  </p>
+                  <p style={{ fontSize: '13px', color: '#333', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {qr.content}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
+          {/* Quick-replies toggle button */}
+          <button
+            type="button"
+            onClick={() => setShowQR((v) => !v)}
+            title="Respuestas rápidas"
+            style={{
+              background: showQR ? '#C8FF00' : '#F5F5F5',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 14px',
+              fontSize: '16px',
+              cursor: 'pointer',
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+          >
+            ⚡
+          </button>
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Escribí un mensaje..."
+            style={{
+              flex: 1,
+              background: '#F5F5F5',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 16px',
+              fontSize: '14px',
+              color: '#1a1a1a',
+              outline: 'none',
+            }}
+          />
+          <button
+            type="submit"
+            disabled={loading || cooldown}
+            style={{
+              background: loading || cooldown ? '#e0e0e0' : '#C8FF00',
+              color: '#000',
+              fontWeight: 700,
+              fontSize: '14px',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 20px',
+              cursor: loading || cooldown ? 'not-allowed' : 'pointer',
+              opacity: loading || cooldown ? 0.6 : 1,
+              boxShadow: loading || cooldown ? 'none' : '0 4px 12px rgba(200,255,0,0.3)',
+            }}
+          >
+            {loading ? '...' : cooldown ? '✓' : 'Enviar'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
