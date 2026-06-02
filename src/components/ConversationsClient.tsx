@@ -145,6 +145,16 @@ export default function ConversationsClient() {
         ))}
       </div>
 
+      {filtered.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: '#bbb', fontSize: '14px' }}>
+          {query.trim()
+            ? `Sin resultados para "${query}".`
+            : activeFilter !== 'todos'
+              ? `No hay conversaciones con estado "${activeFilter}".`
+              : 'No hay conversaciones.'}
+        </div>
+      )}
+
       {filtered.map((contact) => {
         const messages: any[] = contact.messages ?? [];
         const lastMessage     = messages[0];

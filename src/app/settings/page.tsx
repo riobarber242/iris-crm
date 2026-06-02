@@ -5,6 +5,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import BotToggle from '@/components/BotToggle';
 import CronRunner from '@/components/CronRunner';
 import SystemPromptEditor from '@/components/SystemPromptEditor';
+import AutoMsgToggle from '@/components/AutoMsgToggle';
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
@@ -21,6 +22,10 @@ export default async function SettingsPage() {
 
         <SectionCard title="Control del bot" description="Activá o pausá el bot automático de WhatsApp.">
           <BotToggle />
+        </SectionCard>
+
+        <SectionCard title="Notificación de recarga verificada" description='Envía "Tu recarga de $X fue confirmada ✅" automáticamente al verificar un comprobante.'>
+          <AutoMsgToggle />
         </SectionCard>
 
         <SectionCard title="Clasificación de contactos" description="Forzá la actualización de estados sin esperar el cron diario.">

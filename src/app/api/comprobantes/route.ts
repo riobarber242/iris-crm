@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
+import { sendWhatsAppText } from '@/lib/meta/client';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -65,7 +66,21 @@ export async function PATCH(request: Request) {
     const { data: contact, error: contactError } = await supabaseAdmin
       .from('contacts').select('phone').eq('id', comprobante.contact_id).single();
     if (!contactError && contact?.phone) {
-      await sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto));
+      // Fire-and-forget: Meta Pixel purchase event
+      sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto)).catch(() => {});
+
+      // Check if auto-notification is enabled in settings (default: true)
+      const { data: settingRow } = await supabaseAdmin
+        .from('settings').select('value').eq('key', 'auto_verificacion_msg').maybeSingle();
+      const autoMsg = settingRow?.value !== 'false';
+
+      if (autoMsg) {
+        const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
+        const msg = `Tu recarga de $${montoFmt} fue confirmada ✅ ¡Ya podés jugar!`;
+        sendWhatsAppText(contact.phone, msg).catch(() => {
+          console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
+        });
+      }
     }
   }
 

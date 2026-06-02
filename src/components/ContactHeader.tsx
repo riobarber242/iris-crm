@@ -142,6 +142,20 @@ export default function ContactHeader({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
+      {/* ── Banner de contacto bloqueado ── */}
+      {blocked && (
+        <div style={{
+          background: '#fff0f0', border: '1px solid #f08080',
+          borderRadius: '12px', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: '10px',
+        }}>
+          <span style={{ fontSize: '16px' }}>🚫</span>
+          <p style={{ fontSize: '13px', color: '#c0392b', fontWeight: 700, margin: 0 }}>
+            Este contacto está bloqueado — el bot no le responde y no recibirá mensajes automáticos.
+          </p>
+        </div>
+      )}
+
       {/* ── Main header row ── */}
       <div style={{
         background: '#FFFFFF', borderRadius: '16px', padding: '16px 20px',
