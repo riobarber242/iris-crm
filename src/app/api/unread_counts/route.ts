@@ -60,10 +60,17 @@ export async function GET() {
       }
     }
 
+    // 4. Comprobantes pendientes
+    const { count: comprobantesPending } = await supabaseAdmin
+      .from('comprobantes')
+      .select('id', { count: 'exact', head: true })
+      .eq('estado', 'pendiente');
+
     return NextResponse.json({
-      total:            newPending + recurringPending,
+      total:              newPending + recurringPending,
       newPending,
       recurringPending,
+      comprobantesPending: comprobantesPending ?? 0,
     });
   } catch (err: any) {
     return new NextResponse(String(err?.message ?? err), { status: 500 });

@@ -305,6 +305,18 @@ async function processMessage(
     return;
   }
 
+  // ─── AUDIO / VOICE / VIDEO / STICKER ─────────────────────────────────────
+  if (['audio', 'voice', 'video', 'sticker'].includes(type)) {
+    if (!botEnabled) return;
+    const cu = contact.casino_username ?? null;
+    if (cu && cu.trim() !== '') return;
+    const st = contact.conversation_state as string | null ?? null;
+    if (st === 'done' || st === 'en_proceso' || contact.status === 'en_proceso') return;
+    console.log(`[bot] Tipo no-texto: ${type} — respondiendo con mensaje de texto`);
+    await replyAndSave('No puedo escuchar audios ni ver stickers, escribime por texto 😊');
+    return;
+  }
+
   // ─── TEXT MESSAGES ────────────────────────────────────────────────────────
   if (!botEnabled) {
     console.log('[bot] bot_enabled=false — sin respuesta automática');

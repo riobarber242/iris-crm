@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 function playNotificationBeep() {
   try {
@@ -260,8 +261,8 @@ export default function ConversationsClient() {
                   }}>
                     {lastMessage.content}
                   </p>
-                  <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0' }}>
-                    {new Date(lastMessage.created_at).toLocaleString('es-AR')}
+                  <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0' }} title={new Date(lastMessage.created_at).toLocaleString('es-AR')}>
+                    {formatRelativeTime(lastMessage.created_at)}
                   </p>
                 </div>
               )}

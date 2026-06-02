@@ -24,7 +24,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [botEnabled, setBotEnabled] = useState(true);
   const [mounted, setMounted]       = useState(false);
-  const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0 });
+  const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0 });
   const unreadChannelRef            = useRef<any>(null);
   const unreadSupabaseRef           = useRef<any>(null);
 
@@ -44,9 +44,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
         if (!res.ok) return;
         const data = await res.json();
         setUnread({
-          total:            data.total            ?? 0,
-          newPending:       data.newPending        ?? 0,
-          recurringPending: data.recurringPending  ?? 0,
+          total:               data.total               ?? 0,
+          newPending:          data.newPending           ?? 0,
+          recurringPending:    data.recurringPending     ?? 0,
+          comprobantesPending: data.comprobantesPending  ?? 0,
         });
       } catch {}
     }
@@ -233,6 +234,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 >
                   <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     {navLabels[item]}
+                    {item === 'comprobantes' && unread.comprobantesPending > 0 && (
+                      <span style={{
+                        background: '#b8860b', color: '#fff', borderRadius: '999px',
+                        fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        padding: '0 5px', lineHeight: 1,
+                      }}>
+                        {unread.comprobantesPending > 99 ? '99+' : unread.comprobantesPending}
+                      </span>
+                    )}
                     {item === 'conversations' && (unread.newPending > 0 || unread.recurringPending > 0) && (
                       <span style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
                         {unread.newPending > 0 && (
