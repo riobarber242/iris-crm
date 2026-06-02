@@ -1,18 +1,55 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+
+function playNotificationBeep() {
+  try {
+    const ctx  = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type            = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.35);
+  } catch {}
+}
 
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
   const [query,          setQuery]          = useState('');
+  // Tracks the latest inbound message timestamp seen, to detect new arrivals
+  const latestMsgTsRef = useRef<string | null>(null);
 
   async function fetchConversations() {
     try {
       const res = await fetch('/api/conversations');
       if (!res.ok) return;
-      setConversations(await res.json());
+      const data: any[] = await res.json();
+
+      // Detect new inbound messages → play beep
+      // Find the most recent user message across all conversations
+      let newestTs: string | null = null;
+      for (const c of data) {
+        const msgs: any[] = c.messages ?? [];
+        const latestInbound = msgs.find((m: any) => m.role === 'user');
+        if (latestInbound?.created_at) {
+          if (!newestTs || latestInbound.created_at > newestTs) {
+            newestTs = latestInbound.created_at;
+          }
+        }
+      }
+      if (newestTs && latestMsgTsRef.current && newestTs > latestMsgTsRef.current) {
+        playNotificationBeep();
+      }
+      if (newestTs) latestMsgTsRef.current = newestTs;
+
+      setConversations(data);
     } catch {}
   }
 

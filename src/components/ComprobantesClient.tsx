@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 type ComprobanteItem = {
   id: string;
+  contact_id: string;
   image_url: string | null;
   monto: number | null;
   estado: 'pendiente' | 'verificado' | 'rechazado';
@@ -287,14 +289,28 @@ export default function ComprobantesClient() {
                       <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>{phone}</p>
                     )}
                   </div>
-                  <span style={{
-                    ...estadoStyle,
-                    fontSize: '11px', fontWeight: 800,
-                    letterSpacing: '0.06em', textTransform: 'uppercase',
-                    padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap',
-                  }}>
-                    {item.estado}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      ...estadoStyle,
+                      fontSize: '11px', fontWeight: 800,
+                      letterSpacing: '0.06em', textTransform: 'uppercase',
+                      padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap',
+                    }}>
+                      {item.estado}
+                    </span>
+                    <Link
+                      href={`/conversations/${item.contact_id}`}
+                      title="Ver chat"
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '28px', height: '28px', borderRadius: '8px',
+                        background: '#1a1a1a', textDecoration: 'none', fontSize: '14px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      💬
+                    </Link>
+                  </div>
                 </div>
 
                 {/* Row 2: fecha + monto + editar monto para verificados sin monto */}
