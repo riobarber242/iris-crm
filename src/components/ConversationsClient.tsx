@@ -6,6 +6,7 @@ import Link from 'next/link';
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
+  const [query,          setQuery]          = useState('');
 
   async function fetchConversations() {
     try {
@@ -51,19 +52,41 @@ export default function ConversationsClient() {
   ];
 
   const filtered = conversations.filter((c) => {
-    if (activeFilter === 'todos')          return true;
-    if (activeFilter === 'bloqueado')      return c.blocked === true;
-    if (activeFilter === 'nuevo')          return c.status?.toLowerCase() === 'nuevo';
-    if (activeFilter === 'cliente_activo') return c.status?.toLowerCase() === 'cliente_activo';
-    if (activeFilter === 'inactivo')       return c.status?.toLowerCase() === 'inactivo';
+    if (activeFilter === 'bloqueado')      { if (c.blocked !== true) return false; }
+    else if (activeFilter !== 'todos')     { if (c.status?.toLowerCase() !== activeFilter) return false; }
+
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      const matchUser  = c.casino_username?.toLowerCase().includes(q);
+      const matchPhone = c.phone?.includes(q);
+      if (!matchUser && !matchPhone) return false;
+    }
+
     return true;
   });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
+      {/* Search */}
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Buscar por usuario casino o teléfono..."
+        style={{
+          width: '100%',
+          padding: '12px 16px',
+          fontSize: '14px',
+          border: '2px solid #e0e0e0',
+          borderRadius: '12px',
+          outline: 'none',
+          background: '#fff',
+          boxSizing: 'border-box',
+        }}
+      />
+
       {/* Filter bar */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
         {FILTERS.map(({ key, label }) => (
           <button
             key={key}

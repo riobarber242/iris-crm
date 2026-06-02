@@ -2,21 +2,52 @@
 
 import React, { useState } from 'react';
 
+const STATUS_OPTIONS = [
+  { value: 'nuevo',          label: 'Nuevo' },
+  { value: 'cliente_activo', label: 'Cliente activo' },
+  { value: 'inactivo',       label: 'Inactivo' },
+  { value: 'en_proceso',     label: 'En proceso' },
+];
+
+const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
+  nuevo:          { bg: '#F0F0F0', fg: '#888' },
+  cliente_activo: { bg: '#C8FF00', fg: '#000' },
+  inactivo:       { bg: '#888',    fg: '#fff' },
+  en_proceso:     { bg: '#C8FF00', fg: '#000' },
+};
+
 export default function ContactHeader({
   contactId,
   phone,
   initialCasinoUsername,
   initialBlocked,
+  initialStatus,
 }: {
   contactId:             string;
   phone:                 string;
   initialCasinoUsername?: string | null;
   initialBlocked?:       boolean;
+  initialStatus?:        string | null;
 }) {
-  const [casinoUser, setCasinoUser] = useState(initialCasinoUsername ?? '');
-  const [editing,    setEditing]    = useState(false);
-  const [loading,    setLoading]    = useState(false);
-  const [blocked,    setBlocked]    = useState(initialBlocked ?? false);
+  const [casinoUser,   setCasinoUser]   = useState(initialCasinoUsername ?? '');
+  const [editing,      setEditing]      = useState(false);
+  const [loading,      setLoading]      = useState(false);
+  const [blocked,      setBlocked]      = useState(initialBlocked ?? false);
+  const [status,       setStatus]       = useState(initialStatus ?? 'nuevo');
+  const [statusLoading,setStatusLoading]= useState(false);
+
+  async function handleStatusChange(newStatus: string) {
+    setStatusLoading(true);
+    try {
+      await fetch('/api/conversations', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contactId, status: newStatus }),
+      });
+      setStatus(newStatus);
+    } catch {}
+    setStatusLoading(false);
+  }
 
   async function handleBlock() {
     if (!confirm('¿Seguro que querés bloquear este contacto? El bot dejará de responderle.')) return;
@@ -107,6 +138,30 @@ export default function ContactHeader({
               )}
               <p style={{ fontSize: '13px', color: '#999', margin: casinoUser ? '2px 0 0 0' : 0 }}>{phone}</p>
             </div>
+
+            {/* Status selector */}
+            <select
+              value={status}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              disabled={statusLoading}
+              style={{
+                background:   (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).bg,
+                color:        (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).fg,
+                fontWeight:   700,
+                fontSize:     '12px',
+                border:       'none',
+                borderRadius: '8px',
+                padding:      '4px 10px',
+                cursor:       statusLoading ? 'not-allowed' : 'pointer',
+                opacity:      statusLoading ? 0.6 : 1,
+                outline:      'none',
+              }}
+            >
+              {STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+
             <button onClick={() => setEditing(true)} style={{
               background: '#F0F0F0', color: '#666', fontWeight: 700, border: 'none',
               borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',

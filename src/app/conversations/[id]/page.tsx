@@ -67,6 +67,7 @@ export default async function ConversationPage({ params }: any) {
           phone={contact.phone}
           initialCasinoUsername={contact.casino_username}
           initialBlocked={contact.blocked ?? false}
+          initialStatus={contact.status ?? 'nuevo'}
         />
 
         <ChatWindow contactId={contact.id} />

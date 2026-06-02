@@ -18,8 +18,18 @@ const ESTADO_STYLE: Record<string, React.CSSProperties> = {
   rechazado:  { background: '#fff0f0', color: '#c0392b', border: '1px solid #f08080' },
 };
 
+type EstadoFilter = 'all' | 'pendiente' | 'verificado' | 'rechazado';
+
+const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
+  { key: 'all',       label: 'Todos' },
+  { key: 'pendiente', label: 'Pendiente' },
+  { key: 'verificado',label: 'Verificado' },
+  { key: 'rechazado', label: 'Rechazado' },
+];
+
 export default function ComprobantesClient() {
   const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
+  const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [lightbox, setLightbox]               = useState<string | null>(null);
@@ -31,12 +41,16 @@ export default function ComprobantesClient() {
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
 
+  function estadoUrl(f: EstadoFilter) {
+    return f === 'all' ? '/api/comprobantes' : `/api/comprobantes?estado=${f}`;
+  }
+
   // Full fetch — shows spinner (initial load only)
-  async function fetchComprobantes() {
+  async function fetchComprobantes(f: EstadoFilter = estadoFilter) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/comprobantes');
+      const res = await fetch(estadoUrl(f));
       if (!res.ok) throw new Error(res.statusText);
       setComprobantes(await res.json());
     } catch {
@@ -49,10 +63,15 @@ export default function ComprobantesClient() {
   // Silent refresh — no spinner, no flicker (used by polling & Realtime)
   async function fetchSilent() {
     try {
-      const res = await fetch('/api/comprobantes');
+      const res = await fetch(estadoUrl(estadoFilter));
       if (!res.ok) return;
       setComprobantes(await res.json());
     } catch {}
+  }
+
+  function handleFilterChange(f: EstadoFilter) {
+    setEstadoFilter(f);
+    fetchComprobantes(f);
   }
 
   async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number) {
@@ -142,6 +161,28 @@ export default function ComprobantesClient() {
 
   return (
     <>
+      {/* ── Filter bar ── */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+        {ESTADO_FILTERS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => handleFilterChange(key)}
+            style={{
+              background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
+              color:        estadoFilter === key ? '#000'    : '#888',
+              border:       'none',
+              borderRadius: '999px',
+              padding:      '6px 16px',
+              fontSize:     '13px',
+              fontWeight:   600,
+              cursor:       'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* ── Lightbox ── */}
       {lightbox && (
         <div
