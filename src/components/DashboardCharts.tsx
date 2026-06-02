@@ -2,14 +2,52 @@
 
 import React, { useEffect, useState } from 'react';
 
-type StatusItem  = { status: string;  label: string; count: number; color: string };
-type EstadoItem  = { estado: string;  label: string; count: number; color: string };
-type MonthItem   = { label: string; monto: number };
+type StatusItem    = { status: string; label: string; count: number; color: string };
+type EstadoItem    = { estado: string; label: string; count: number; color: string };
+type MonthItem     = { label: string; monto: number };
+type ProvinceItem  = { provincia: string; total: number; dominant: string };
 
 type ChartsData = {
-  contactsByStatus:    StatusItem[];
+  contactsByStatus:     StatusItem[];
   comprobantesByEstado: EstadoItem[];
-  revenueByMonth:      MonthItem[];
+  revenueByMonth:       MonthItem[];
+  provinceData:         ProvinceItem[];
+};
+
+// Province center coordinates in the Argentina SVG (viewBox "0 0 280 480")
+const PROVINCE_COORDS: Record<string, [number, number]> = {
+  'Jujuy':                  [116,  23],
+  'Salta':                  [130,  43],
+  'Formosa':                [195,  20],
+  'Chaco':                  [205,  68],
+  'Misiones':               [260,  72],
+  'Tucumán':                [138,  72],
+  'Santiago del Estero':    [168,  88],
+  'Corrientes':             [225,  92],
+  'Catamarca':              [ 96,  88],
+  'La Rioja':               [ 94, 114],
+  'Córdoba':                [150, 140],
+  'Santa Fe':               [196, 138],
+  'Entre Ríos':             [228, 148],
+  'San Juan':               [ 72, 132],
+  'San Luis':               [112, 168],
+  'La Pampa':               [148, 216],
+  'Mendoza':                [ 62, 164],
+  'CABA':                   [228, 192],
+  'Buenos Aires':           [210, 225],
+  'Neuquén':                [ 78, 252],
+  'Río Negro':              [ 98, 282],
+  'Chubut':                 [120, 318],
+  'Santa Cruz':             [ 72, 400],
+  'Tierra del Fuego':       [ 80, 462],
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  cliente_activo: '#C8FF00',
+  nuevo:          '#4A90D9',
+  inactivo:       '#aaa',
+  bloqueado:      '#FF4444',
+  en_proceso:     '#FFB800',
 };
 
 // ── SVG Donut ──────────────────────────────────────────────────────────────────
@@ -142,6 +180,78 @@ function BarChart({ data, title }: { data: MonthItem[]; title: string }) {
   );
 }
 
+// ── Argentina Map ─────────────────────────────────────────────────────────────
+// Simplified outline path. ViewBox: 0 0 280 480
+const ARG_PATH =
+  'M 64,3 L 215,3 L 265,68 L 248,105 L 225,148 L 235,192 L 225,238 ' +
+  'L 175,252 L 155,265 L 145,282 L 158,292 L 142,305 L 122,325 ' +
+  'L 112,352 L 95,388 L 72,435 L 85,452 L 100,468 L 82,478 ' +
+  'L 52,472 L 32,452 L 5,432 L 5,395 L 8,345 L 15,278 ' +
+  'L 22,235 L 34,165 L 46,108 L 55,52 L 64,3 Z';
+
+function ArgentinaMap({ data }: { data: ProvinceItem[] }) {
+  const byProvincia = new Map(data.map((d) => [d.provincia, d]));
+  const hasData     = data.length > 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
+      <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+        Distribución por provincia
+      </p>
+
+      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <svg width="160" viewBox="0 0 280 480" style={{ flexShrink: 0, overflow: 'visible' }}>
+          {/* Argentina outline */}
+          <path d={ARG_PATH} fill="#F5F5F5" stroke="#ddd" strokeWidth="2" strokeLinejoin="round" />
+
+          {/* Province dots */}
+          {Object.entries(PROVINCE_COORDS).map(([prov, [cx, cy]]) => {
+            const item   = byProvincia.get(prov);
+            const color  = item ? (STATUS_COLOR[item.dominant] ?? '#4A90D9') : '#e0e0e0';
+            const r      = item ? Math.min(18, Math.max(7, Math.sqrt(item.total) * 2.5)) : 4;
+            const stroke = item ? (item.dominant === 'cliente_activo' ? '#8ab000' : 'rgba(0,0,0,0.15)') : '#ccc';
+            return (
+              <g key={prov}>
+                <circle cx={cx} cy={cy} r={r} fill={color} stroke={stroke} strokeWidth="1.5" opacity={item ? 1 : 0.4} />
+                {item && (
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize="8" fontWeight="800" fill={item.dominant === 'cliente_activo' ? '#3a5a00' : '#fff'}>
+                    {item.total}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Legend + ranked list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+          {!hasData ? (
+            <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>
+              Asigná provincia en cada contacto para ver el mapa.
+            </p>
+          ) : (
+            [...data].sort((a, b) => b.total - a.total).slice(0, 8).map((d) => (
+              <div key={d.provincia} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: STATUS_COLOR[d.dominant] ?? '#4A90D9', flexShrink: 0 }} />
+                <span style={{ fontSize: '12px', color: '#555', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.provincia}</span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#000' }}>{d.total}</span>
+              </div>
+            ))
+          )}
+          <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {Object.entries({ 'Cliente activo': '#C8FF00', 'Nuevo': '#4A90D9', 'Inactivo': '#aaa', 'Bloqueado': '#FF4444' }).map(([label, color]) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: color, flexShrink: 0 }} />
+                <span style={{ fontSize: '11px', color: '#999' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main export ────────────────────────────────────────────────────────────────
 export default function DashboardCharts() {
   const [data, setData]       = useState<ChartsData | null>(null);
@@ -167,26 +277,22 @@ export default function DashboardCharts() {
 
   if (!data) return null;
 
-  const contactData    = data.contactsByStatus.map((d)    => ({ label: d.label, value: d.count, color: d.color }));
+  const contactData     = data.contactsByStatus.map((d)    => ({ label: d.label, value: d.count, color: d.color }));
   const comprobanteData = data.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color }));
 
   return (
-    <div
-      style={{
-        background: '#fff',
-        borderRadius: '20px',
-        padding: '24px',
-        boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
-        marginTop: '8px',
-        display: 'flex',
-        gap: '32px',
-        flexWrap: 'wrap',
-        alignItems: 'flex-start',
-      }}
-    >
-      <DonutChart data={contactData}     title="Estado de contactos" emptyLabel="Sin contactos" />
-      <DonutChart data={comprobanteData} title="Comprobantes"        emptyLabel="Sin comprobantes" />
-      <BarChart   data={data.revenueByMonth} title="Ingresos últimos 6 meses" />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '8px' }}>
+      {/* Row 1: donuts + bar */}
+      <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <DonutChart data={contactData}     title="Estado de contactos" emptyLabel="Sin contactos" />
+        <DonutChart data={comprobanteData} title="Comprobantes"        emptyLabel="Sin comprobantes" />
+        <BarChart   data={data.revenueByMonth} title="Ingresos últimos 6 meses" />
+      </div>
+
+      {/* Row 2: Argentina map */}
+      <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)' }}>
+        <ArgentinaMap data={data.provinceData ?? []} />
+      </div>
     </div>
   );
 }

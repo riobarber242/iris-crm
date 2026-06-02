@@ -2,6 +2,14 @@
 
 import React, { useState } from 'react';
 
+const PROVINCIAS = [
+  'CABA', 'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba',
+  'Corrientes', 'Entre Ríos', 'Formosa', 'Jujuy', 'La Pampa', 'La Rioja',
+  'Mendoza', 'Misiones', 'Neuquén', 'Río Negro', 'Salta', 'San Juan',
+  'San Luis', 'Santa Cruz', 'Santa Fe', 'Santiago del Estero',
+  'Tierra del Fuego', 'Tucumán',
+];
+
 const STATUS_OPTIONS = [
   { value: 'nuevo',          label: 'Nuevo' },
   { value: 'cliente_activo', label: 'Cliente activo' },
@@ -34,6 +42,7 @@ export default function ContactHeader({
   initialStatus,
   conversationState,
   initialNotes,
+  initialProvincia,
   recargasCount,
   recargasMonto,
 }: {
@@ -44,6 +53,7 @@ export default function ContactHeader({
   initialStatus?:         string | null;
   conversationState?:     string | null;
   initialNotes?:          string;
+  initialProvincia?:      string | null;
   recargasCount?:         number;
   recargasMonto?:         number;
 }) {
@@ -58,6 +68,7 @@ export default function ContactHeader({
   const [notesSaving,   setNotesSaving]   = useState(false);
   const [botState,      setBotState]      = useState(conversationState ?? null);
   const [resetLoading,  setResetLoading]  = useState(false);
+  const [provincia,     setProvincia]     = useState(initialProvincia ?? '');
 
   async function handleStatusChange(newStatus: string) {
     setStatusLoading(true);
@@ -119,6 +130,15 @@ export default function ContactHeader({
       setStatus('nuevo');
     } catch {}
     setResetLoading(false);
+  }
+
+  async function saveProvincia(value: string) {
+    setProvincia(value);
+    await fetch('/api/conversations', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ contactId, provincia: value || null }),
+    }).catch(() => {});
   }
 
   async function saveNotes() {
@@ -246,6 +266,28 @@ export default function ContactHeader({
               >
                 {STATUS_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+
+              {/* Provincia selector */}
+              <select
+                value={provincia}
+                onChange={(e) => saveProvincia(e.target.value)}
+                style={{
+                  background:   '#F5F5F5',
+                  color:        provincia ? '#333' : '#aaa',
+                  fontWeight:   600,
+                  fontSize:     '12px',
+                  border:       'none',
+                  borderRadius: '8px',
+                  padding:      '4px 10px',
+                  cursor:       'pointer',
+                  outline:      'none',
+                }}
+              >
+                <option value="">📍 Provincia</option>
+                {PROVINCIAS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
                 ))}
               </select>
 

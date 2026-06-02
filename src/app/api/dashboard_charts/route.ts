@@ -10,7 +10,7 @@ export async function GET() {
   sixMonthsAgo.setHours(0, 0, 0, 0);
 
   const [contactsRes, comprobantesRes, recargasRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('status'),
+    supabaseAdmin.from('contacts').select('status, provincia'),
     supabaseAdmin.from('comprobantes').select('estado'),
     supabaseAdmin.from('comprobantes')
       .select('monto, created_at')
@@ -58,5 +58,19 @@ export async function GET() {
     return { label: MONTHS_ES[d.getMonth()], monto: byMonth[key] ?? 0 };
   });
 
-  return NextResponse.json({ contactsByStatus, comprobantesByEstado, revenueByMonth });
+  // Province breakdown
+  const provMap: Record<string, Record<string, number>> = {};
+  for (const c of contactsRes.data ?? []) {
+    if (!c.provincia) continue;
+    if (!provMap[c.provincia]) provMap[c.provincia] = {};
+    const s = c.status ?? 'nuevo';
+    provMap[c.provincia][s] = (provMap[c.provincia][s] ?? 0) + 1;
+  }
+  const provinceData = Object.entries(provMap).map(([provincia, counts]) => {
+    const total    = Object.values(counts).reduce((s, n) => s + n, 0);
+    const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'nuevo';
+    return { provincia, total, dominant, counts };
+  });
+
+  return NextResponse.json({ contactsByStatus, comprobantesByEstado, revenueByMonth, provinceData });
 }

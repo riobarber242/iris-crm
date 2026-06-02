@@ -64,6 +64,9 @@ export async function PATCH(request: Request) {
   if (body.conversation_state !== undefined) {
     updates.conversation_state = body.conversation_state;
   }
+  if (body.provincia !== undefined) {
+    updates.provincia = body.provincia;
+  }
   if (body.markRead) {
     updates.last_read_at = new Date().toISOString();
   }
