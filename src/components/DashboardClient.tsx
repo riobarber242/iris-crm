@@ -148,6 +148,7 @@ export default function DashboardClient() {
   }
 
   return (
+    <>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
 
       {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
@@ -192,5 +193,6 @@ export default function DashboardClient() {
 
     </div>
     <DashboardCharts />
+    </>
   );
 }
