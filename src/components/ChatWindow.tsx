@@ -15,6 +15,16 @@ type Message = {
 
 type QuickReply = { id: string; title: string; content: string };
 
+type ImageContent = { _type: 'image'; url: string; caption: string };
+
+function parseImageContent(raw: string): ImageContent | null {
+  try {
+    const p = JSON.parse(raw);
+    if (p?._type === 'image' && typeof p.url === 'string') return p as ImageContent;
+  } catch {}
+  return null;
+}
+
 export default function ChatWindow({ contactId }: { contactId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -22,10 +32,13 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [cooldown, setCooldown] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
   const qrPanelRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   async function fetchMessages() {
     try {
@@ -70,8 +83,6 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           filter: `contact_id=eq.${contactId}`,
         }, (payload: any) => {
           setMessages((m) => {
-            // Dedup: the operator's own messages are already added via the API response.
-            // Only add if the id isn't already in the list (handles inbound messages).
             if (payload.new.id && m.some((msg) => msg.id === payload.new.id)) return m;
             return [...m, payload.new];
           });
@@ -100,12 +111,36 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     }).catch(() => {});
   }, [contactId]);
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    // Reset so same file can be re-selected
+    e.target.value = '';
+  }
+
+  function clearImage() {
+    setImageFile(null);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(null);
+  }
+
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
-    const content = input.trim();
-    if (!content || loading || cooldown) return;
+    if (loading || cooldown) return;
 
-    // Clear input immediately for instant visual feedback
+    if (imageFile) {
+      await handleSendImage();
+    } else {
+      await handleSendText();
+    }
+  }
+
+  async function handleSendText() {
+    const content = input.trim();
+    if (!content) return;
+
     setInput('');
     setLoading(true);
     setCooldown(true);
@@ -130,7 +165,44 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     }
 
     setLoading(false);
-    // 2-second cooldown to prevent double-clicks even after fast API responses
+    setTimeout(() => setCooldown(false), 2000);
+  }
+
+  async function handleSendImage() {
+    if (!imageFile) return;
+
+    const caption = input.trim();
+    const preview = imagePreview;
+
+    setImageFile(null);
+    setImagePreview(null);
+    setInput('');
+    setLoading(true);
+    setCooldown(true);
+
+    const tempContent = JSON.stringify({ _type: 'image', url: preview ?? '', caption });
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending' };
+    setMessages((m) => [...m, temp]);
+
+    const form = new FormData();
+    form.append('file', imageFile);
+    form.append('contactId', contactId);
+    form.append('caption', caption);
+
+    try {
+      const res = await fetch('/api/messages/image', { method: 'POST', body: form });
+      if (res.ok) {
+        const saved = await res.json();
+        setMessages((m) => m.map((msg) => (msg === temp ? saved : msg)));
+      } else {
+        setMessages((m) => m.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg)));
+      }
+    } catch {
+      setMessages((m) => m.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg)));
+    }
+
+    if (preview) URL.revokeObjectURL(preview);
+    setLoading(false);
     setTimeout(() => setCooldown(false), 2000);
   }
 
@@ -160,6 +232,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
           const roleLabel = isBot ? 'Iris 🤖' : isHuman ? 'Operador' : 'Cliente';
+          const img = parseImageContent(m.content);
           return (
             <div
               key={m.id ?? i}
@@ -176,7 +249,21 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
                 {roleLabel}{m.status && m.status !== 'sent' ? ` · ${m.status}` : ''}
               </p>
-              <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
+              {img ? (
+                <div>
+                  <img
+                    src={img.url}
+                    alt={img.caption || 'imagen'}
+                    style={{ maxWidth: '100%', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
+                    onClick={() => window.open(img.url, '_blank')}
+                  />
+                  {img.caption && (
+                    <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{img.caption}</p>
+                  )}
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
+              )}
               {m.created_at && (
                 <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5 }} title={new Date(m.created_at).toLocaleString('es-AR')}>
                   {formatRelativeTime(m.created_at)}
@@ -187,7 +274,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         })}
       </div>
 
-      {/* Input */}
+      {/* Input area */}
       <div style={{ position: 'relative' }} ref={qrPanelRef}>
         {/* Quick-reply panel */}
         {showQR && (
@@ -226,7 +313,6 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                     padding: '10px 14px',
                     textAlign: 'left',
                     cursor: 'pointer',
-                    transition: 'background 0.15s',
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -243,8 +329,48 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           </div>
         )}
 
+        {/* Image preview strip */}
+        {imagePreview && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              background: '#F5F5F5',
+              borderRadius: '14px',
+              padding: '10px 14px',
+              marginBottom: '10px',
+            }}
+          >
+            <img
+              src={imagePreview}
+              alt="preview"
+              style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }}
+            />
+            <p style={{ fontSize: '13px', color: '#555', margin: 0, flex: 1 }}>
+              {imageFile?.name}
+            </p>
+            <button
+              type="button"
+              onClick={clearImage}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '20px', lineHeight: 1, padding: '4px' }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
-          {/* Quick-replies toggle button */}
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+
+          {/* Quick-replies toggle */}
           <button
             type="button"
             onClick={() => setShowQR((v) => !v)}
@@ -262,10 +388,30 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           >
             ⚡
           </button>
+
+          {/* Image attach button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Adjuntar imagen"
+            style={{
+              background: imageFile ? '#C8FF00' : '#F5F5F5',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 14px',
+              fontSize: '16px',
+              cursor: 'pointer',
+              flexShrink: 0,
+              lineHeight: 1,
+            }}
+          >
+            📎
+          </button>
+
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Escribí un mensaje..."
+            placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}
             style={{
               flex: 1,
               background: '#F5F5F5',
@@ -277,20 +423,21 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               outline: 'none',
             }}
           />
+
           <button
             type="submit"
-            disabled={loading || cooldown}
+            disabled={loading || cooldown || (!input.trim() && !imageFile)}
             style={{
-              background: loading || cooldown ? '#e0e0e0' : '#C8FF00',
+              background: loading || cooldown || (!input.trim() && !imageFile) ? '#e0e0e0' : '#C8FF00',
               color: '#000',
               fontWeight: 700,
               fontSize: '14px',
               border: 'none',
               borderRadius: '12px',
               padding: '12px 20px',
-              cursor: loading || cooldown ? 'not-allowed' : 'pointer',
-              opacity: loading || cooldown ? 0.6 : 1,
-              boxShadow: loading || cooldown ? 'none' : '0 4px 12px rgba(200,255,0,0.3)',
+              cursor: loading || cooldown || (!input.trim() && !imageFile) ? 'not-allowed' : 'pointer',
+              opacity: loading || cooldown || (!input.trim() && !imageFile) ? 0.6 : 1,
+              boxShadow: loading || cooldown || (!input.trim() && !imageFile) ? 'none' : '0 4px 12px rgba(200,255,0,0.3)',
             }}
           >
             {loading ? '...' : cooldown ? '✓' : 'Enviar'}
