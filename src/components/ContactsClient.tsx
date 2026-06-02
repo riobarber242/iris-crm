@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 
 type ContactRow = {
@@ -19,10 +19,40 @@ const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
   bloqueado:      { bg: '#FF4444', fg: '#fff' },
 };
 
+type ImportResult = { imported: number; skipped: number };
+
+function parseCSV(text: string): { phone: string; casino_username: string; name: string }[] {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase().replace(/"/g, ''));
+  const idx = (terms: string[]) => headers.findIndex((h) => terms.some((t) => h.includes(t)));
+
+  const phoneIdx  = idx(['phone', 'telefono', 'tel', 'celular']);
+  const userIdx   = idx(['casino', 'usuario', 'username', 'user']);
+  const nameIdx   = idx(['name', 'nombre']);
+
+  if (phoneIdx === -1) return [];
+
+  return lines.slice(1).flatMap((line) => {
+    const cols = line.split(',').map((c) => c.trim().replace(/^"(.*)"$/, '$1'));
+    const phone = cols[phoneIdx] ?? '';
+    if (!phone) return [];
+    return [{
+      phone,
+      casino_username: userIdx !== -1 ? (cols[userIdx] ?? '') : '',
+      name:            nameIdx !== -1 ? (cols[nameIdx] ?? '') : '',
+    }];
+  });
+}
+
 export default function ContactsClient() {
-  const [contacts, setContacts] = useState<ContactRow[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [query,    setQuery]    = useState('');
+  const [contacts,     setContacts]     = useState<ContactRow[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [query,        setQuery]        = useState('');
+  const [importing,    setImporting]    = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   async function fetchContacts() {
     try {
@@ -39,6 +69,36 @@ export default function ContactsClient() {
     return () => clearInterval(timer);
   }, []);
 
+  async function handleCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      const contacts = parseCSV(text);
+      if (contacts.length === 0) {
+        alert('El CSV no tiene datos válidos. Verificá que tenga una columna "phone" en el encabezado.');
+        setImporting(false);
+        return;
+      }
+      const res = await fetch('/api/contacts/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setImportResult(result);
+        fetchContacts();
+      }
+    } catch {
+      alert('Error al importar el CSV.');
+    }
+    setImporting(false);
+  }
+
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     if (!q) return contacts;
@@ -51,22 +111,69 @@ export default function ContactsClient() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-      {/* Search */}
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Buscar por nombre, usuario casino o teléfono..."
-        style={{
-          width: '100%',
-          padding: '12px 16px',
-          fontSize: '14px',
-          border: '2px solid #e0e0e0',
+      {/* Search + Import */}
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar por nombre, usuario casino o teléfono..."
+          style={{
+            flex: 1,
+            padding: '12px 16px',
+            fontSize: '14px',
+            border: '2px solid #e0e0e0',
+            borderRadius: '12px',
+            outline: 'none',
+            background: '#fff',
+          }}
+        />
+        <input ref={csvInputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+        <button
+          onClick={() => csvInputRef.current?.click()}
+          disabled={importing}
+          title={'Columnas soportadas: phone (requerida), casino_username, name'}
+          style={{
+            background: importing ? '#e0e0e0' : '#1a1a1a',
+            color: importing ? '#888' : '#C8FF00',
+            fontWeight: 700,
+            fontSize: '13px',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 18px',
+            cursor: importing ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          {importing ? 'Importando...' : '⬆ Importar CSV'}
+        </button>
+      </div>
+
+      {/* Import result banner */}
+      {importResult && (
+        <div style={{
+          background: importResult.imported > 0 ? '#f0fff4' : '#f5f5f5',
+          border: `1px solid ${importResult.imported > 0 ? '#86efac' : '#e0e0e0'}`,
           borderRadius: '12px',
-          outline: 'none',
-          background: '#fff',
-          boxSizing: 'border-box',
-        }}
-      />
+          padding: '12px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+        }}>
+          <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#1a1a1a' }}>
+            {importResult.imported > 0
+              ? `✅ ${importResult.imported} contacto${importResult.imported !== 1 ? 's' : ''} importado${importResult.imported !== 1 ? 's' : ''}`
+              : '— Sin contactos nuevos'}
+            {importResult.skipped > 0 && (
+              <span style={{ fontWeight: 400, color: '#888', marginLeft: '8px' }}>
+                · {importResult.skipped} ya existían
+              </span>
+            )}
+          </p>
+          <button onClick={() => setImportResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '18px', lineHeight: 1, padding: '2px' }}>×</button>
+        </div>
+      )}
 
       {loading && (
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando contactos...</p>
