@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const estado = url.searchParams.get('estado');
 
-  let query = supabaseAdmin.from('comprobantes').select('*, contacts(phone, name)');
+  let query = supabaseAdmin.from('comprobantes').select('*, contacts(phone, name, casino_username)');
   if (estado && estado !== 'all') {
     query = query.eq('estado', estado);
   }

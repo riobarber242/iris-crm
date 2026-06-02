@@ -9,7 +9,7 @@ type ComprobanteItem = {
   monto: number | null;
   estado: 'pendiente' | 'verificado' | 'rechazado';
   created_at: string;
-  contacts: { name: string | null; phone: string } | null;
+  contacts: { name: string | null; phone: string; casino_username: string | null } | null;
 };
 
 const ESTADO_STYLE: Record<string, React.CSSProperties> = {
@@ -183,7 +183,7 @@ export default function ComprobantesClient() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {comprobantes.map((item) => {
           const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
-          const displayName = item.contacts?.name || item.contacts?.phone || '—';
+          const displayName = item.contacts?.casino_username || item.contacts?.phone || '—';
           const phone       = item.contacts?.phone;
           const fecha       = new Date(item.created_at).toLocaleString('es-AR', {
             day: '2-digit', month: '2-digit', year: '2-digit',

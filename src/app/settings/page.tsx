@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+import BotToggle from '@/components/BotToggle';
 import { supabaseAdmin } from '@/lib/db';
 
 async function fetchSettings() {
@@ -15,7 +16,12 @@ export default async function SettingsPage() {
   return (
     <AdminShell>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        <SectionCard title="Configuración" description="Variables de sistema del CRM.">
+
+        <SectionCard title="Control del bot" description="Activá o pausá el bot automático de WhatsApp.">
+          <BotToggle />
+        </SectionCard>
+
+        <SectionCard title="Variables de sistema" description="Configuración interna del CRM.">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {settings.map((item: any) => (
               <div
@@ -43,6 +49,7 @@ export default async function SettingsPage() {
             ))}
           </div>
         </SectionCard>
+
       </div>
     </AdminShell>
   );
