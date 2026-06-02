@@ -13,7 +13,7 @@ const navLabels: Record<string, string> = {
   conversations: 'Conversaciones',
   contacts:      'Contactos',
   comprobantes:  'Comprobantes',
-  leads:         'Leads',
+  leads:         'Top Clientes',
   campanas:      'Campañas',
   settings:      'Configuración',
 };

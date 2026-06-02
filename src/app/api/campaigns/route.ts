@@ -36,6 +36,23 @@ export async function POST(request: Request) {
   return NextResponse.json(data);
 }
 
+export async function DELETE(request: Request) {
+  const { campaignId } = await request.json();
+  if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
+
+  // Only allow deleting drafts
+  const { data: campaign } = await supabaseAdmin
+    .from('campaigns').select('status').eq('id', campaignId).single();
+  if (!campaign) return new NextResponse('No encontrada', { status: 404 });
+  if (campaign.status !== 'borrador') {
+    return new NextResponse('Solo se pueden eliminar campañas en borrador', { status: 409 });
+  }
+
+  const { error } = await supabaseAdmin.from('campaigns').delete().eq('id', campaignId);
+  if (error) return new NextResponse(error.message, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
 export async function PATCH(request: Request) {
   const body = await request.json();
   const campaignId = body.campaignId;

@@ -127,8 +127,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         }}
       >
         {messages.map((m, i) => {
-          const isBot = m.role === 'assistant';
+          const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
+          const roleLabel = isBot ? 'Iris 🤖' : isHuman ? 'Operador' : 'Cliente';
           return (
             <div
               key={m.id ?? i}
@@ -142,8 +143,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 wordBreak: 'break-word',
               }}
             >
-              <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0', textTransform: 'capitalize' }}>
-                {m.role}{m.status && m.status !== 'sent' ? ` · ${m.status}` : ''}
+              <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
+                {roleLabel}{m.status && m.status !== 'sent' ? ` · ${m.status}` : ''}
               </p>
               <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
               {m.created_at && (

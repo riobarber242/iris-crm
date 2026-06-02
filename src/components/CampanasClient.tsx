@@ -26,15 +26,17 @@ const FILTERS = [
 ];
 
 export default function CampanasClient() {
-  const [campaigns,   setCampaigns]   = useState<Campaign[]>([]);
-  const [showForm,    setShowForm]    = useState(false);
-  const [sending,     setSending]     = useState<string | null>(null);
-  const [name,        setName]        = useState('');
-  const [message,     setMessage]     = useState('');
-  const [filter,      setFilter]      = useState('todos');
-  const [creating,    setCreating]    = useState(false);
-  const [error,       setError]       = useState('');
-  const [sendResult,  setSendResult]  = useState<{ campaignId: string; sent: number; total: number } | null>(null);
+  const [campaigns,      setCampaigns]      = useState<Campaign[]>([]);
+  const [showForm,       setShowForm]       = useState(false);
+  const [sending,        setSending]        = useState<string | null>(null);
+  const [name,           setName]           = useState('');
+  const [message,        setMessage]        = useState('');
+  const [filter,         setFilter]         = useState('todos');
+  const [creating,       setCreating]       = useState(false);
+  const [error,          setError]          = useState('');
+  const [sendResult,     setSendResult]     = useState<{ campaignId: string; sent: number; total: number } | null>(null);
+  const [recipientCount, setRecipientCount] = useState<number | null>(null);
+  const [countLoading,   setCountLoading]   = useState(false);
 
   async function fetchCampaigns() {
     try {
@@ -49,6 +51,36 @@ export default function CampanasClient() {
     const t = setInterval(fetchCampaigns, 10_000);
     return () => clearInterval(t);
   }, []);
+
+  async function fetchRecipientCount(f: string) {
+    setCountLoading(true);
+    setRecipientCount(null);
+    try {
+      const param = f === 'todos' ? '?all=true' : `?status=${f}`;
+      const res = await fetch(`/api/contacts${param}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setRecipientCount(Array.isArray(data) ? data.length : null);
+    } catch {}
+    setCountLoading(false);
+  }
+
+  function handleFilterChange(f: string) {
+    setFilter(f);
+    fetchRecipientCount(f);
+  }
+
+  async function handleDelete(campaign: Campaign) {
+    if (!confirm(`¿Eliminar la campaña "${campaign.name}"? Esta acción no se puede deshacer.`)) return;
+    try {
+      await fetch('/api/campaigns', {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ campaignId: campaign.id }),
+      });
+      await fetchCampaigns();
+    } catch {}
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -111,7 +143,7 @@ export default function CampanasClient() {
           </p>
         </div>
         <button
-          onClick={() => { setShowForm((v) => !v); setError(''); }}
+          onClick={() => { setShowForm((v) => { if (!v) fetchRecipientCount('todos'); return !v; }); setError(''); }}
           style={{
             background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px',
             border: 'none', borderRadius: '12px', padding: '10px 20px', cursor: 'pointer',
@@ -154,7 +186,7 @@ export default function CampanasClient() {
             </label>
             <select
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={(e) => handleFilterChange(e.target.value)}
               style={{
                 background: '#F5F5F5', border: 'none', borderRadius: '10px',
                 padding: '10px 14px', fontSize: '14px', color: '#000', outline: 'none', cursor: 'pointer',
@@ -164,6 +196,14 @@ export default function CampanasClient() {
                 <option key={f.value} value={f.value}>{f.label}</option>
               ))}
             </select>
+            {recipientCount !== null && (
+              <p style={{ fontSize: '12px', color: '#555', margin: 0, fontWeight: 600 }}>
+                {countLoading ? 'Contando...' : `${recipientCount} contacto${recipientCount !== 1 ? 's' : ''} recibirán este mensaje`}
+              </p>
+            )}
+            {countLoading && recipientCount === null && (
+              <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>Contando destinatarios...</p>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -274,18 +314,29 @@ export default function CampanasClient() {
             )}
 
             {campaign.status === 'borrador' && (
-              <button
-                onClick={() => handleSend(campaign)}
-                disabled={isSending}
-                style={{
-                  background: isSending ? '#e0e0e0' : '#1a1a1a', color: isSending ? '#999' : '#C8FF00',
-                  fontWeight: 800, fontSize: '13px', border: 'none',
-                  borderRadius: '10px', padding: '9px 18px', cursor: isSending ? 'not-allowed' : 'pointer',
-                  alignSelf: 'flex-start', opacity: isSending ? 0.6 : 1,
-                }}
-              >
-                {isSending ? 'Enviando...' : 'Enviar campaña'}
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  onClick={() => handleSend(campaign)}
+                  disabled={isSending}
+                  style={{
+                    background: isSending ? '#e0e0e0' : '#1a1a1a', color: isSending ? '#999' : '#C8FF00',
+                    fontWeight: 800, fontSize: '13px', border: 'none',
+                    borderRadius: '10px', padding: '9px 18px', cursor: isSending ? 'not-allowed' : 'pointer',
+                    opacity: isSending ? 0.6 : 1,
+                  }}
+                >
+                  {isSending ? 'Enviando...' : 'Enviar campaña'}
+                </button>
+                <button
+                  onClick={() => handleDelete(campaign)}
+                  style={{
+                    background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px',
+                    border: '1px solid #f08080', borderRadius: '10px', padding: '9px 14px', cursor: 'pointer',
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
             )}
           </div>
         );
