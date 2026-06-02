@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_API_URL = 'https://api.groq.cloud/v1';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1';
 
 const headers = GROQ_API_KEY
   ? { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
@@ -27,26 +27,33 @@ export async function generateBotResponse(systemPrompt: string, userMessage: str
   return response.data?.choices?.[0]?.text?.trim() ?? 'Perdón, estoy procesando tu consulta.';
 }
 
-export async function generateAmountFromImage(imageUrl: string) {
-  if (!headers) {
-    // If GROQ not configured, return 0 so comprobantes can still be saved
-    return 0;
-  }
+export async function generateAmountFromImage(imageUrl: string): Promise<number> {
+  if (!headers) return 0;
 
   const response = await axios.post(
-    `${GROQ_API_URL}/vision`,
+    `${GROQ_API_URL}/chat/completions`,
     {
-      model: 'llama-3.3-70b-versatile',
-      image_url: imageUrl,
-      task: 'document_text',
-      prompt: 'Detectá el monto o número relevante del comprobante en pesos. Respondé solo el número. Si no hay monto, respondé 0.',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageUrl } },
+            {
+              type: 'text',
+              text: 'Este es un comprobante de transferencia o recarga de casino online en Argentina. Encontrá el monto total transferido en pesos. Respondé SOLO con el número, sin puntos de miles ni símbolo $. Por ejemplo: 15000. Si no podés determinar el monto, respondé 0.',
+            },
+          ],
+        },
+      ],
+      max_tokens: 50,
+      temperature: 0,
     },
-    { headers }
+    { headers },
   );
 
-  const text = response.data?.output?.[0]?.content ?? '';
-  const monto = extractNumberFromText(text);
-  return monto;
+  const text: string = response.data?.choices?.[0]?.message?.content ?? '';
+  return extractNumberFromText(text);
 }
 
 function extractNumberFromText(text: string) {

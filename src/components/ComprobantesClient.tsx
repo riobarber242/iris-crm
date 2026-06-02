@@ -42,6 +42,7 @@ export default function ComprobantesClient() {
   const [montoError, setMontoError]           = useState('');
   const [editingMontoId, setEditingMontoId]   = useState<string | null>(null);
   const [editMontoInput, setEditMontoInput]   = useState('');
+  const [aiLoading,      setAiLoading]        = useState(false);
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
 
@@ -122,6 +123,23 @@ export default function ComprobantesClient() {
     } catch {
       setError('No se pudo actualizar el monto.');
     }
+  }
+
+  async function detectMonto(id: string) {
+    setAiLoading(true);
+    try {
+      const res = await fetch(`/api/comprobantes/analyze?id=${id}`);
+      const data = await res.json();
+      if (res.ok && data.monto > 0) {
+        setMontoInput(String(data.monto));
+        setMontoError('');
+      } else {
+        setMontoError('No se pudo detectar el monto. Ingresalo manualmente.');
+      }
+    } catch {
+      setMontoError('Error al analizar la imagen.');
+    }
+    setAiLoading(false);
   }
 
   useEffect(() => {
@@ -406,6 +424,24 @@ export default function ComprobantesClient() {
                             outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
                           }}
                         />
+                        {item.image_url && (
+                          <button
+                            type="button"
+                            onClick={() => detectMonto(item.id)}
+                            disabled={aiLoading}
+                            title="Detectar monto con IA"
+                            style={{
+                              background: aiLoading ? '#e0e0e0' : '#1a1a1a',
+                              color: aiLoading ? '#888' : '#C8FF00',
+                              fontWeight: 700, fontSize: '12px',
+                              border: 'none', borderRadius: '8px',
+                              padding: '5px 10px', cursor: aiLoading ? 'not-allowed' : 'pointer',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {aiLoading ? '...' : '✨ IA'}
+                          </button>
+                        )}
                         <button onClick={() => confirmVerify(item.id)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>
                           ✓ OK
                         </button>
