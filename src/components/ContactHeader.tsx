@@ -52,6 +52,8 @@ export default function ContactHeader({
   const [notes,         setNotes]         = useState(initialNotes ?? '');
   const [notesEditing,  setNotesEditing]  = useState(false);
   const [notesSaving,   setNotesSaving]   = useState(false);
+  const [botState,      setBotState]      = useState(conversationState ?? null);
+  const [resetLoading,  setResetLoading]  = useState(false);
 
   async function handleStatusChange(newStatus: string) {
     setStatusLoading(true);
@@ -100,6 +102,21 @@ export default function ContactHeader({
     setLoading(false);
   }
 
+  async function resetBot() {
+    if (!confirm('¿Reiniciar el flujo del bot? El bot volverá a atender a este contacto desde cero.')) return;
+    setResetLoading(true);
+    try {
+      await fetch('/api/conversations', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contactId, conversation_state: null, status: 'nuevo' }),
+      });
+      setBotState(null);
+      setStatus('nuevo');
+    } catch {}
+    setResetLoading(false);
+  }
+
   async function saveNotes() {
     setNotesSaving(true);
     try {
@@ -113,9 +130,9 @@ export default function ContactHeader({
     setNotesSaving(false);
   }
 
-  const display = casinoUser || phone;
-  const initial = display.charAt(0).toUpperCase();
-  const botLabel = conversationState ? (BOT_STATE_LABEL[conversationState] ?? conversationState) : null;
+  const display  = casinoUser || phone;
+  const initial  = display.charAt(0).toUpperCase();
+  const botLabel = botState ? (BOT_STATE_LABEL[botState] ?? botState) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -196,16 +213,40 @@ export default function ContactHeader({
                 ))}
               </select>
 
-              {/* Bot state badge */}
-              {botLabel && (
+              {/* Bot state badge + reset */}
+              {botLabel ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{
+                    background: '#f0f4ff', color: '#3b5bdb',
+                    fontSize: '11px', fontWeight: 700,
+                    borderRadius: '8px', padding: '4px 10px',
+                    border: '1px solid #c5cff5', whiteSpace: 'nowrap',
+                  }}>
+                    🤖 {botLabel}
+                  </span>
+                  <button
+                    onClick={resetBot}
+                    disabled={resetLoading}
+                    title="Reiniciar flujo del bot"
+                    style={{
+                      background: resetLoading ? '#e0e0e0' : '#fff0f0',
+                      color: '#c0392b', fontSize: '11px', fontWeight: 700,
+                      border: '1px solid #f08080', borderRadius: '8px',
+                      padding: '4px 8px', cursor: resetLoading ? 'not-allowed' : 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {resetLoading ? '...' : '↺ Reiniciar bot'}
+                  </button>
+                </div>
+              ) : (
                 <span style={{
-                  background: '#f0f4ff', color: '#3b5bdb',
-                  fontSize: '11px', fontWeight: 700,
+                  background: '#f5f5f5', color: '#bbb',
+                  fontSize: '11px', fontWeight: 600,
                   borderRadius: '8px', padding: '4px 10px',
-                  border: '1px solid #c5cff5',
-                  whiteSpace: 'nowrap',
+                  border: '1px solid #eee', whiteSpace: 'nowrap',
                 }}>
-                  🤖 {botLabel}
+                  🤖 Sin iniciar
                 </span>
               )}
 

@@ -155,11 +155,35 @@ export default function ComprobantesClient() {
       {error}
     </div>
   );
-  if (comprobantes.length === 0) return (
-    <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
-      No hay comprobantes cargados.
-    </div>
-  );
+  if (comprobantes.length === 0) {
+    const emptyMsg = estadoFilter === 'all'
+      ? 'No hay comprobantes cargados.'
+      : `No hay comprobantes ${estadoFilter === 'pendiente' ? 'pendientes' : estadoFilter === 'verificado' ? 'verificados' : 'rechazados'}.`;
+    return (
+      <>
+        {/* ── Filter bar ── */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          {ESTADO_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => handleFilterChange(key)}
+              style={{
+                background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
+                color:        estadoFilter === key ? '#000'    : '#888',
+                border:       'none', borderRadius: '999px',
+                padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
+          {emptyMsg}
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
