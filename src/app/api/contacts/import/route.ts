@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { inferProvinciaFromPhone } from '@/lib/phone-province';
 
 type ContactInput = { phone: string; casino_username?: string; name?: string };
 
@@ -26,12 +27,16 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabaseAdmin
     .from('contacts')
     .upsert(
-      rows.map((c) => ({
-        phone: c.phone,
-        ...(c.casino_username ? { casino_username: c.casino_username } : {}),
-        ...(c.name ? { name: c.name } : {}),
-        status: 'nuevo',
-      })),
+      rows.map((c) => {
+        const provincia = inferProvinciaFromPhone(c.phone);
+        return {
+          phone: c.phone,
+          ...(c.casino_username ? { casino_username: c.casino_username } : {}),
+          ...(c.name ? { name: c.name } : {}),
+          ...(provincia ? { provincia } : {}),
+          status: 'nuevo',
+        };
+      }),
       { onConflict: 'phone', ignoreDuplicates: true },
     )
     .select('id');

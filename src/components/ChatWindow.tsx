@@ -16,6 +16,17 @@ type Message = {
 type QuickReply = { id: string; title: string; content: string };
 type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
 
+const EMOJIS = [
+  '👋','🙌','👍','👏','🙏','💪','🤝','🫂',
+  '😊','😁','😂','🤣','😍','🥰','😎','🤩',
+  '😅','😆','🙂','😉','😋','😄','😀','😃',
+  '🎰','🎲','💰','💵','💸','🤑','🏆','⭐',
+  '🌟','✨','🔥','💯','🎉','🎊','🥳','🎁',
+  '✅','❌','⚠️','💬','📞','📱','⏰','📢',
+  '❤️','🧡','💛','💚','💙','💜','🤍','💔',
+  '👀','🙈','😴','🤔','😮','😲','🤯','🫡',
+];
+
 function parseMedia(raw: string): MediaContent | null {
   try {
     const p = JSON.parse(raw);
@@ -45,6 +56,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -52,6 +64,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const qrPanelRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -72,13 +85,31 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!showQR) return;
+    if (!showQR && !showEmoji) return;
     function handleClick(e: MouseEvent) {
-      if (qrPanelRef.current && !qrPanelRef.current.contains(e.target as Node)) setShowQR(false);
+      if (qrPanelRef.current && !qrPanelRef.current.contains(e.target as Node)) {
+        setShowQR(false);
+        setShowEmoji(false);
+      }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showQR]);
+  }, [showQR, showEmoji]);
+
+  function insertEmoji(emoji: string) {
+    setShowEmoji(false);
+    const el = textInputRef.current;
+    if (!el) { setInput((v) => v + emoji); return; }
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd   ?? el.value.length;
+    const next  = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + [...emoji].length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
 
   useEffect(() => {
     fetchMessages();
@@ -364,6 +395,24 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           </div>
         )}
 
+        {/* Emoji picker panel */}
+        {showEmoji && (
+          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, background: '#fff', borderRadius: '16px', boxShadow: '0 4px 24px rgba(0,0,0,0.13)', padding: '12px', zIndex: 50, display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '2px' }}>
+            {EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => insertEmoji(emoji)}
+                style={{ background: 'none', border: 'none', borderRadius: '8px', padding: '6px', fontSize: '20px', cursor: 'pointer', lineHeight: 1, transition: 'background 0.1s' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Image preview */}
         {imagePreview && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#F5F5F5', borderRadius: '14px', padding: '10px 14px', marginBottom: '10px' }}>
@@ -390,11 +439,20 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           {/* Quick-replies toggle */}
           <button
             type="button"
-            onClick={() => setShowQR((v) => !v)}
+            onClick={() => { setShowEmoji(false); setShowQR((v) => !v); }}
             title="Respuestas rápidas"
             disabled={isRecording}
             style={{ background: showQR ? '#C8FF00' : '#F5F5F5', border: 'none', borderRadius: '12px', padding: '12px 14px', fontSize: '16px', cursor: isRecording ? 'not-allowed' : 'pointer', flexShrink: 0, lineHeight: 1, opacity: isRecording ? 0.4 : 1 }}
           >⚡</button>
+
+          {/* Emoji picker toggle */}
+          <button
+            type="button"
+            onClick={() => { setShowQR(false); setShowEmoji((v) => !v); }}
+            title="Emojis"
+            disabled={isRecording}
+            style={{ background: showEmoji ? '#C8FF00' : '#F5F5F5', border: 'none', borderRadius: '12px', padding: '12px 14px', fontSize: '16px', cursor: isRecording ? 'not-allowed' : 'pointer', flexShrink: 0, lineHeight: 1, opacity: isRecording ? 0.4 : 1 }}
+          >😊</button>
 
           {/* Image attach */}
           <button
@@ -428,6 +486,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           {/* Text input (hidden while recording) */}
           {!isRecording && !audioBlob && (
             <input
+              ref={textInputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}

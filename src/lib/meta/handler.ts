@@ -3,6 +3,7 @@ import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText } from './client';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
+import { inferProvinciaFromPhone } from '../phone-province';
 
 async function getSystemPrompt(): Promise<string> {
   try {
@@ -459,9 +460,10 @@ async function findOrCreateContact(phone: string, _whatsappName: string | null) 
       return existing;
     }
 
+    const provincia = inferProvinciaFromPhone(phone);
     const { data: inserted, error } = await supabaseAdmin
       .from('contacts')
-      .insert({ phone, name: null, status: 'nuevo' })
+      .insert({ phone, name: null, status: 'nuevo', ...(provincia ? { provincia } : {}) })
       .select('*')
       .single();
 

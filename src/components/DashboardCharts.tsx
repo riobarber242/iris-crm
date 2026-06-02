@@ -267,11 +267,7 @@ export default function DashboardCharts() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
-        {[0, 1, 2].map((i) => (
-          <div key={i} style={{ flex: i < 2 ? 1 : 2, background: '#F0F0F0', borderRadius: '20px', height: '280px' }} />
-        ))}
-      </div>
+      <div style={{ background: '#F0F0F0', borderRadius: '20px', height: '280px', marginTop: '8px' }} />
     );
   }
 
@@ -280,19 +276,14 @@ export default function DashboardCharts() {
   const contactData     = data.contactsByStatus.map((d)    => ({ label: d.label, value: d.count, color: d.color }));
   const comprobanteData = data.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color }));
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '8px' }}>
-      {/* Row 1: donuts + bar */}
-      <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <DonutChart data={contactData}     title="Estado de contactos" emptyLabel="Sin contactos" />
-        <DonutChart data={comprobanteData} title="Comprobantes"        emptyLabel="Sin comprobantes" />
-        <BarChart   data={data.revenueByMonth} title="Ingresos últimos 6 meses" />
-      </div>
+  const twoMonths = data.revenueByMonth.slice(-2);
 
-      {/* Row 2: Argentina map */}
-      <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)' }}>
-        <ArgentinaMap data={data.provinceData ?? []} />
-      </div>
+  return (
+    <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      <DonutChart data={contactData}     title="Estado de contactos"  emptyLabel="Sin contactos" />
+      <DonutChart data={comprobanteData} title="Comprobantes"         emptyLabel="Sin comprobantes" />
+      <ArgentinaMap data={data.provinceData ?? []} />
+      <BarChart   data={twoMonths} title="Mes anterior vs actual" />
     </div>
   );
 }
