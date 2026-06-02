@@ -205,6 +205,20 @@ export default function CampanasClient() {
         </form>
       )}
 
+      {/* Aviso límite WhatsApp */}
+      <div style={{
+        background: '#fffbe6', border: '1px solid #f0c040',
+        borderRadius: '12px', padding: '12px 16px',
+        display: 'flex', gap: '10px', alignItems: 'flex-start',
+      }}>
+        <span style={{ fontSize: '16px', flexShrink: 0 }}>⚠️</span>
+        <p style={{ fontSize: '13px', color: '#7a5c00', margin: 0, lineHeight: 1.6 }}>
+          <strong>Límite de WhatsApp:</strong> Solo podés enviar mensajes libres a contactos que te escribieron en las últimas 24 horas.
+          Para contactos inactivos es necesario usar plantillas (templates) aprobadas por Meta.
+          Los envíos a contactos fuera de ventana pueden fallar silenciosamente.
+        </p>
+      </div>
+
       {/* Lista de campañas */}
       {campaigns.length === 0 && !showForm && (
         <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: '14px' }}>

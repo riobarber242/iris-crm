@@ -58,6 +58,9 @@ export async function PATCH(request: Request) {
   if (body.casino_username !== undefined) {
     updates.casino_username = body.casino_username;
   }
+  if (body.notes !== undefined) {
+    updates.notes = body.notes;
+  }
   if (body.markRead) {
     updates.last_read_at = new Date().toISOString();
   }
