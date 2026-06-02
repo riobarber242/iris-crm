@@ -45,7 +45,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           table: 'messages',
           filter: `contact_id=eq.${contactId}`,
         }, (payload: any) => {
-          setMessages((m) => [...m, payload.new]);
+          setMessages((m) => {
+            // Dedup: the operator's own messages are already added via the API response.
+            // Only add if the id isn't already in the list (handles inbound messages).
+            if (payload.new.id && m.some((msg) => msg.id === payload.new.id)) return m;
+            return [...m, payload.new];
+          });
           setTimeout(() => {
             if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
           }, 50);
