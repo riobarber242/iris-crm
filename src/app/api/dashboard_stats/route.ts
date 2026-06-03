@@ -51,15 +51,17 @@ function buildDates() {
 export async function GET() {
   const { todayStart, weekStart, monthStart, prevMonthStart, prevMonthEnd } = buildDates();
 
+  // Rolling 30-day window for the operator first-response SLA
+  const slaWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
   // ── Phase 1: all independent metrics + op contact IDs ─────────────────────
   const [
     convTodayRes, convWeekRes, convMonthRes, convPrevMonthRes,
     newToday, newWeek, newMonth, newPrevMonth,
-    clienteActivoRes, inactivoRes, nuevoStatusRes, scheduledContacts,
+    clienteActivoRes, inactivoRes, nuevoStatusRes, totalContactsRes,
     comprobantesPending,
     montoHoyRes, montoMesRes, montoPrevRes,
-    totalEnProcesoRes, totalDoneRes,
-    opContactsRes,
+    opContactsRes, slaMsgsRes,
   ] = await Promise.all([
     // Conversaciones — unique contact_ids with any message in period
     supabaseAdmin.from('messages').select('contact_id').gte('created_at', todayStart.toISOString()),
@@ -81,36 +83,68 @@ export async function GET() {
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'cliente_activo'),
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'inactivo'),
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'nuevo'),
-    // Agendados: contacts with casino_username assigned by operator
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
-      .not('casino_username', 'is', null).neq('casino_username', ''),
+    // Total de contactos (denominador de la tasa de conversión)
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }),
 
     // Comprobantes pendientes
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
 
-    // Montos verificados
+    // Montos verificados (HOY se usa solo para contar recargas; el monto de hoy ya no se muestra)
     supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado').gte('created_at', todayStart.toISOString()),
     supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado').gte('created_at', monthStart.toISOString()),
     supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado')
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
-    // Pendientes manual
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
-      .or('conversation_state.eq.en_proceso,status.eq.en_proceso'),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
-      .or('conversation_state.eq.done,status.eq.en_proceso'),
-
-    // IDs for phase 2
+    // IDs de contactos en gestión manual (para "Sin responder" y "Chats activos hoy")
     supabaseAdmin.from('contacts').select('id')
       .or('conversation_state.eq.done,conversation_state.eq.en_proceso,status.eq.en_proceso'),
+
+    // Mensajes de los últimos 30 días para el SLA de 1ra respuesta del operador
+    supabaseAdmin.from('messages').select('contact_id, role, created_at')
+      .gte('created_at', slaWindowStart.toISOString())
+      .order('created_at', { ascending: true }),
   ]);
 
-  // ── Phase 2: per-contact metrics for op contacts ────────────────────────────
+  // ── Tasa de conversión: clientes activos / total de contactos ───────────────
+  const totalContacts  = totalContactsRes.count ?? 0;
+  const clienteActivo  = clienteActivoRes.count ?? 0;
+  const conversionRate = totalContacts > 0 ? (clienteActivo / totalContacts) * 100 : 0;
+
+  // ── SLA: tiempo prom. desde que el contacto escribe hasta que un HUMANO responde ─
+  // El bot (role=assistant) NO cuenta como atendido. Promedio sobre los últimos 30 días.
+  const msgsByContact = new Map<string, { role: string; ts: number }[]>();
+  for (const m of (slaMsgsRes.data ?? [])) {
+    const arr = msgsByContact.get(m.contact_id) ?? [];
+    arr.push({ role: m.role, ts: new Date(m.created_at).getTime() });
+    msgsByContact.set(m.contact_id, arr);
+  }
+  let slaTotalMs = 0;
+  let slaCount   = 0;
+  for (const msgs of msgsByContact.values()) {
+    let pendingUserTs: number | null = null;
+    for (const { role, ts } of msgs) {
+      if (role === 'user') {
+        if (pendingUserTs === null) pendingUserTs = ts; // arranca el cronómetro
+      } else if (role === 'human') {
+        if (pendingUserTs !== null) { slaTotalMs += ts - pendingUserTs; slaCount++; pendingUserTs = null; }
+      }
+      // role === 'assistant' (bot): no frena el cronómetro del SLA humano
+    }
+  }
+  const avgFirstHumanResponseMin = slaCount > 0 ? (slaTotalMs / slaCount) / 60000 : null;
+
+  // ── Recargas (cantidad de comprobantes verificados) ─────────────────────────
+  const recargasHoy   = (montoHoyRes.data ?? []).length;
+  const recargasMes    = (montoMesRes.data ?? []).length;
+  const montoVerifMes  = sumMonto(montoMesRes.data ?? []);
+  const ticketPromedio = recargasMes > 0 ? montoVerifMes / recargasMes : 0;
+
+  // ── Phase 2: "Sin responder" y "Chats activos hoy" sobre contactos en gestión ─
   const opIds = (opContactsRes.data ?? []).map((c: any) => c.id as string);
 
-  let sinResponder = 0;
-  let activosHoy   = 0;
+  let sinResponder   = 0;
+  let chatsActivosHoy = 0;
 
   if (opIds.length > 0) {
     const [latestMsgsRes, activosHoyRes] = await Promise.all([
@@ -128,7 +162,7 @@ export async function GET() {
       if (role === 'user') sinResponder++;
     }
 
-    activosHoy = new Set((activosHoyRes.data ?? []).map((m: any) => m.contact_id as string)).size;
+    chatsActivosHoy = new Set((activosHoyRes.data ?? []).map((m: any) => m.contact_id as string)).size;
   }
 
   return NextResponse.json({
@@ -142,23 +176,25 @@ export async function GET() {
     newMonth:     newMonth.count     ?? 0,
     newPrevMonth: newPrevMonth.count ?? 0,
 
-    clienteActivoTotal: clienteActivoRes.count ?? 0,
-    inactivoTotal:      inactivoRes.count      ?? 0,
-    nuevoTotal:         nuevoStatusRes.count   ?? 0,
-    scheduledTotal:     scheduledContacts.count ?? 0,
-    // Legacy aliases kept for type compat — now equal to real status counts
-    vipTotal:   clienteActivoRes.count ?? 0,
-    activoTotal: inactivoRes.count     ?? 0,
-    frioTotal:   nuevoStatusRes.count  ?? 0,
+    // Embudo & conversión
+    conversionRate,
+    clienteActivoTotal: clienteActivo,
+    inactivoTotal:      inactivoRes.count    ?? 0,
+    nuevoTotal:         nuevoStatusRes.count ?? 0,
 
+    // Operación & recargas
+    avgFirstHumanResponseMin,
+    recargasHoy,
+    recargasMes,
+    chatsActivosHoy,
+
+    // Finanzas
     comprobantesPending:   comprobantesPending.count ?? 0,
-    montoVerifHoy:         sumMonto(montoHoyRes.data  ?? []),
-    montoVerifMes:         sumMonto(montoMesRes.data  ?? []),
+    montoVerifMes,
     montoVerifMesAnterior: sumMonto(montoPrevRes.data ?? []),
+    ticketPromedio,
 
+    // Hero
     sinResponder,
-    activosHoy,
-    totalEnProceso: totalEnProcesoRes.count ?? 0,
-    totalDone:      totalDoneRes.count      ?? 0,
   });
 }

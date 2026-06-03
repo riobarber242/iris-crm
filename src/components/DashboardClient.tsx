@@ -8,10 +8,11 @@ import DashboardCharts from './DashboardCharts';
 type Stats = {
   convToday: number; convWeek: number; convMonth: number; convPrevMonth: number;
   newToday: number;  newWeek: number;  newMonth: number;  newPrevMonth: number;
-  clienteActivoTotal: number; inactivoTotal: number; nuevoTotal: number; scheduledTotal: number;
+  conversionRate: number; clienteActivoTotal: number; inactivoTotal: number; nuevoTotal: number;
+  avgFirstHumanResponseMin: number | null; recargasHoy: number; recargasMes: number; chatsActivosHoy: number;
   comprobantesPending: number;
-  montoVerifHoy: number; montoVerifMes: number; montoVerifMesAnterior: number;
-  sinResponder: number; activosHoy: number; totalEnProceso: number; totalDone: number;
+  montoVerifMes: number; montoVerifMesAnterior: number; ticketPromedio: number;
+  sinResponder: number;
 };
 
 function fmt(n: number) {
@@ -19,6 +20,16 @@ function fmt(n: number) {
 }
 function money(n: number) {
   return `$${n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+function pct(n: number) {
+  return `${n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}%`;
+}
+// Operator first-response SLA: minutes when known, '—' when no human replies yet in the window.
+function mins(n: number | null) {
+  if (n === null) return '—';
+  if (n < 1)   return `${Math.round(n * 60)}s`;
+  if (n < 60)  return `${n.toLocaleString('es-AR', { maximumFractionDigits: 1 })} min`;
+  return `${(n / 60).toLocaleString('es-AR', { maximumFractionDigits: 1 })} h`;
 }
 
 type MetricCardProps = { label: string; value: string; highlight?: boolean; href?: string };
@@ -147,8 +158,43 @@ export default function DashboardClient() {
     );
   }
 
+  const sinResponder = stats.sinResponder;
+  const hasPending   = sinResponder > 0;
+
   return (
     <>
+    {/* HERO — Sin responder: lo más crítico, siempre visible arriba */}
+    <Link href="/conversations" style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}>
+      <div
+        className={hasPending ? 'card-3d-lime' : 'card-3d'}
+        style={{
+          background: hasPending ? '#E53935' : '#FFFFFF',
+          borderRadius: '18px',
+          padding: '20px 26px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <span style={{ fontSize: '30px' }}>{hasPending ? '🔴' : '✅'}</span>
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: hasPending ? 'rgba(255,255,255,0.85)' : '#999', margin: 0 }}>
+              Sin responder
+            </p>
+            <p style={{ fontSize: '14px', fontWeight: 600, color: hasPending ? '#fff' : '#666', margin: '4px 0 0 0' }}>
+              {hasPending ? 'Contactos esperando respuesta de un operador' : 'Todo respondido — sin pendientes'}
+            </p>
+          </div>
+        </div>
+        <span style={{ fontSize: '52px', fontWeight: 900, color: hasPending ? '#fff' : '#000', lineHeight: 1 }}>
+          {fmt(sinResponder)}
+        </span>
+      </div>
+    </Link>
+
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
 
       {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
@@ -167,28 +213,28 @@ export default function DashboardClient() {
         <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)} href="/conversations" />
       </Column>
 
-      {/* COLUMNA 3 — ESTADO DE CONTACTOS */}
-      <Column title="Estado contactos" icon="📊">
-        <MetricCard label="Agendados"      value={fmt(stats.scheduledTotal)}     highlight={stats.scheduledTotal > 0}     href="/contacts" />
-        <MetricCard label="Cliente activo" value={fmt(stats.clienteActivoTotal)} highlight={stats.clienteActivoTotal > 0} href="/conversations" />
-        <MetricCard label="Inactivo"       value={fmt(stats.inactivoTotal)}                                               href="/conversations" />
-        <MetricCard label="Nuevo"          value={fmt(stats.nuevoTotal)}                                                  href="/conversations" />
+      {/* COLUMNA 3 — EMBUDO & CONVERSIÓN */}
+      <Column title="Embudo & conversión" icon="📊">
+        <MetricCard label="Tasa de conversión" value={pct(stats.conversionRate)}     highlight={stats.conversionRate > 0}     href="/contacts" />
+        <MetricCard label="Cliente activo"     value={fmt(stats.clienteActivoTotal)} highlight={stats.clienteActivoTotal > 0} href="/conversations" />
+        <MetricCard label="Inactivo"           value={fmt(stats.inactivoTotal)}                                               href="/conversations" />
+        <MetricCard label="Nuevo"              value={fmt(stats.nuevoTotal)}                                                  href="/conversations" />
       </Column>
 
-      {/* COLUMNA 4 — PENDIENTES MANUAL — verde en SIN RESPONDER y ACTIVOS HOY */}
-      <Column title="Pendientes manual" icon="👤">
-        <MetricCard label="Sin responder"    value={fmt(stats.sinResponder)}   highlight={stats.sinResponder > 0} href="/conversations" />
-        <MetricCard label="Activos hoy"      value={fmt(stats.activosHoy)}     highlight={stats.activosHoy > 0}   href="/conversations" />
-        <MetricCard label="Total en proceso" value={fmt(stats.totalEnProceso)}                                    href="/conversations" />
-        <MetricCard label="Total done"       value={fmt(stats.totalDone)}                                         href="/conversations" />
+      {/* COLUMNA 4 — OPERACIÓN & RECARGAS */}
+      <Column title="Operación & recargas" icon="⚡">
+        <MetricCard label="Tiempo prom. 1ra resp." value={mins(stats.avgFirstHumanResponseMin)}                              href="/conversations" />
+        <MetricCard label="Recargas hoy"           value={fmt(stats.recargasHoy)}  highlight={stats.recargasHoy > 0}        href="/comprobantes" />
+        <MetricCard label="Recargas mes"           value={fmt(stats.recargasMes)}                                           href="/comprobantes" />
+        <MetricCard label="Chats activos hoy"      value={fmt(stats.chatsActivosHoy)}                                       href="/conversations" />
       </Column>
 
       {/* COLUMNA 5 — FINANZAS — verde solo en PENDIENTES */}
       <Column title="Finanzas" icon="💰">
-        <MetricCard label="Pendientes"   value={fmt(stats.comprobantesPending)} highlight={stats.comprobantesPending > 0} href="/comprobantes" />
-        <MetricCard label="Verif. hoy"   value={money(stats.montoVerifHoy)}                                               href="/comprobantes" />
-        <MetricCard label="Verif. mes"   value={money(stats.montoVerifMes)}                                               href="/comprobantes" />
-        <MetricCard label="Mes anterior" value={money(stats.montoVerifMesAnterior)}                                       href="/comprobantes" />
+        <MetricCard label="Pendientes"      value={fmt(stats.comprobantesPending)}  highlight={stats.comprobantesPending > 0} href="/comprobantes" />
+        <MetricCard label="Verif. mes"      value={money(stats.montoVerifMes)}                                                href="/comprobantes" />
+        <MetricCard label="Mes anterior"    value={money(stats.montoVerifMesAnterior)}                                        href="/comprobantes" />
+        <MetricCard label="Ticket promedio" value={money(stats.ticketPromedio)}                                              href="/comprobantes" />
       </Column>
 
     </div>
