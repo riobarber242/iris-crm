@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText } from '@/lib/meta/client';
+import { getSessionAgent } from '@/lib/current-agent';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -42,10 +43,15 @@ export async function POST(request: Request) {
     return new NextResponse('No se encontró el contacto', { status: 404 });
   }
 
+  // Atribución: quién envía el mensaje (derivado de la cookie de sesión, no del cliente)
+  const session = await getSessionAgent();
+
   const { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert({
     contact_id: contactId,
     role: 'human',
     content,
+    agent_id:   session?.sub  ?? null,
+    agent_name: session?.name ?? null,
   }).select('*').single();
 
   if (insertError || !inserted) {

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { useAuth } from '@/components/AuthProvider';
 
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
@@ -14,6 +15,7 @@ type Message = {
   content: string;
   created_at?: string;
   status?: string;
+  agent_name?: string | null;
 };
 
 type QuickReply = { id: string; title: string; content: string };
@@ -33,6 +35,7 @@ function formatSeconds(s: number) {
 }
 
 export default function ChatWindow({ contactId }: { contactId: string }) {
+  const { agent } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -235,7 +238,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setInput('');
     setLoading(true);
     setCooldown(true);
-    const temp: Message = { role: 'human', content, status: 'sending' };
+    const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name };
     setMessages((m) => [...m, temp]);
     try {
       const res = await fetch('/api/messages', {
@@ -259,7 +262,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setImageFile(null); setImagePreview(null); setInput('');
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'image', url: preview ?? '', caption });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending' };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     form.append('file', imageFile);
@@ -284,7 +287,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setAudioBlob(null); setAudioPreviewUrl(null);
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'audio', url: preview ?? '' });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending' };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('mpeg') ? 'mp3' : 'webm';
@@ -315,7 +318,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         {messages.map((m, i) => {
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
-          const roleLabel = isBot ? 'Iris 🤖' : isHuman ? 'Operador' : 'Cliente';
+          // Mensajes humanos: nombre real del agente; fallback "Operador" para los viejos sin atribución
+          const roleLabel = isBot ? 'Iris 🤖' : isHuman ? (m.agent_name || 'Operador') : 'Cliente';
           const media = parseMedia(m.content);
           return (
             <div
