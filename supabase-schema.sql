@@ -13,6 +13,19 @@ create table if not exists contacts (
   blocked boolean default false
 );
 
+-- Agentes (login + roles) — ver /api/admin/seed-auth para bootstrap
+create table if not exists agents (
+  id             uuid primary key default gen_random_uuid(),
+  username       text unique not null,
+  password_hash  text not null,            -- formato scrypt$salt$hash (ver src/lib/auth.ts)
+  name           text not null,
+  role           text not null default 'agent' check (role in ('admin','agent')),
+  active         boolean default true,
+  schedule_start time,                      -- horario de atención (informativo)
+  schedule_end   time,
+  created_at     timestamptz default now()
+);
+
 -- Mensajes
 create table if not exists messages (
   id uuid primary key default gen_random_uuid(),
@@ -21,7 +34,9 @@ create table if not exists messages (
   content text not null,
   created_at timestamptz default now(),
   whatsapp_message_id text,
-  status text check (status in ('sent', 'delivered', 'read', 'failed'))
+  status text check (status in ('sent', 'delivered', 'read', 'failed')),
+  agent_id   uuid references agents(id),    -- quién lo envió (mensajes role='human')
+  agent_name text                           -- snapshot del nombre del agente al enviar
 );
 
 create index if not exists idx_messages_contact on messages(contact_id, created_at);
