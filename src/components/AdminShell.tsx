@@ -154,16 +154,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
           }}>
             IRIS
           </span>
-          <span style={{
-            fontSize: '20px',
-            fontWeight: 300,
-            color: '#1a3300',
-            letterSpacing: '10px',
-            textTransform: 'uppercase',
-            textShadow: '0 1px 0 rgba(255,255,255,0.6), 0 2px 4px rgba(0,0,0,0.2)',
-          }}>
-            CRM
-          </span>
         </div>
 
         {/* Toggle Bot/Humano */}

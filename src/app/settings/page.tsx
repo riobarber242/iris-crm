@@ -41,7 +41,7 @@ export default async function SettingsPage() {
           <SystemPromptEditor />
         </SectionCard>
 
-        <SectionCard title="Variables de sistema" description="Configuración interna del CRM.">
+        <SectionCard title="Variables de sistema" description="Configuración interna de Iris.">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {settings.map((item: any) => (
               <div
