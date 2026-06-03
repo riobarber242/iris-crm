@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import type { ReactNode } from 'react';
+import { useAuth } from './AuthProvider';
 
 const navItems = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'settings'];
 
@@ -15,6 +16,7 @@ const navLabels: Record<string, string> = {
   comprobantes:  'Comprobantes',
   leads:         'Top Clientes',
   campanas:      'Campañas',
+  agentes:       'Agentes',
   settings:      'Configuración',
 };
 
@@ -22,6 +24,11 @@ const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { agent, logout } = useAuth();
+  // "Agentes" solo lo ve el admin (insertado antes de "Configuración")
+  const items = agent?.role === 'admin'
+    ? [...navItems.slice(0, 6), 'agentes', 'settings']
+    : navItems;
   const [botEnabled, setBotEnabled] = useState(true);
   const [mounted, setMounted]       = useState(false);
   const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0 });
@@ -200,6 +207,24 @@ export function AdminShell({ children }: { children: ReactNode }) {
               flexShrink: 0,
             }} />
           </button>
+
+          {/* Agente logueado + salir */}
+          {agent && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '16px', marginLeft: '4px', borderLeft: '2px solid rgba(0,0,0,0.18)' }}>
+              <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+                <span style={{ fontSize: '14px', fontWeight: 800, color: '#000' }}>{agent.name}</span>
+                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#3a5a00' }}>
+                  {agent.role === 'admin' ? 'Admin' : 'Agente'}
+                </span>
+              </span>
+              <button
+                onClick={logout}
+                style={{ background: '#1a1a1a', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer' }}
+              >
+                Salir
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -221,7 +246,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           overflowY: 'auto',
         }}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {navItems.map((item) => {
+            {items.map((item) => {
               const path = item === 'dashboard' ? '/dashboard' : `/${item}`;
               const active = pathname === path;
               return (
