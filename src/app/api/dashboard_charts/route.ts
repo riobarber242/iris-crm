@@ -66,9 +66,14 @@ export async function GET() {
     const s = c.status ?? 'nuevo';
     provMap[c.provincia][s] = (provMap[c.provincia][s] ?? 0) + 1;
   }
+  // Dominant by business priority, NOT raw majority: a province with even one
+  // cliente_activo paints green so active clients are never masked by 'nuevo' contacts.
+  const STATUS_PRIORITY = ['cliente_activo', 'en_proceso', 'nuevo', 'inactivo', 'bloqueado'];
   const provinceData = Object.entries(provMap).map(([provincia, counts]) => {
     const total    = Object.values(counts).reduce((s, n) => s + n, 0);
-    const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'nuevo';
+    const dominant = STATUS_PRIORITY.find((s) => (counts[s] ?? 0) > 0)
+                  ?? Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0]
+                  ?? 'nuevo';
     return { provincia, total, dominant, counts };
   });
 
