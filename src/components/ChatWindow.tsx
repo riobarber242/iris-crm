@@ -426,10 +426,11 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               style={{
                 position: 'relative',
                 maxWidth: '78%',
-                alignSelf: isBot ? 'flex-start' : 'flex-end',
+                // Cliente (user) a la derecha; bot y operador (human) a la izquierda.
+                alignSelf: isBot || isHuman ? 'flex-start' : 'flex-end',
                 background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
                 color: isBot ? '#333' : isHuman ? '#000' : '#fff',
-                borderRadius: isBot ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
+                borderRadius: isBot || isHuman ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
                 padding: '10px 14px',
                 wordBreak: 'break-word',
               }}
@@ -481,7 +482,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               })()}
 
               {/* Hora + ticks (ticks solo en salientes) */}
-              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot ? 'flex-start' : 'flex-end' }}
+              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-start' : 'flex-end' }}
                  title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
                 {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
                 {(isBot || isHuman) && <Ticks status={m.status} />}
