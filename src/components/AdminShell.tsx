@@ -31,6 +31,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     : navItems;
   const [botEnabled, setBotEnabled] = useState(true);
   const [mounted, setMounted]       = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0 });
   const unreadChannelRef            = useRef<any>(null);
   const unreadSupabaseRef           = useRef<any>(null);
@@ -107,6 +108,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   // (when operator opens/closes a conversation, last_read_at updates → count drops)
   useEffect(() => {
     fetchUnreadRef.current();
+    setMobileNavOpen(false); // cerrar el drawer al navegar
   }, [pathname]);
 
   async function toggleBot() {
@@ -134,7 +136,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div style={{ minHeight: '100vh', background: '#F5F5F5', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── BANNER FULL-WIDTH ── */}
-      <header style={{
+      <header className="app-header" style={{
         position: 'sticky',
         top: 0,
         zIndex: 50,
@@ -149,9 +151,24 @@ export function AdminShell({ children }: { children: ReactNode }) {
         flexShrink: 0,
       }}>
 
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
-          <span style={{
+        {/* Hamburguesa (mobile/tablet) + Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            className="app-hamburger"
+            onClick={() => setMobileNavOpen((v) => !v)}
+            aria-label="Abrir menú"
+            style={{
+              background: '#1a1a1a', border: 'none', borderRadius: '10px',
+              width: '44px', height: '44px', cursor: 'pointer',
+              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              flexDirection: 'column', gap: '4px',
+            }}
+          >
+            <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
+            <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
+            <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
+          </button>
+          <span className="app-logo" style={{
             fontSize: '58px',
             fontWeight: 900,
             lineHeight: 1,
@@ -163,8 +180,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Toggle Bot/Humano */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <span style={{
+        <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <span className="app-botword" style={{
             fontSize: '20px',
             fontWeight: 900,
             color: '#fff',
@@ -209,7 +226,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           {/* Agente logueado + salir */}
           {agent && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '16px', marginLeft: '4px', borderLeft: '2px solid rgba(255,255,255,0.18)' }}>
-              <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+              <span className="app-agent-name" style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
                 <span style={{ fontSize: '14px', fontWeight: 800, color: '#fff' }}>{agent.name}</span>
                 <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#aaff00' }}>
                   {agent.role === 'admin' ? 'Admin' : 'Agente'}
@@ -229,8 +246,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
       {/* ── BELOW BANNER: sidebar + content ── */}
       <div style={{ flex: 1, display: 'flex' }}>
 
+        {/* Overlay del drawer (solo mobile/tablet) */}
+        <div
+          className={`app-nav-overlay${mobileNavOpen ? ' open' : ''}`}
+          onClick={() => setMobileNavOpen(false)}
+        />
+
         {/* ── SIDEBAR ── */}
-        <aside style={{
+        <aside className={`app-sidebar${mobileNavOpen ? ' open' : ''}`} style={{
           width: '220px',
           minWidth: '220px',
           background: '#FFFFFF',
@@ -242,6 +265,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           top: `${BANNER_H}px`,
           height: `calc(100vh - ${BANNER_H}px)`,
           overflowY: 'auto',
+          zIndex: 100,
         }}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {items.map((item) => {
@@ -251,6 +275,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 <Link
                   key={item}
                   href={path}
+                  onClick={() => setMobileNavOpen(false)}
                   className={active ? 'nav-3d-active' : 'nav-3d'}
                   style={{
                     display: 'block',
@@ -307,7 +332,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </aside>
 
         {/* ── CONTENT ── */}
-        <main style={{ flex: 1, padding: '24px', overflowX: 'hidden', minWidth: 0 }}>
+        <main className="app-main" style={{ flex: 1, padding: '24px', overflowX: 'hidden', minWidth: 0 }}>
           {children}
         </main>
 

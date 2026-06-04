@@ -68,6 +68,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -339,6 +340,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           return (
             <div
               key={m.id ?? i}
+              className="chat-msg"
               style={{
                 maxWidth: '78%',
                 alignSelf: isBot ? 'flex-start' : 'flex-end',
@@ -358,8 +360,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   <img
                     src={media.url}
                     alt={media.caption || 'imagen'}
-                    style={{ maxWidth: '100%', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
-                    onClick={() => window.open(media.url, '_blank')}
+                    style={{
+                      maxWidth: '280px', maxHeight: '320px', width: '100%',
+                      objectFit: 'contain', borderRadius: '10px',
+                      display: 'block', cursor: 'pointer', background: '#00000010',
+                    }}
+                    onClick={() => setLightboxUrl(media.url)}
                   />
                   {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
                 </div>
@@ -439,7 +445,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageFileChange} />
         <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleAudioFileChange} />
 
-        <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
+        <form onSubmit={handleSend} className="chat-input-row" style={{ display: 'flex', gap: '10px' }}>
 
           {/* Quick-replies toggle */}
           <button
@@ -495,7 +501,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}
-              style={{ flex: 1, background: '#F5F5F5', border: 'none', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#1a1a1a', outline: 'none' }}
+              style={{ flex: 1, minWidth: 0, background: '#F5F5F5', border: 'none', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#1a1a1a', outline: 'none' }}
             />
           )}
           {(isRecording || audioBlob) && <div style={{ flex: 1 }} />}
@@ -521,6 +527,36 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           </button>
         </form>
       </div>
+
+      {/* Lightbox simple para ver la imagen en tamaño completo */}
+      {lightboxUrl && (
+        <div
+          onClick={() => setLightboxUrl(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '20px', cursor: 'zoom-out',
+          }}
+        >
+          <img
+            src={lightboxUrl}
+            alt="imagen completa"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '95vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: '8px' }}
+          />
+          <button
+            onClick={() => setLightboxUrl(null)}
+            aria-label="Cerrar"
+            style={{
+              position: 'fixed', top: '16px', right: '20px',
+              background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none',
+              borderRadius: '50%', width: '40px', height: '40px', fontSize: '22px',
+              cursor: 'pointer', lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+      )}
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
     </div>
