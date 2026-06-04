@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { currentMonthStartISO, targetStatusFor } from '@/lib/contact-status';
 
 // ─── Clasificación de contactos ────────────────────────────────────────────────
-// Regla única (fuente de verdad): un contacto es 'cliente_activo' si y solo si
-// tiene al menos un comprobante con estado 'verificado'. Sin comprobante
-// verificado NUNCA se promueve automáticamente — se queda / vuelve a 'nuevo'.
-//
-// Los estados operativos 'en_proceso' (handoff a humano) y 'bloqueado' no se
-// tocan salvo que el contacto gane cliente_activo al verificarse un comprobante.
-// Este endpoint también sirve de backfill: corre una vez y reconcilia todo el
-// histórico con la regla.
+// Aplica la regla de 3 estados (ver lib/contact-status):
+//   - nuevo          → nunca tuvo comprobante verificado
+//   - cliente_activo → tiene ≥1 verificado en el mes calendario vigente
+//   - inactivo       → tuvo verificados antes, pero ninguno este mes
+// 'bloqueado' no se toca; 'en_proceso' solo asciende a cliente_activo.
+// Corre periódicamente (y sirve de backfill) para reconciliar todo el histórico.
 export async function GET() {
   try {
+    const monthStart = currentMonthStartISO();
+
     // 1. Candidatos: todos los contactos no bloqueados.
     const { data: contacts, error: cErr } = await supabaseAdmin
       .from('contacts')
@@ -21,33 +22,32 @@ export async function GET() {
     if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
     if (!contacts || contacts.length === 0) return NextResponse.json({ updated: 0, detalle: [] });
 
-    // 2. Conjunto de contact_ids con al menos un comprobante verificado (cualquier fecha).
-    const { data: verif } = await supabaseAdmin
-      .from('comprobantes')
-      .select('contact_id')
-      .eq('estado', 'verificado');
+    const ids = contacts.map((c: any) => c.id);
 
-    const verifiedSet = new Set((verif ?? []).map((r: any) => r.contact_id));
+    // 2. Comprobantes verificados — histórico y los del mes vigente.
+    const [{ data: everVerif }, { data: monthVerif }] = await Promise.all([
+      supabaseAdmin.from('comprobantes').select('contact_id')
+        .eq('estado', 'verificado').in('contact_id', ids),
+      supabaseAdmin.from('comprobantes').select('contact_id')
+        .eq('estado', 'verificado').gte('created_at', monthStart).in('contact_id', ids),
+    ]);
 
-    // 3. Reconciliar el status con la regla.
+    const everSet  = new Set((everVerif  ?? []).map((r: any) => r.contact_id));
+    const monthSet = new Set((monthVerif ?? []).map((r: any) => r.contact_id));
+
+    // 3. Reconciliar cada contacto con la regla.
     const detalle: { id: string; status: string }[] = [];
 
     for (const contact of contacts) {
-      const hasVerified = verifiedSet.has(contact.id);
-      let target: string | null = null;
+      const target = targetStatusFor(
+        contact.status as string | null,
+        monthSet.has(contact.id),
+        everSet.has(contact.id),
+      );
+      if (!target) continue;
 
-      if (hasVerified && contact.status !== 'cliente_activo') {
-        // Ganó estado de cliente al tener un comprobante verificado.
-        target = 'cliente_activo';
-      } else if (!hasVerified && contact.status === 'cliente_activo') {
-        // Estaba marcado cliente_activo sin comprobante verificado (dato legacy/erróneo) → nuevo.
-        target = 'nuevo';
-      }
-
-      if (target && target !== contact.status) {
-        await supabaseAdmin.from('contacts').update({ status: target }).eq('id', contact.id);
-        detalle.push({ id: contact.id, status: target });
-      }
+      await supabaseAdmin.from('contacts').update({ status: target }).eq('id', contact.id);
+      detalle.push({ id: contact.id, status: target });
     }
 
     return NextResponse.json({ updated: detalle.length, detalle });

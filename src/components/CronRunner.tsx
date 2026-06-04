@@ -33,7 +33,7 @@ export default function CronRunner() {
           Clasificación de contactos
         </p>
         <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
-          Marca cliente activo solo a quienes tienen un comprobante verificado; el resto vuelve a nuevo.
+          Cliente activo = comprobante verificado este mes; inactivo = solo en meses anteriores; nuevo = ninguno.
           {result !== null && (
             <span style={{ color: '#1a7a3a', fontWeight: 700 }}>
               {' '}✅ {result.updated} contacto{result.updated !== 1 ? 's' : ''} actualizado{result.updated !== 1 ? 's' : ''}.
