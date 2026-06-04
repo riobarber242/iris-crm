@@ -239,7 +239,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{
               fontSize: '9px',
               fontWeight: 700,
-              color: offlineMode ? '#FF8C00' : '#777',
+              color: '#ffffff',
               letterSpacing: '1px',
               textTransform: 'uppercase',
               opacity: mounted ? 1 : 0,
@@ -284,7 +284,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{
               fontSize: '9px',
               fontWeight: 700,
-              color: '#fff',
+              color: '#ffffff',
               letterSpacing: '1px',
               textTransform: 'uppercase',
               opacity: mounted ? 1 : 0,
