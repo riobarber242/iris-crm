@@ -20,8 +20,8 @@ const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY     = 'bot_enabled';
 
 // Mensajes del bot.
-const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual. Para ayudarte mejor necesito hacerte unas preguntas 😊\n\n¿Venís por las fichas de prueba o querés cargar?';
-const HANDOFF_MSG     = 'Listo! En breve un operador humano te va a atender 👋';
+const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual 🤖 Para orientarte mejor necesito hacerte un par de preguntas. ¿Es tu primera vez con nosotros o ya tenés cuenta?';
+const HANDOFF_MSG     = '¡Listo! Un operador humano te va a atender en breve 👋';
 const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
 
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
@@ -330,7 +330,7 @@ async function processMessage(
     const imgState = (contact.conversation_state as string | null) ?? null;
     if (imgState === 'waiting_screenshot') {
       console.log('[image] Es captura del canal → continuando flujo de onboarding');
-      await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?', { newState: 'asked_if_loader' });
+      await replyAndSave('Buenisimo! Sos de recargar seguido?', { newState: 'asked_if_loader' });
     } else {
       console.log(`[image] Comprobante en flujo (state="${imgState}") → acuse de recibo`);
       await replyAndSave('Comprobante recibido ✅ Un operador lo verifica enseguida.');
@@ -358,17 +358,19 @@ async function processMessage(
       break;
     }
 
-    // ── User chose fichas or cargar ───────────────────────────────────────────
+    // ── ¿Primera vez o ya tiene cuenta? ───────────────────────────────────────
     case 'asked_intention': {
-      if (/carg(ar|a)|quiero cargar|quiero recarg/.test(lowerText)) {
+      if (/ya teng|ya ten[eé]s|tengo cuenta|tengo una cuenta|ya soy|tengo usuario/.test(lowerText)) {
+        // Ya tiene cuenta → lo atiende un operador.
         await replyAndSave(HANDOFF_MSG, { markInProgress: true });
-      } else if (/fichas|prueba|proba|prueb/.test(lowerText)) {
+      } else if (/primera|primer|nuev[oa]|reci[eé]n|no teng|empez|arranco|soy nuevo/.test(lowerText)) {
+        // Primera vez → onboarding.
         await replyAndSave(
-          'Unite a mi canal de WhatsApp y mandame la captura. Ahí subo promos, horarios y lineas disponibles 👉 https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F',
+          'Unite a mi canal de WhatsApp y mandame la captura. Ahí subo promos, horarios y novedades 👉 https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F',
           { newState: 'waiting_screenshot' },
         );
       } else {
-        await replyAndSave('¿Venís por las fichas de prueba o querés cargar?');
+        await replyAndSave('¿Es tu primera vez con nosotros o ya tenés cuenta?');
       }
       break;
     }
@@ -389,13 +391,13 @@ async function processMessage(
     case 'asked_if_loader': {
       if (/(^si$|^sí$|si!|sí!|obvio|claro|siempre|dale|ofc|por supuesto)/.test(lowerText)) {
         await replyAndSave(
-          'Buenisimo! Estoy buscando clientes que carguen conmigo 💪 Las fichas de regalo son solo para probar la plataforma. Los premios se retiran cuando jugás con una carga. Si estás de acuerdo, decime tu nombre y te creo el usuario. Además te doy un 20% extra en tu primera carga 🔥',
+          'Buenisimo! Estoy buscando clientes que recarguen conmigo 💪 El saldo de regalo es solo para probar la plataforma. Los premios se retiran cuando jugás con una recarga. Si estás de acuerdo, decime tu nombre y te creo la cuenta. Además te doy un 20% extra en tu primera recarga 🔥',
           { newState: 'asked_name' },
         );
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
         await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       } else {
-        await replyAndSave('Sos de cargar y jugar seguido? Respondé si o no 😊');
+        await replyAndSave('Sos de recargar seguido? Respondé si o no 😊');
       }
       break;
     }
