@@ -204,19 +204,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
 
           {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span className="app-botword" style={{
-              fontSize: '13px',
-              fontWeight: 900,
-              color: offlineMode ? '#FF8C00' : '#777',
-              letterSpacing: '2px',
-              textTransform: 'uppercase',
-              opacity: mounted ? 1 : 0,
-              transition: 'opacity 0.2s, color 0.2s',
-              lineHeight: 1,
-            }}>
-              OFFLINE
-            </span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
             <button
               onClick={toggleOffline}
               className="toggle-3d"
@@ -248,49 +236,64 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 flexShrink: 0,
               }} />
             </button>
+            <span style={{
+              fontSize: '9px',
+              fontWeight: 700,
+              color: offlineMode ? '#FF8C00' : '#777',
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              opacity: mounted ? 1 : 0,
+              transition: 'opacity 0.2s, color 0.2s',
+              lineHeight: 1,
+            }}>
+              OFFLINE
+            </span>
           </div>
 
-          <span className="app-botword" style={{
-            fontSize: '13px',
-            fontWeight: 900,
-            color: '#fff',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            opacity: mounted ? 1 : 0,
-            transition: 'opacity 0.2s',
-            lineHeight: 1,
-          }}>
-            {botEnabled ? 'BOT' : 'HUMANO'}
-          </span>
-          <button
-            onClick={toggleBot}
-            className="toggle-3d"
-            aria-label={botEnabled ? 'Desactivar bot' : 'Activar bot'}
-            style={{
-              position: 'relative',
-              display: 'inline-flex',
-              alignItems: 'center',
-              width: '64px',
-              height: '34px',
-              borderRadius: '17px',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '3px',
-              background: '#1a1a1a',
-              outline: 'none',
-            }}
-          >
+          {/* Toggle BOT/HUMANO */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+            <button
+              onClick={toggleBot}
+              className="toggle-3d"
+              aria-label={botEnabled ? 'Desactivar bot' : 'Activar bot'}
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                width: '64px',
+                height: '34px',
+                borderRadius: '17px',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '3px',
+                background: '#1a1a1a',
+                outline: 'none',
+              }}
+            >
+              <span style={{
+                display: 'block',
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: botEnabled ? '#C8FF00' : '#FFFFFF',
+                transform: botEnabled ? 'translateX(30px)' : 'translateX(0)',
+                transition: 'transform 0.2s, background 0.2s',
+                flexShrink: 0,
+              }} />
+            </button>
             <span style={{
-              display: 'block',
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              background: botEnabled ? '#C8FF00' : '#FFFFFF',
-              transform: botEnabled ? 'translateX(30px)' : 'translateX(0)',
-              transition: 'transform 0.2s, background 0.2s',
-              flexShrink: 0,
-            }} />
-          </button>
+              fontSize: '9px',
+              fontWeight: 700,
+              color: '#fff',
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              opacity: mounted ? 1 : 0,
+              transition: 'opacity 0.2s',
+              lineHeight: 1,
+            }}>
+              {botEnabled ? 'BOT' : 'HUMANO'}
+            </span>
+          </div>
 
           {/* Agente logueado + salir */}
           {agent && (
