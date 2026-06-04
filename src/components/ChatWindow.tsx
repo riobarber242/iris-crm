@@ -34,6 +34,21 @@ function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// Reemplaza el mensaje optimista `temp` por el guardado y deduplica por id.
+// Evita el doble mensaje cuando el evento realtime de Supabase ya appendeó la
+// misma fila antes de que volviera la respuesta del POST (race condition).
+function reconcileSent(list: Message[], temp: Message, saved: Message | null): Message[] {
+  const replaced = list.map((msg) => (msg === temp ? (saved ?? { ...msg, status: 'failed' }) : msg));
+  if (!saved?.id) return replaced;
+  const seen = new Set<string>();
+  return replaced.filter((msg) => {
+    if (!msg.id) return true;            // optimistas sin id se conservan
+    if (seen.has(msg.id)) return false;  // descarta duplicados por id
+    seen.add(msg.id);
+    return true;
+  });
+}
+
 export default function ChatWindow({ contactId }: { contactId: string }) {
   const { agent } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -247,7 +262,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         body: JSON.stringify({ contactId, content }),
       });
       const saved = res.ok ? await res.json() : null;
-      setMessages((m) => m.map((msg) => msg === temp ? (saved ?? { ...msg, status: 'failed' }) : msg));
+      setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }
@@ -271,7 +286,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetch('/api/messages/image', { method: 'POST', body: form });
       const saved = res.ok ? await res.json() : null;
-      setMessages((m) => m.map((msg) => msg === temp ? (saved ?? { ...msg, status: 'failed' }) : msg));
+      setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }
@@ -296,7 +311,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetch('/api/messages/audio', { method: 'POST', body: form });
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
-      setMessages((m) => m.map((msg) => msg === temp ? (saved ?? { ...msg, status: 'failed' }) : msg));
+      setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }

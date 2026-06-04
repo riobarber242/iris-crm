@@ -7,7 +7,7 @@ import { sendWhatsAppTemplate } from '@/lib/meta/client';
 // contacto (o teléfono si no tiene nombre), usando el Phone Number ID indicado,
 // y registra el envío en la tabla campaigns.
 const TEMPLATE_NAME         = 'reactivacion_inactivos';
-const TEMPLATE_LANG         = 'es';
+const TEMPLATE_LANG         = 'es_AR';
 const REACTIVACION_PHONE_ID = '1135649372965076';
 
 type InactivoContact = { id: string; phone: string; name: string | null; casino_username: string | null };
