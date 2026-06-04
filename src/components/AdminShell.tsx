@@ -236,7 +236,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 flexShrink: 0,
               }} />
             </button>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap', marginTop: '2px' }}>
               OFFLINE
             </span>
           </div>
@@ -271,7 +271,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 flexShrink: 0,
               }} />
             </button>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap', marginTop: '2px' }}>
               {botEnabled ? 'BOT' : 'HUM'}
             </span>
           </div>
