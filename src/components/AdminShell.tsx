@@ -204,7 +204,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
 
           {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '6px' }}>
             <button
               onClick={toggleOffline}
               className="toggle-3d"
@@ -251,7 +251,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
 
           {/* Toggle BOT/HUMANO */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '6px' }}>
             <button
               onClick={toggleBot}
               className="toggle-3d"
