@@ -144,7 +144,7 @@ button, input, textarea, select {
 
   /* Header en mobile con alto fijo de 90px; el texto va debajo del switch,
      alineado arriba con padding vertical. */
-  .app-header       { padding: 8px 16px !important; min-height: 90px !important; height: 90px !important; align-items: flex-start !important; }
+  .app-header       { padding: 8px 16px !important; min-height: 100px !important; height: 100px !important; overflow: visible !important; align-items: flex-start !important; }
   .app-logo         { font-size: 32px !important; }
   .app-header-right { gap: 10px !important; }
 }
