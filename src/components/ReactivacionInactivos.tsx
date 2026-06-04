@@ -2,8 +2,29 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-type Inactivo = { id: string; phone: string; name: string | null; casino_username: string | null };
+type Inactivo = {
+  id: string;
+  phone: string;
+  name: string | null;
+  casino_username: string | null;
+  last_comprobante_at: string | null;
+};
 type SendResult = { sent: number; failed: number; total: number };
+type Campaign = {
+  id: string;
+  name: string;
+  created_at: string;
+  sent_count: number | null;
+  target_filter: string | null;
+  template_name: string | null;
+};
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
 
 export default function ReactivacionInactivos() {
   const [contacts, setContacts] = useState<Inactivo[]>([]);
@@ -12,6 +33,7 @@ export default function ReactivacionInactivos() {
   const [sending,  setSending]  = useState(false);
   const [result,   setResult]   = useState<SendResult | null>(null);
   const [error,    setError]    = useState('');
+  const [history,  setHistory]  = useState<Campaign[]>([]);
 
   async function fetchInactivos() {
     setLoading(true);
@@ -28,7 +50,17 @@ export default function ReactivacionInactivos() {
     }
   }
 
-  useEffect(() => { fetchInactivos(); }, []);
+  async function fetchHistory() {
+    try {
+      const res = await fetch('/api/campaigns');
+      if (!res.ok) return;
+      const data: Campaign[] = await res.json();
+      // Solo campañas de reactivación.
+      setHistory(data.filter((c) => c.template_name === 'reactivacion_inactivos' || c.target_filter === 'inactivo'));
+    } catch { /* noop */ }
+  }
+
+  useEffect(() => { fetchInactivos(); fetchHistory(); }, []);
 
   const allSelected = contacts.length > 0 && selected.size === contacts.length;
 
@@ -65,7 +97,8 @@ export default function ReactivacionInactivos() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setResult({ sent: data.sent ?? 0, failed: data.failed ?? 0, total: data.total ?? 0 });
-      fetchInactivos(); // refrescar (algunos pueden cambiar de estado luego)
+      fetchInactivos();
+      fetchHistory();
     } catch (e: any) {
       setError(e.message ?? 'Error al enviar la campaña.');
     } finally {
@@ -75,74 +108,115 @@ export default function ReactivacionInactivos() {
 
   const selectedCount = useMemo(() => selected.size, [selected]);
 
+  const cardStyle: React.CSSProperties = {
+    background: '#fff', borderRadius: '16px', padding: '24px',
+    boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginBottom: '20px',
+  };
+
   return (
-    <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginBottom: '20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <p style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: 0 }}>
-            Reactivación de inactivos
-          </p>
-          <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
-            Envía la plantilla <strong style={{ color: '#333' }}>reactivacion_inactivos</strong> (con el nombre del contacto) a los inactivos seleccionados.
-          </p>
+    <>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <p style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: 0 }}>
+              Reactivación de inactivos
+            </p>
+            <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
+              Envía la plantilla <strong style={{ color: '#333' }}>reactivacion_inactivos</strong> (con el nombre del contacto) a los inactivos seleccionados.
+            </p>
+          </div>
+          <button
+            onClick={enviar}
+            disabled={sending || selectedCount === 0}
+            style={{
+              background:   sending || selectedCount === 0 ? '#e0e0e0' : '#1a1a1a',
+              color:        sending || selectedCount === 0 ? '#999' : '#C8FF00',
+              fontWeight:   800, fontSize: '13px', border: 'none',
+              borderRadius: '999px', padding: '12px 22px',
+              cursor:       sending || selectedCount === 0 ? 'not-allowed' : 'pointer',
+              whiteSpace:   'nowrap',
+            }}
+          >
+            {sending ? 'Enviando…' : `Enviar campaña de reactivación (${selectedCount})`}
+          </button>
         </div>
-        <button
-          onClick={enviar}
-          disabled={sending || selectedCount === 0}
-          style={{
-            background:   sending || selectedCount === 0 ? '#e0e0e0' : '#1a1a1a',
-            color:        sending || selectedCount === 0 ? '#999' : '#C8FF00',
-            fontWeight:   800, fontSize: '13px', border: 'none',
-            borderRadius: '999px', padding: '12px 22px',
-            cursor:       sending || selectedCount === 0 ? 'not-allowed' : 'pointer',
-            whiteSpace:   'nowrap',
-          }}
-        >
-          {sending ? 'Enviando…' : `Enviar campaña de reactivación (${selectedCount})`}
-        </button>
+
+        {result && (
+          <p style={{ fontSize: '13px', fontWeight: 700, color: '#1a7a3a', margin: '14px 0 0 0' }}>
+            ✅ Campaña enviada: {result.sent} enviados{result.failed > 0 ? `, ${result.failed} fallidos` : ''} (de {result.total}).
+          </p>
+        )}
+        {error && (
+          <p style={{ fontSize: '13px', fontWeight: 700, color: '#E53935', margin: '14px 0 0 0' }}>✗ {error}</p>
+        )}
+
+        <div style={{ marginTop: '18px' }}>
+          {loading ? (
+            <p style={{ fontSize: '13px', color: '#bbb', margin: 0 }}>Cargando inactivos…</p>
+          ) : contacts.length === 0 ? (
+            <p style={{ fontSize: '13px', color: '#bbb', margin: 0 }}>No hay contactos con estado “inactivo”.</p>
+          ) : (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: '#555' }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                Seleccionar todos ({contacts.length})
+              </label>
+
+              {/* Encabezado de columnas */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '4px 12px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <span style={{ width: '16px' }} />
+                <span style={{ flex: 1 }}>Contacto</span>
+                <span style={{ width: '130px' }}>Teléfono</span>
+                <span style={{ width: '110px', textAlign: 'right' }}>Últ. comprobante</span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px', overflowY: 'auto' }}>
+                {contacts.map((c) => (
+                  <label
+                    key={c.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '8px 12px', borderRadius: '10px',
+                      background: selected.has(c.id) ? '#f7ffe0' : '#fafafa',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} style={{ width: '16px' }} />
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName(c)}</span>
+                    <span style={{ width: '130px', fontSize: '12px', color: '#999' }}>{c.phone}</span>
+                    <span style={{ width: '110px', fontSize: '12px', color: '#777', textAlign: 'right' }}>{fmtDate(c.last_comprobante_at)}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {result && (
-        <p style={{ fontSize: '13px', fontWeight: 700, color: '#1a7a3a', margin: '14px 0 0 0' }}>
-          ✅ Campaña enviada: {result.sent} enviados{result.failed > 0 ? `, ${result.failed} fallidos` : ''} (de {result.total}).
+      {/* Historial de campañas de reactivación */}
+      <div style={cardStyle}>
+        <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: '0 0 14px 0' }}>
+          Historial de campañas de reactivación
         </p>
-      )}
-      {error && (
-        <p style={{ fontSize: '13px', fontWeight: 700, color: '#E53935', margin: '14px 0 0 0' }}>✗ {error}</p>
-      )}
-
-      <div style={{ marginTop: '18px' }}>
-        {loading ? (
-          <p style={{ fontSize: '13px', color: '#bbb', margin: 0 }}>Cargando inactivos…</p>
-        ) : contacts.length === 0 ? (
-          <p style={{ fontSize: '13px', color: '#bbb', margin: 0 }}>No hay contactos con estado “inactivo”.</p>
+        {history.length === 0 ? (
+          <p style={{ fontSize: '13px', color: '#bbb', margin: 0 }}>Todavía no se envió ninguna campaña de reactivación.</p>
         ) : (
-          <>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 700, color: '#555' }}>
-              <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-              Seleccionar todos ({contacts.length})
-            </label>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '360px', overflowY: 'auto' }}>
-              {contacts.map((c) => (
-                <label
-                  key={c.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '8px 12px', borderRadius: '10px',
-                    background: selected.has(c.id) ? '#f7ffe0' : '#fafafa',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', flex: 1 }}>{displayName(c)}</span>
-                  <span style={{ fontSize: '12px', color: '#999' }}>{c.phone}</span>
-                </label>
-              ))}
-            </div>
-          </>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {history.map((c) => (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', borderRadius: '10px', background: '#fafafa' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', flex: 1 }}>{c.name}</span>
+                <span style={{ fontSize: '12px', color: '#999' }}>{fmtDate(c.created_at)}</span>
+                <span style={{
+                  fontSize: '12px', fontWeight: 800, color: '#1a7a3a',
+                  background: '#eaffd1', borderRadius: '8px', padding: '2px 10px', whiteSpace: 'nowrap',
+                }}>
+                  {c.sent_count ?? 0} enviados
+                </span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
-    </div>
+    </>
   );
 }
