@@ -126,7 +126,6 @@ button, input, textarea, select {
   .app-header { padding: 0 16px !important; }
   .app-logo   { font-size: 40px !important; letter-spacing: -1px !important; }
   .app-main   { padding: 14px !important; }
-  .app-botword { display: none !important; }   /* el toggle ya indica el estado */
 
   .dash-grid  { grid-template-columns: repeat(2, 1fr) !important; }
   .chat-msg   { max-width: 88% !important; }
