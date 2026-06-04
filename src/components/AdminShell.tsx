@@ -204,10 +204,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
 
           {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
-              OFFLINE
-            </span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
             <button
               onClick={toggleOffline}
               className="toggle-3d"
@@ -217,8 +214,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 position: 'relative',
                 display: 'inline-flex',
                 alignItems: 'center',
-                width: '64px',
-                height: '34px',
+                width: '52px',
+                height: '28px',
                 borderRadius: '17px',
                 border: 'none',
                 cursor: 'pointer',
@@ -230,49 +227,54 @@ export function AdminShell({ children }: { children: ReactNode }) {
             >
               <span style={{
                 display: 'block',
-                width: '28px',
-                height: '28px',
+                width: '22px',
+                height: '22px',
                 borderRadius: '50%',
                 background: '#FFFFFF',
-                transform: offlineMode ? 'translateX(30px)' : 'translateX(0)',
+                transform: offlineMode ? 'translateX(24px)' : 'translateX(0)',
                 transition: 'transform 0.2s',
                 flexShrink: 0,
               }} />
             </button>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+              OFFLINE
+            </span>
           </div>
 
-          <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
-            {botEnabled ? 'BOT' : 'HUM'}
-          </span>
-          <button
-            onClick={toggleBot}
-            className="toggle-3d"
-            aria-label={botEnabled ? 'Desactivar bot' : 'Activar bot'}
-            style={{
-              position: 'relative',
-              display: 'inline-flex',
-              alignItems: 'center',
-              width: '100px',
-              height: '48px',
-              borderRadius: '24px',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px',
-              background: '#1a1a1a',
-              outline: 'none',
-            }}
-          >
-            <span style={{
-              display: 'block',
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              background: botEnabled ? '#C8FF00' : '#FFFFFF',
-              transform: botEnabled ? 'translateX(52px)' : 'translateX(0)',
-              transition: 'transform 0.2s, background 0.2s',
-              flexShrink: 0,
-            }} />
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+            <button
+              onClick={toggleBot}
+              className="toggle-3d"
+              aria-label={botEnabled ? 'Desactivar bot' : 'Activar bot'}
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                width: '52px',
+                height: '28px',
+                borderRadius: '24px',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px',
+                background: '#1a1a1a',
+                outline: 'none',
+              }}
+            >
+              <span style={{
+                display: 'block',
+                width: '22px',
+                height: '22px',
+                borderRadius: '50%',
+                background: botEnabled ? '#C8FF00' : '#FFFFFF',
+                transform: botEnabled ? 'translateX(24px)' : 'translateX(0)',
+                transition: 'transform 0.2s, background 0.2s',
+                flexShrink: 0,
+              }} />
+            </button>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+              {botEnabled ? 'BOT' : 'HUM'}
+            </span>
+          </div>
 
           {/* Agente logueado + salir */}
           {agent && (
