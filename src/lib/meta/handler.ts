@@ -18,6 +18,16 @@ async function getSystemPrompt(): Promise<string> {
 const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY     = 'bot_enabled';
 
+// Estados de onboarding que pertenecen al bot. Si un contacto está en uno de
+// estos, el bot inició la conversación y la continúa. Cualquier otro estado
+// (null en un contacto preexistente, 'done', 'en_proceso') NO es del bot.
+const BOT_FLOW_STATES = new Set(['greeting', 'asked_intention', 'waiting_screenshot', 'asked_if_loader', 'asked_name']);
+
+// Mensajes del bot.
+const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual. Para ayudarte mejor necesito hacerte unas preguntas 😊\n\n¿Venís por las fichas de prueba o querés cargar?';
+const HANDOFF_MSG     = 'Listo! En breve un operador humano te va a atender 👋';
+const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
+
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
 // Step 1: GET graph.facebook.com/v18.0/{mediaId}?fields=url  → temporary download URL
 // Step 2: GET that download URL with Bearer token             → image buffer
@@ -99,6 +109,29 @@ async function saveComprobanteImage(mediaId: string, contactId: string): Promise
   return publicUrl;
 }
 
+// Sube la imagen a Storage y la guarda como comprobante (estado pendiente).
+// Se llama SIEMPRE que entra una imagen/documento, sin importar el estado del bot.
+async function persistComprobanteImage(message: any, contactId: string): Promise<void> {
+  const mediaId = message.image?.id ?? message.document?.id ?? null;
+  const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId) : null;
+
+  if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
+  if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
+
+  try {
+    const { error } = await supabaseAdmin.from('comprobantes').insert({
+      contact_id: contactId,
+      image_url:  supabaseImageUrl,
+      monto:      0,
+      estado:     'pendiente',
+    });
+    if (error) console.error('[image] Error guardando comprobante en DB:', error.message);
+    else       console.log('[image] Comprobante guardado OK');
+  } catch (err) {
+    console.error('[image] Excepción guardando comprobante:', err);
+  }
+}
+
 // ─── Webhook entry ────────────────────────────────────────────────────────────
 
 export async function handleWhatsappWebhook(
@@ -162,12 +195,12 @@ async function processMessage(
   }
 
   // ── Contact ────────────────────────────────────────────────────────────────
-  const contact = await findOrCreateContact(from, contactMeta?.profile?.name ?? null);
+  const { contact, isNew } = await findOrCreateContact(from, contactMeta?.profile?.name ?? null);
   if (!contact) {
     console.error('[webhook] No se pudo crear/obtener contacto para', from);
     return;
   }
-  console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} casino_username=${JSON.stringify(contact.casino_username ?? null)} status=${contact.status}`);
+  console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} isNew=${isNew} status=${contact.status} conversation_state=${contact.conversation_state ?? 'null'}`);
 
   // ── Save user message ──────────────────────────────────────────────────────
   try {
@@ -263,44 +296,54 @@ async function processMessage(
     }
   }
 
-  // ─── IMAGE / DOCUMENT ─────────────────────────────────────────────────────
+  // ─── Comprobantes: SIEMPRE se guardan (el operador los necesita) ──────────
+  // Independiente del bot: aunque el contacto sea preexistente o el bot esté
+  // apagado, la imagen se persiste como comprobante.
   if (type === 'image' || type === 'document') {
-    const mediaId = message.image?.id ?? message.document?.id ?? null;
-    const imgState = contact.conversation_state as string | null ?? null;
-    console.log(`[image] Procesando: type=${type} mediaId=${mediaId} conversation_state=${imgState}`);
+    await persistComprobanteImage(message, contact.id);
+  }
 
-    // Upload to Supabase Storage (4-step flow)
-    const supabaseImageUrl = mediaId
-      ? await saveComprobanteImage(mediaId, contact.id)
-      : null;
+  // ── Kill switch global del bot ──────────────────────────────────────────
+  if (!botEnabled) {
+    console.log('[bot] bot_enabled=false — sin respuesta automática');
+    return;
+  }
 
-    if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
-    if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
+  // ── Contacto bloqueado → silencio total ─────────────────────────────────
+  if (contact.blocked) {
+    console.log('[bot] Contacto bloqueado — sin respuesta');
+    return;
+  }
 
-    // Save comprobante regardless of which flow we're in
-    try {
-      const { error } = await supabaseAdmin.from('comprobantes').insert({
-        contact_id: contact.id,
-        image_url:  supabaseImageUrl,
-        monto:      0,
-        estado:     'pendiente',
-      });
-      if (error) console.error('[image] Error guardando comprobante en DB:', error.message);
-      else       console.log('[image] Comprobante guardado OK');
-    } catch (err) {
-      console.error('[image] Excepción guardando comprobante:', err);
-    }
+  // ── FUERA DE HORARIO (aplica a TODOS) ───────────────────────────────────
+  // Si no hay ningún operador activo dentro de su horario, se avisa y se corta.
+  if (!(await hasActiveOperator())) {
+    console.log('[bot] Sin operadores en horario — enviando aviso fuera de horario');
+    await replyAndSave(OUT_OF_HOURS_MSG);
+    return;
+  }
 
-    if (!botEnabled) return;
+  // ── REGLA PRINCIPAL: el bot SOLO atiende números nuevos/desconocidos ─────
+  // "Bot-owned" = recién creado en este mensaje (isNew), o ya está en un
+  // onboarding que el propio bot inició (conversation_state ∈ BOT_FLOW_STATES).
+  // Cualquier contacto que YA existía antes de este mensaje (importado, cliente,
+  // etc.) va directo a la cola del operador, SIN importar su status.
+  const inBotFlow = BOT_FLOW_STATES.has((contact.conversation_state as string | null) ?? '');
+  if (!isNew && !inBotFlow) {
+    console.log('[bot] Contacto preexistente → cola del operador, sin respuesta del bot');
+    return;
+  }
 
-    // Decide response based on conversation state:
-    // 'waiting_screenshot' → image is the channel screenshot → continue onboarding flow
-    // anything else        → image is a payment receipt → acknowledge and stop
+  // ─── A partir de acá: contacto nuevo o en onboarding iniciado por el bot ──
+
+  // ─── IMAGE / DOCUMENT (en flujo) ──────────────────────────────────────────
+  if (type === 'image' || type === 'document') {
+    const imgState = (contact.conversation_state as string | null) ?? null;
     if (imgState === 'waiting_screenshot') {
       console.log('[image] Es captura del canal → continuando flujo de onboarding');
       await replyAndSave('Buenisimo! Sos de cargar y jugar seguido?', { newState: 'asked_if_loader' });
     } else {
-      console.log(`[image] Es comprobante de pago (state="${imgState}") → acuse de recibo`);
+      console.log(`[image] Comprobante en flujo (state="${imgState}") → acuse de recibo`);
       await replyAndSave('Comprobante recibido ✅ Un operador lo verifica enseguida.');
     }
     return;
@@ -308,54 +351,8 @@ async function processMessage(
 
   // ─── AUDIO / VOICE / VIDEO / STICKER ─────────────────────────────────────
   if (['audio', 'voice', 'video', 'sticker'].includes(type)) {
-    if (!botEnabled) return;
-    const cu = contact.casino_username ?? null;
-    if (cu && cu.trim() !== '') return;
-    const st = contact.conversation_state as string | null ?? null;
-    if (st === 'done' || st === 'en_proceso' || contact.status === 'en_proceso') return;
     console.log(`[bot] Tipo no-texto: ${type} — respondiendo con mensaje de texto`);
-    await replyAndSave('No puedo escuchar audios ni ver stickers, escribime por texto 😊');
-    return;
-  }
-
-  // ─── TEXT MESSAGES ────────────────────────────────────────────────────────
-  if (!botEnabled) {
-    console.log('[bot] bot_enabled=false — sin respuesta automática');
-    return;
-  }
-
-  // USUARIO CASINO ASIGNADO = contacto ya fue atendido manualmente → bot inactivo.
-  // Regla definitiva: si el operador asignó casino_username, el bot no interfiere.
-  // Las imágenes ya fueron procesadas arriba (siempre se guardan como comprobantes).
-  const casinoUser = contact.casino_username ?? null;
-  console.log(`[bot] casino_username check: value=${JSON.stringify(casinoUser)} → silenced=${!!(casinoUser && casinoUser.trim() !== '')}`);
-  if (casinoUser && casinoUser.trim() !== '') {
-    console.log(`[bot] Bot silenciado — casino_username="${casinoUser}"`);
-    return;
-  }
-
-  // ── COMPLETED CHECK (MUST be before isGreeting) ──────────────────────────
-  // conversation_state 'done'/'en_proceso' OR status 'en_proceso' → silent.
-  // No greeting reset, no response — only save the message (already done above).
-  const textState  = contact.conversation_state as string | null ?? null;
-  const isCompleted = textState === 'done'
-                   || textState === 'en_proceso'
-                   || contact.status === 'en_proceso';
-
-  if (isCompleted) {
-    console.log(`[bot] Flujo completado — state="${textState}" status="${contact.status}" — mensaje guardado sin respuesta`);
-    return;
-  }
-
-  // GREETING RESET — only for contacts still in an active flow state
-  const isGreeting = /^(hola|buenas|hey|buen\s*d[ií]a|buenos\s*d[ií]as|buenas\s*tardes|buenas\s*noches|ola|hi|hello|saludos|que\s*tal|como\s*estas|buenos)[!¡.,\s]*/i.test(text.trim());
-
-  if (isGreeting) {
-    console.log(`[bot] Saludo en flujo activo — reseteando (state="${textState}")`);
-    await replyAndSave(
-      'Buenas 🙌 mi nombre es Iris, agendame para poder seguir con la conversacion',
-      { newState: 'greeting' },
-    );
+    await replyAndSave('Soy Iris, asistente virtual 🤖 No puedo escuchar audios ni ver stickers, escribime por texto 😊');
     return;
   }
 
@@ -365,29 +362,24 @@ async function processMessage(
   console.log(`[bot] state="${state}" text="${text.slice(0, 60)}"`);
 
   switch (state) {
-    // ── No state / after initial greeting ────────────────────────────────────
+    // ── Contacto nuevo: bienvenida + primera pregunta ─────────────────────────
     case null:
     case 'greeting': {
-      await replyAndSave('Venis por las fichas de prueba o queres cargar?', {
-        newState: 'asked_intention',
-      });
+      await replyAndSave(WELCOME_MSG, { newState: 'asked_intention' });
       break;
     }
 
     // ── User chose fichas or cargar ───────────────────────────────────────────
     case 'asked_intention': {
       if (/carg(ar|a)|quiero cargar|quiero recarg/.test(lowerText)) {
-        await replyAndSave(
-          'Perfecto! Un operador te va a atender enseguida para ayudarte con la carga 🙌',
-          { markInProgress: true },
-        );
+        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       } else if (/fichas|prueba|proba|prueb/.test(lowerText)) {
         await replyAndSave(
           'Unite a mi canal de WhatsApp y mandame la captura. Ahí subo promos, horarios y lineas disponibles 👉 https://whatsapp.com/channel/0029VbCHhpyGOj9me9y9pF3F',
           { newState: 'waiting_screenshot' },
         );
       } else {
-        await replyAndSave('Venis por las fichas de prueba o queres cargar?');
+        await replyAndSave('¿Venís por las fichas de prueba o querés cargar?');
       }
       break;
     }
@@ -395,7 +387,7 @@ async function processMessage(
     // ── Waiting for channel screenshot (text message) ─────────────────────────
     case 'waiting_screenshot': {
       if (/no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
-        await replyAndSave('Entendido, un operador te va a contactar 🙌', { markInProgress: true });
+        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       } else {
         await replyAndSave(
           'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podés, avisame.',
@@ -412,32 +404,25 @@ async function processMessage(
           { newState: 'asked_name' },
         );
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
-        await replyAndSave('Entendido, un operador te va a contactar 🙌', { markInProgress: true });
+        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       } else {
         await replyAndSave('Sos de cargar y jugar seguido? Respondé si o no 😊');
       }
       break;
     }
 
-    // ── Capture user name (bot reads it for the reply but never writes to DB) ──
+    // ── Fin del onboarding → handoff al operador ──────────────────────────────
     case 'asked_name': {
-      const name = text.split('\n')[0].split(' ').slice(0, 3).join(' ').trim();
-      // Name intentionally NOT saved to contacts — operator assigns it manually from CRM
-      await replyAndSave(
-        `Perfecto ${name || 'amigo'}! 🎉 Un operador te crea el usuario enseguida y te manda los datos para entrar.`,
-        { markInProgress: true },
-      );
+      // El nombre lo asigna el operador desde el CRM; el bot no lo escribe.
+      await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       break;
     }
 
-    // ── Completed or unknown state ────────────────────────────────────────────
+    // ── Estado no mapeado (no debería ocurrir en bot-owned) → handoff seguro ──
     case 'done':
     default: {
-      console.warn(`[bot] Estado no mapeado: "${state}" — respondiendo genérico`);
-      await replyAndSave(
-        'Hola! En qué te puedo ayudar? Escribí "hola" para empezar de nuevo 😊',
-        { newState: null },
-      );
+      console.warn(`[bot] Estado no mapeado: "${state}" — handoff al operador`);
+      await replyAndSave(HANDOFF_MSG, { markInProgress: true });
       break;
     }
   }
@@ -460,7 +445,13 @@ function phoneCore(raw: string): string {
   return d;
 }
 
-async function findOrCreateContact(phone: string, _whatsappName: string | null) {
+// Devuelve { contact, isNew }. isNew=true SOLO cuando el contacto fue creado
+// en esta llamada (número completamente desconocido). Un match exacto o flexible
+// → isNew=false (el número ya existía, en cualquier formato).
+async function findOrCreateContact(
+  phone: string,
+  _whatsappName: string | null,
+): Promise<{ contact: any | null; isNew: boolean }> {
   // _whatsappName is intentionally ignored — bot never writes name to contacts.
   // Explicit column list avoids PostgREST schema-cache issues with recently added columns.
   try {
@@ -473,7 +464,7 @@ async function findOrCreateContact(phone: string, _whatsappName: string | null) 
       .maybeSingle();
 
     if (exact) {
-      return exact;
+      return { contact: exact, isNew: false };
     }
 
     // 2. Flexible match by normalized core — catches contacts saved in a
@@ -494,7 +485,7 @@ async function findOrCreateContact(phone: string, _whatsappName: string | null) 
           `[findOrCreateContact] Match flexible: from="${phone}" → contacto existente ` +
           `phone="${fuzzy.phone}" name=${JSON.stringify(fuzzy.name ?? null)}`,
         );
-        return fuzzy;
+        return { contact: fuzzy, isNew: false };
       }
     }
 
@@ -508,16 +499,58 @@ async function findOrCreateContact(phone: string, _whatsappName: string | null) 
 
     if (error) {
       console.error('[findOrCreateContact] Insert error:', error.message);
-      // Race condition: try fetching again
+      // Race condition: otro proceso lo creó en paralelo → existía, isNew=false.
       const { data: retry } = await supabaseAdmin
         .from('contacts').select('*').eq('phone', phone).limit(1).maybeSingle();
-      return retry ?? null;
+      return { contact: retry ?? null, isNew: false };
     }
 
-    return inserted;
+    return { contact: inserted, isNew: true };
   } catch (err) {
     console.error('[findOrCreateContact] Excepción:', err);
-    return null;
+    return { contact: null, isNew: false };
+  }
+}
+
+// "HH:MM[:SS]" → minutos desde medianoche. null si no hay horario.
+function timeToMinutes(t: string | null | undefined): number | null {
+  if (!t) return null;
+  const [h, m] = String(t).split(':');
+  const hh = Number(h), mm = Number(m ?? 0);
+  if (Number.isNaN(hh)) return null;
+  return hh * 60 + mm;
+}
+
+// ¿Hay al menos un operador activo dentro de su horario AHORA (hora Argentina)?
+// Un agente activo sin horario definido cuenta como disponible 24h.
+// Fail-open: ante error o sin agentes, asume que hay operadores (no manda el
+// aviso de fuera de horario por las dudas).
+async function hasActiveOperator(): Promise<boolean> {
+  try {
+    const { data: agents, error } = await supabaseAdmin
+      .from('agents')
+      .select('active, schedule_start, schedule_end');
+
+    if (error) { console.warn('[hasActiveOperator] Error leyendo agents:', error.message); return true; }
+    if (!agents || agents.length === 0) return true;
+
+    // Argentina es UTC-3 fijo.
+    const arg    = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    const nowMin = arg.getUTCHours() * 60 + arg.getUTCMinutes();
+
+    for (const a of agents) {
+      if (!a.active) continue;
+      const s = timeToMinutes(a.schedule_start);
+      const e = timeToMinutes(a.schedule_end);
+      if (s === null || e === null) return true; // activo sin horario → disponible 24h
+      // Horario normal (s<=e) o que cruza medianoche (s>e).
+      const within = s <= e ? (nowMin >= s && nowMin <= e) : (nowMin >= s || nowMin <= e);
+      if (within) return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('[hasActiveOperator] Excepción:', err);
+    return true; // fail open
   }
 }
 
