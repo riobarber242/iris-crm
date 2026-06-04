@@ -217,6 +217,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
             }}>
               OFFLINE
             </span>
+            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+              OFFLINE
+            </span>
             <button
               onClick={toggleOffline}
               className="toggle-3d"
@@ -261,6 +264,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
             lineHeight: 1,
           }}>
             {botEnabled ? 'BOT' : 'HUMANO'}
+          </span>
+          <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
+            {botEnabled ? 'BOT' : 'HUM'}
           </span>
           <button
             onClick={toggleBot}
