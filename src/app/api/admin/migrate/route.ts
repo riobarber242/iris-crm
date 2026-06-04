@@ -15,10 +15,9 @@ export async function GET() {
     });
     steps.push(e2 ? `add constraint error: ${e2.message}` : 'add constraint OK');
 
-    const { error: e3 } = await supabaseAdmin.rpc('exec_sql', {
-      sql: `UPDATE contacts SET status = 'cliente_activo' WHERE status IN ('en_proceso', 'activo');`,
-    });
-    steps.push(e3 ? `update status error: ${e3.message}` : 'update status OK');
+    // NOTA: se eliminó la promoción ciega a 'cliente_activo'. Un contacto solo es
+    // cliente_activo si tiene un comprobante verificado — la clasificación la hace
+    // /api/cron/clasificar (reconcilia todo el histórico con esa regla).
 
     return NextResponse.json({ ok: true, steps });
   } catch (err: any) {

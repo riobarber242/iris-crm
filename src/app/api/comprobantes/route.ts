@@ -61,6 +61,31 @@ export async function PATCH(request: Request) {
     .from('comprobantes').update(updatePayload).eq('id', comprobanteId).select('*').single();
   if (error) return new NextResponse(error.message, { status: 500 });
 
+  // ── Reconciliar status del contacto con la regla (cliente_activo ⟺ ≥1 verificado) ──
+  if (estado === 'verificado') {
+    // Un comprobante verificado convierte al contacto en cliente_activo (salvo bloqueado).
+    await supabaseAdmin
+      .from('contacts')
+      .update({ status: 'cliente_activo' })
+      .eq('id', comprobante.contact_id)
+      .neq('status', 'bloqueado');
+  } else if (estado === 'rechazado') {
+    // Si era su único comprobante verificado, deja de calificar como cliente_activo.
+    const { data: remaining } = await supabaseAdmin
+      .from('comprobantes')
+      .select('id')
+      .eq('contact_id', comprobante.contact_id)
+      .eq('estado', 'verificado')
+      .limit(1);
+    if (!remaining || remaining.length === 0) {
+      await supabaseAdmin
+        .from('contacts')
+        .update({ status: 'nuevo' })
+        .eq('id', comprobante.contact_id)
+        .eq('status', 'cliente_activo'); // solo baja si estaba activo
+    }
+  }
+
   const efectiveMonto = updatePayload.monto ?? comprobante.monto;
   if (estado === 'verificado' && efectiveMonto) {
     const { data: contact, error: contactError } = await supabaseAdmin
