@@ -162,7 +162,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         top: 0,
         zIndex: 50,
         width: '100%',
-        height: `${BANNER_H}px`,
+        minHeight: `${BANNER_H}px`,
         background: '#0a0a0a',
         boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         display: 'flex',
