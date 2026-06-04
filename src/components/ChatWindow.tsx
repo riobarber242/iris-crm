@@ -512,9 +512,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   onMouseEnter={() => setReactBarFor(m.id!)}
                   onMouseLeave={() => setReactBarFor(null)}
                   style={{
-                  position: 'absolute', top: '-40px', right: 0,
+                  position: 'absolute', top: '-44px', right: 0,
                   display: 'flex', gap: '2px',
-                  background: '#fff', borderRadius: '999px', padding: '4px 6px',
+                  background: '#fff', borderRadius: '999px', padding: '4px 6px', paddingBottom: '4px',
                   boxShadow: '0 3px 12px rgba(0,0,0,0.18)', zIndex: 5,
                 }}>
                   {REACTION_EMOJIS.map((e) => (
