@@ -141,6 +141,11 @@ button, input, textarea, select {
 @media (max-width: 640px) {
   .dash-grid     { grid-template-columns: 1fr !important; }
   .dash-grid > * { min-width: 0 !important; width: 100% !important; }
+
+  /* Header más compacto en mobile. */
+  .app-header       { padding: 0 16px !important; }
+  .app-logo         { font-size: 32px !important; }
+  .app-header-right { gap: 10px !important; }
 }
 
 /* Celular chico: aliviar el header y el input del chat. */

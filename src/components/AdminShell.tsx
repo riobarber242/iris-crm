@@ -251,7 +251,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
 
           <span className="app-botword" style={{
-            fontSize: '20px',
+            fontSize: '13px',
             fontWeight: 900,
             color: '#fff',
             letterSpacing: '2px',
@@ -270,23 +270,23 @@ export function AdminShell({ children }: { children: ReactNode }) {
               position: 'relative',
               display: 'inline-flex',
               alignItems: 'center',
-              width: '100px',
-              height: '48px',
-              borderRadius: '24px',
+              width: '64px',
+              height: '34px',
+              borderRadius: '17px',
               border: 'none',
               cursor: 'pointer',
-              padding: '4px',
+              padding: '3px',
               background: '#1a1a1a',
               outline: 'none',
             }}
           >
             <span style={{
               display: 'block',
-              width: '40px',
-              height: '40px',
+              width: '28px',
+              height: '28px',
               borderRadius: '50%',
               background: botEnabled ? '#C8FF00' : '#FFFFFF',
-              transform: botEnabled ? 'translateX(52px)' : 'translateX(0)',
+              transform: botEnabled ? 'translateX(30px)' : 'translateX(0)',
               transition: 'transform 0.2s, background 0.2s',
               flexShrink: 0,
             }} />
