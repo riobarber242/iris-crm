@@ -508,7 +508,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
               {/* Barra de reacciones (hover desktop / long-press mobile) */}
               {reactable && reactBarFor === m.id && (
-                <div style={{
+                <div
+                  onMouseEnter={() => setReactBarFor(m.id!)}
+                  onMouseLeave={() => setReactBarFor(null)}
+                  style={{
                   position: 'absolute', top: '-40px', right: 0,
                   display: 'flex', gap: '2px',
                   background: '#fff', borderRadius: '999px', padding: '4px 6px',
