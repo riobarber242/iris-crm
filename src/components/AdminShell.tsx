@@ -166,11 +166,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
         background: '#0a0a0a',
         boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         display: 'flex',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 32px',
-        paddingTop: '8px',
-        paddingBottom: '8px',
         flexShrink: 0,
       }}>
 

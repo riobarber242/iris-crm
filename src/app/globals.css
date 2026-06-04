@@ -142,8 +142,9 @@ button, input, textarea, select {
   .dash-grid     { grid-template-columns: 1fr !important; }
   .dash-grid > * { min-width: 0 !important; width: 100% !important; }
 
-  /* Header en mobile con alto fijo de 90px; el texto va debajo del switch. */
-  .app-header       { padding: 0 16px !important; min-height: 90px !important; height: 90px !important; }
+  /* Header en mobile con alto fijo de 90px; el texto va debajo del switch,
+     alineado arriba con padding vertical. */
+  .app-header       { padding: 8px 16px !important; min-height: 90px !important; height: 90px !important; align-items: flex-start !important; }
   .app-logo         { font-size: 32px !important; }
   .app-header-right { gap: 10px !important; }
 }
