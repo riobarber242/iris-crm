@@ -255,7 +255,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 borderRadius: '24px',
                 border: 'none',
                 cursor: 'pointer',
-                padding: '4px',
+                padding: '3px',
                 background: '#1a1a1a',
                 outline: 'none',
               }}
