@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 function playNotificationBeep() {
@@ -26,6 +27,9 @@ export default function ConversationsClient() {
   const [query,          setQuery]          = useState('');
   // Tracks the latest inbound message timestamp seen, to detect new arrivals
   const latestMsgTsRef = useRef<string | null>(null);
+  const fetchRef       = useRef<() => void>(() => {});
+  const sbRef          = useRef<any>(null);
+  const channelRef     = useRef<any>(null);
 
   async function fetchConversations() {
     try {
@@ -54,11 +58,31 @@ export default function ConversationsClient() {
     } catch {}
   }
 
-  // Simple polling every 5 s — reliable, no Realtime complexity
+  // Realtime (mensajes + contactos) con polling de respaldo cada 5 s.
   useEffect(() => {
+    fetchRef.current = fetchConversations;
     fetchConversations();
-    const timer = setInterval(fetchConversations, 5_000);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => fetchRef.current(), 5_000);
+
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
+    if (url && key) {
+      const sb = createClient(url, key);
+      sbRef.current = sb;
+      const trigger = () => fetchRef.current();
+      const ch = sb.channel('realtime-conversations')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, trigger)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, trigger)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' }, trigger)
+        .subscribe();
+      channelRef.current = ch;
+    }
+
+    return () => {
+      clearInterval(timer);
+      try { if (channelRef.current) sbRef.current?.removeChannel(channelRef.current); } catch {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist last_read_at to DB, clear badge optimistically, refresh sidebar badge
@@ -212,7 +236,13 @@ export default function ConversationsClient() {
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
-                  <p style={{ fontSize: '15px', fontWeight: badgeType ? 800 : 700, color: '#000', margin: 0 }}>
+                  <p style={{ fontSize: '15px', fontWeight: badgeType ? 800 : 700, color: '#000', margin: 0, display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    {badgeType && (
+                      <span style={{
+                        display: 'inline-block', width: '9px', height: '9px', borderRadius: '50%',
+                        background: badgeType === 'red' ? '#E53935' : '#FF8C00', flexShrink: 0,
+                      }} />
+                    )}
                     {(contact.casino_username ?? '').trim()
                       || (contact.name ?? '').trim()
                       || contact.phone}
