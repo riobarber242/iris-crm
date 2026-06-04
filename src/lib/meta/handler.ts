@@ -367,8 +367,8 @@ async function processMessage(
   //   (handoff) cambia al aviso de "no hay operadores" (ver handoffMsg). El bot
   //   sigue trabajando igual; solo cambia el cierre.
   const offline = await getOfflineMode();
-  if (offline && !botEnabled) {
-    console.log('[bot] OFFLINE + bot apagado — aviso directo');
+  if (offline) {
+    console.log('[bot] OFFLINE — aviso directo a todos');
     if (!contact.blocked) await replyAndSave(OFFLINE_MSG);
     return;
   }
