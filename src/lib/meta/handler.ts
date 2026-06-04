@@ -275,9 +275,10 @@ async function processMessage(
       console.warn('[webhook] Insert mensaje usuario falló:', error.message, '— reintentando sin campos opcionales');
       // Retry without fields that might not exist in the schema
       const { error: err2 } = await supabaseAdmin.from('messages').insert({
-        contact_id: contact.id,
-        role:       'user',
-        content:    userContent,
+        contact_id:          contact.id,
+        role:                'user',
+        content:             userContent,
+        whatsapp_message_id: messageId,
       });
       if (err2) console.error('[webhook] Retry insert también falló:', err2.message);
     }
