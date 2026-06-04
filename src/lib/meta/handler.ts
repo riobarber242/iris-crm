@@ -23,7 +23,8 @@ const BOT_ENABLED_KEY     = 'bot_enabled';
 const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual 🤖 Para orientarte mejor necesito hacerte un par de preguntas. ¿Es tu primera vez con nosotros o ya tenés cuenta?';
 const HANDOFF_MSG     = '¡Listo! Un operador humano te va a atender en breve 👋';
 const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
-const OFFLINE_MSG      = 'Hola! En este momento no estamos operando. Volvemos pronto, te respondemos cuando volvamos 🙏';
+const OFFLINE_MSG         = 'Hola! En este momento no estamos operando. Volvemos pronto 🙏';
+const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te respondemos cuando volvamos 🙏';
 
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
 // Step 1: GET graph.facebook.com/v18.0/{mediaId}?fields=url  → temporary download URL
@@ -359,14 +360,20 @@ async function processMessage(
 
   // (La imagen/comprobante ya se subió y guardó arriba, antes de guardar el mensaje.)
 
-  // ── MODO OFFLINE — prioridad sobre TODO lo demás ─────────────────────────
-  // Responde a TODOS (conocidos y desconocidos) con el aviso de "no operamos";
-  // sin onboarding, sin handoff, sin importar el bot toggle ni el horario.
-  if (await getOfflineMode()) {
-    console.log('[bot] OFFLINE activo — respondiendo aviso y cortando');
+  // ── MODO OFFLINE ─────────────────────────────────────────────────────────
+  // · OFFLINE + bot APAGADO → aviso directo a todos, sin flujo.
+  // · OFFLINE + bot PRENDIDO → onboarding normal, pero el mensaje de cierre
+  //   (handoff) cambia al aviso de "no hay operadores" (ver handoffMsg). El bot
+  //   sigue trabajando igual; solo cambia el cierre.
+  const offline = await getOfflineMode();
+  if (offline && !botEnabled) {
+    console.log('[bot] OFFLINE + bot apagado — aviso directo');
     if (!contact.blocked) await replyAndSave(OFFLINE_MSG);
     return;
   }
+
+  // Mensaje de cierre del onboarding (handoff): cambia si estamos offline.
+  const handoffMsg = offline ? OFFLINE_HANDOFF_MSG : HANDOFF_MSG;
 
   // ── Decisión del bot (regla principal + horario) ─────────────────────────
   // Lógica pura en bot-decision.ts (testeable). Resumen:
@@ -375,7 +382,9 @@ async function processMessage(
   //  · número nuevo fuera de horario      → aviso "no hay operadores" (una vez)
   //  · onboarding en curso fuera de hora  → silencio (no se onboardea de noche)
   //  · resto (atiende el bot, en horario) → seguir el flujo
-  const operatorAvailable = await hasActiveOperator();
+  // En OFFLINE el bot atiende igual el onboarding (no se aplica el corte por
+  // horario), y el cierre usa handoffMsg.
+  const operatorAvailable = offline ? true : await hasActiveOperator();
   const decision = decideBotResponse({
     botEnabled,
     blocked: !!contact.blocked,
@@ -431,7 +440,7 @@ async function processMessage(
     case 'asked_intention': {
       if (/ya teng|ya ten[eé]s|tengo cuenta|tengo una cuenta|ya soy|tengo usuario/.test(lowerText)) {
         // Ya tiene cuenta → lo atiende un operador.
-        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
+        await replyAndSave(handoffMsg, { markInProgress: true });
       } else if (/primera|primer|nuev[oa]|reci[eé]n|no teng|empez|arranco|soy nuevo/.test(lowerText)) {
         // Primera vez → onboarding.
         await replyAndSave(
@@ -447,7 +456,7 @@ async function processMessage(
     // ── Waiting for channel screenshot (text message) ─────────────────────────
     case 'waiting_screenshot': {
       if (/no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
-        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
+        await replyAndSave(handoffMsg, { markInProgress: true });
       } else {
         await replyAndSave(
           'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podés, avisame.',
@@ -464,7 +473,7 @@ async function processMessage(
           { newState: 'asked_name' },
         );
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
-        await replyAndSave(HANDOFF_MSG, { markInProgress: true });
+        await replyAndSave(handoffMsg, { markInProgress: true });
       } else {
         await replyAndSave('Sos de recargar seguido? Respondé si o no 😊');
       }
@@ -474,7 +483,7 @@ async function processMessage(
     // ── Fin del onboarding → handoff al operador ──────────────────────────────
     case 'asked_name': {
       // El nombre lo asigna el operador desde el CRM; el bot no lo escribe.
-      await replyAndSave(HANDOFF_MSG, { markInProgress: true });
+      await replyAndSave(handoffMsg, { markInProgress: true });
       break;
     }
 
@@ -482,7 +491,7 @@ async function processMessage(
     case 'done':
     default: {
       console.warn(`[bot] Estado no mapeado: "${state}" — handoff al operador`);
-      await replyAndSave(HANDOFF_MSG, { markInProgress: true });
+      await replyAndSave(handoffMsg, { markInProgress: true });
       break;
     }
   }
