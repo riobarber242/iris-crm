@@ -205,18 +205,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
           {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span className="app-botword" style={{
-              fontSize: '13px',
-              fontWeight: 900,
-              color: offlineMode ? '#FF8C00' : '#777',
-              letterSpacing: '2px',
-              textTransform: 'uppercase',
-              opacity: mounted ? 1 : 0,
-              transition: 'opacity 0.2s, color 0.2s',
-              lineHeight: 1,
-            }}>
-              OFFLINE
-            </span>
             <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
               OFFLINE
             </span>
@@ -253,18 +241,6 @@ export function AdminShell({ children }: { children: ReactNode }) {
             </button>
           </div>
 
-          <span className="app-botword" style={{
-            fontSize: '20px',
-            fontWeight: 900,
-            color: '#fff',
-            letterSpacing: '2px',
-            textTransform: 'uppercase',
-            opacity: mounted ? 1 : 0,
-            transition: 'opacity 0.2s',
-            lineHeight: 1,
-          }}>
-            {botEnabled ? 'BOT' : 'HUMANO'}
-          </span>
           <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap' }}>
             {botEnabled ? 'BOT' : 'HUM'}
           </span>
