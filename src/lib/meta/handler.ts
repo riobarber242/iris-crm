@@ -391,7 +391,7 @@ async function processMessage(
     case 'asked_if_loader': {
       if (/(^si$|^sí$|si!|sí!|obvio|claro|siempre|dale|ofc|por supuesto)/.test(lowerText)) {
         await replyAndSave(
-          'Buenisimo! Estoy buscando clientes que recarguen conmigo 💪 El saldo de regalo es solo para probar la plataforma. Los premios se retiran cuando jugás con una recarga. Si estás de acuerdo, decime tu nombre y te creo la cuenta. Además te doy un 20% extra en tu primera recarga 🔥',
+          'Buenisimo! Estoy buscando clientes que recarguen conmigo 💪 El saldo de regalo es solo para probar la plataforma. Los premios se retiran cuando usás una recarga. Si estás de acuerdo, decime tu nombre y te creo la cuenta. Además te doy un 20% extra en tu primera recarga 🔥',
           { newState: 'asked_name' },
         );
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
