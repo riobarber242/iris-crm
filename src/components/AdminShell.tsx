@@ -140,8 +140,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
         zIndex: 50,
         width: '100%',
         height: `${BANNER_H}px`,
-        background: 'linear-gradient(90deg, #C8FF00 0%, #a8d800 100%)',
-        boxShadow: '0 6px 0 #7aa000, 0 10px 15px rgba(0,0,0,0.3)',
+        background: '#0a0a0a',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -152,12 +152,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px' }}>
           <span style={{
-            fontSize: '42px',
+            fontSize: '58px',
             fontWeight: 900,
-            color: '#000',
             lineHeight: 1,
-            letterSpacing: '-1px',
-            textShadow: '0 2px 0 rgba(255,255,255,0.8), 0 4px 8px rgba(0,0,0,0.3)',
+            letterSpacing: '-2px',
+            color: '#aaff00',
           }}>
             IRIS
           </span>
@@ -168,13 +167,12 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <span style={{
             fontSize: '20px',
             fontWeight: 900,
-            color: '#000',
+            color: '#fff',
             letterSpacing: '2px',
             textTransform: 'uppercase',
             opacity: mounted ? 1 : 0,
             transition: 'opacity 0.2s',
             lineHeight: 1,
-            textShadow: '0 2px 0 rgba(255,255,255,0.8), 0 4px 6px rgba(0,0,0,0.25)',
           }}>
             {botEnabled ? 'BOT' : 'HUMANO'}
           </span>
@@ -210,10 +208,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
           {/* Agente logueado + salir */}
           {agent && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '16px', marginLeft: '4px', borderLeft: '2px solid rgba(0,0,0,0.18)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '16px', marginLeft: '4px', borderLeft: '2px solid rgba(255,255,255,0.18)' }}>
               <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
-                <span style={{ fontSize: '14px', fontWeight: 800, color: '#000' }}>{agent.name}</span>
-                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#3a5a00' }}>
+                <span style={{ fontSize: '14px', fontWeight: 800, color: '#fff' }}>{agent.name}</span>
+                <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#aaff00' }}>
                   {agent.role === 'admin' ? 'Admin' : 'Agente'}
                 </span>
               </span>
