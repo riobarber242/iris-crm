@@ -445,21 +445,60 @@ async function processMessage(
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
+const CONTACT_COLS =
+  'id, phone, name, status, casino_username, conversation_state, last_read_at, blocked';
+
+// Extracts the national significant number (area code + subscriber) so numbers
+// stored in different formats still match. WhatsApp sends AR mobiles as
+// 549XXXXXXXXXX (no '+'), while contacts may be saved as 54XXXXXXXXXX (no 9),
+// +549XXXXXXXXXX, or just the area+number. Stripping country code 54 and the
+// mobile '9' yields a stable ~10-digit core we can suffix-match on.
+function phoneCore(raw: string): string {
+  let d = (raw ?? '').replace(/\D/g, '');
+  if (d.startsWith('54')) d = d.slice(2);
+  if (d.startsWith('9') && d.length > 10) d = d.slice(1);
+  return d;
+}
+
 async function findOrCreateContact(phone: string, _whatsappName: string | null) {
   // _whatsappName is intentionally ignored — bot never writes name to contacts.
   // Explicit column list avoids PostgREST schema-cache issues with recently added columns.
   try {
-    const { data: existing } = await supabaseAdmin
+    // 1. Exact match (fast path).
+    const { data: exact } = await supabaseAdmin
       .from('contacts')
-      .select('id, phone, name, status, casino_username, conversation_state, last_read_at, blocked')
+      .select(CONTACT_COLS)
       .eq('phone', phone)
       .limit(1)
       .maybeSingle();
 
-    if (existing) {
-      return existing;
+    if (exact) {
+      return exact;
     }
 
+    // 2. Flexible match by normalized core — catches contacts saved in a
+    //    different phone format (with '+', no country code, AR '9', etc.).
+    //    Without this they'd be re-created as nameless "unknown" contacts.
+    const core = phoneCore(phone);
+    if (core.length >= 8) {
+      const { data: fuzzy } = await supabaseAdmin
+        .from('contacts')
+        .select(CONTACT_COLS)
+        .ilike('phone', `%${core}`)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (fuzzy) {
+        console.log(
+          `[findOrCreateContact] Match flexible: from="${phone}" → contacto existente ` +
+          `phone="${fuzzy.phone}" name=${JSON.stringify(fuzzy.name ?? null)}`,
+        );
+        return fuzzy;
+      }
+    }
+
+    // 3. No match anywhere → create new contact.
     const provincia = inferProvinciaFromPhone(phone);
     const { data: inserted, error } = await supabaseAdmin
       .from('contacts')
