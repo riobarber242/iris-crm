@@ -153,10 +153,34 @@ export async function handleWhatsappWebhook(
           console.error('[webhook] Error no manejado en processMessage:', err);
         }
       }
+      // Webhooks de status (ticks): sent / delivered / read / failed.
+      for (const status of change.value?.statuses ?? []) {
+        try {
+          await processStatus(status);
+        } catch (err) {
+          console.error('[webhook] Error no manejado en processStatus:', err);
+        }
+      }
     }
   }
 
   return { status: 200, body: 'EVENT_RECEIVED' };
+}
+
+// Actualiza el status de un mensaje saliente según el webhook de WhatsApp,
+// matcheando por wamid (whatsapp_message_id). Para los ticks del CRM.
+async function processStatus(status: any) {
+  const wamid   = status?.id as string | undefined;
+  const newStat = status?.status as string | undefined; // sent | delivered | read | failed
+  if (!wamid || !newStat) return;
+  if (!['sent', 'delivered', 'read', 'failed'].includes(newStat)) return;
+
+  const { error } = await supabaseAdmin
+    .from('messages')
+    .update({ status: newStat })
+    .eq('whatsapp_message_id', wamid);
+  if (error) console.warn(`[status] No se pudo actualizar status=${newStat} wamid=${wamid}:`, error.message);
+  else       console.log(`[status] wamid=${wamid} → ${newStat}`);
 }
 
 // ─── Core message processor ───────────────────────────────────────────────────
@@ -192,6 +216,25 @@ async function processMessage(
     }
   } catch {
     // If whatsapp_message_id column doesn't exist, skip dedup and continue
+  }
+
+  // ── Reacción entrante del cliente ───────────────────────────────────────────
+  // Se aplica como badge sobre el mensaje original (matcheado por wamid). NO se
+  // guarda como burbuja de texto ni dispara el bot. emoji vacío = quitó la reacción.
+  if (type === 'reaction') {
+    const targetWamid = message.reaction?.message_id as string | undefined;
+    const emoji       = (message.reaction?.emoji ?? '') as string;
+    console.log(`[webhook] Reacción entrante: target=${targetWamid} emoji="${emoji}"`);
+    if (targetWamid) {
+      try {
+        const { error } = await supabaseAdmin
+          .from('messages').update({ reaction: emoji || null }).eq('whatsapp_message_id', targetWamid);
+        if (error) console.warn('[webhook] No se pudo guardar reacción entrante (¿falta columna?):', error.message);
+      } catch (err) {
+        console.error('[webhook] Excepción guardando reacción entrante:', err);
+      }
+    }
+    return;
   }
 
   // ── Contact ────────────────────────────────────────────────────────────────
@@ -275,9 +318,11 @@ async function processMessage(
 
     // 2. Send via WhatsApp API — always attempt regardless of DB result
     try {
-      await sendWhatsAppText(from!, textResp);
+      const wamid = await sendWhatsAppText(from!, textResp);
       if (dbInsertOk && insertedId) {
-        await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', insertedId);
+        await supabaseAdmin.from('messages')
+          .update({ status: 'sent', whatsapp_message_id: wamid })
+          .eq('id', insertedId);
       }
     } catch (err) {
       console.error('[replyAndSave] WhatsApp send error — mensaje NO llegó al usuario');

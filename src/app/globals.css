@@ -137,6 +137,12 @@ button, input, textarea, select {
   .dash-chart svg { max-width: 100% !important; height: auto !important; }
 }
 
+/* Celular: métricas en UNA sola columna, todo apilado, sin overflow horizontal. */
+@media (max-width: 640px) {
+  .dash-grid     { grid-template-columns: 1fr !important; }
+  .dash-grid > * { min-width: 0 !important; width: 100% !important; }
+}
+
 /* Celular chico: aliviar el header y el input del chat. */
 @media (max-width: 480px) {
   .app-agent-name { display: none !important; }

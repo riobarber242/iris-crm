@@ -195,7 +195,7 @@ export default function DashboardClient() {
       </div>
     </Link>
 
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+    <div className="dash-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
 
       {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
       <Column title="Conversaciones" icon="💬">

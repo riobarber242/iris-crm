@@ -1,0 +1,132 @@
+// Búsqueda de emojis en español. emoji-picker-react solo busca por keywords en
+// inglés, así que mantenemos un diccionario español → emoji para los más usados.
+// searchEmojisEs(query) devuelve los emojis cuyas palabras clave matchean.
+
+type EmojiEntry = { emoji: string; kw: string[] };
+
+const EMOJIS_ES: EmojiEntry[] = [
+  { emoji: '😀', kw: ['sonrisa', 'feliz', 'cara', 'contento'] },
+  { emoji: '😂', kw: ['risa', 'lagrimas', 'jaja', 'gracioso'] },
+  { emoji: '🤣', kw: ['risa', 'tirado', 'jaja', 'muerto de risa'] },
+  { emoji: '😅', kw: ['risa', 'nervioso', 'sudor'] },
+  { emoji: '😊', kw: ['sonrisa', 'tierno', 'feliz'] },
+  { emoji: '😍', kw: ['enamorado', 'amor', 'corazones', 'ojos'] },
+  { emoji: '😘', kw: ['beso', 'amor'] },
+  { emoji: '😎', kw: ['genial', 'lentes', 'cool', 'copado'] },
+  { emoji: '🤔', kw: ['pensando', 'duda', 'mmm'] },
+  { emoji: '😉', kw: ['guino', 'complice'] },
+  { emoji: '😢', kw: ['triste', 'llanto', 'lagrima'] },
+  { emoji: '😭', kw: ['llanto', 'triste', 'llorando'] },
+  { emoji: '😡', kw: ['enojado', 'furioso', 'bronca'] },
+  { emoji: '😤', kw: ['enojado', 'bronca', 'humo'] },
+  { emoji: '😱', kw: ['susto', 'sorpresa', 'miedo', 'grito'] },
+  { emoji: '😴', kw: ['dormido', 'sueno', 'cansado'] },
+  { emoji: '🥳', kw: ['fiesta', 'festejo', 'cumple'] },
+  { emoji: '😏', kw: ['picaro', 'sonrisa'] },
+  { emoji: '🙄', kw: ['ojos', 'fastidio'] },
+  { emoji: '😬', kw: ['incomodo', 'dientes'] },
+  { emoji: '🤩', kw: ['estrellas', 'wow', 'genial'] },
+  { emoji: '🥺', kw: ['suplica', 'porfa', 'tierno'] },
+  { emoji: '😇', kw: ['angel', 'santo'] },
+  { emoji: '🤗', kw: ['abrazo', 'carino'] },
+  { emoji: '👍', kw: ['pulgar', 'like', 'bien', 'ok', 'dale', 'aprobado'] },
+  { emoji: '👎', kw: ['pulgar', 'no', 'mal', 'dislike'] },
+  { emoji: '👏', kw: ['aplauso', 'aplausos', 'bravo'] },
+  { emoji: '🙌', kw: ['manos', 'festejo', 'arriba'] },
+  { emoji: '🙏', kw: ['rezar', 'gracias', 'porfa', 'manos'] },
+  { emoji: '💪', kw: ['musculo', 'fuerza', 'fuerte'] },
+  { emoji: '🤝', kw: ['acuerdo', 'manos', 'trato', 'saludo'] },
+  { emoji: '👌', kw: ['ok', 'perfecto', 'bien'] },
+  { emoji: '✌️', kw: ['paz', 'victoria', 'dedos'] },
+  { emoji: '👋', kw: ['hola', 'chau', 'saludo', 'adios'] },
+  { emoji: '🤙', kw: ['llamame', 'mano'] },
+  { emoji: '👀', kw: ['ojos', 'mirando', 'atento'] },
+  { emoji: '❤️', kw: ['corazon', 'amor', 'rojo'] },
+  { emoji: '🧡', kw: ['corazon', 'naranja'] },
+  { emoji: '💛', kw: ['corazon', 'amarillo'] },
+  { emoji: '💚', kw: ['corazon', 'verde'] },
+  { emoji: '💙', kw: ['corazon', 'azul'] },
+  { emoji: '💜', kw: ['corazon', 'violeta', 'morado'] },
+  { emoji: '🖤', kw: ['corazon', 'negro'] },
+  { emoji: '💔', kw: ['corazon', 'roto', 'tristeza'] },
+  { emoji: '💕', kw: ['corazones', 'amor'] },
+  { emoji: '🔥', kw: ['fuego', 'fueguito', 'caliente', 'genial'] },
+  { emoji: '⭐', kw: ['estrella', 'favorito'] },
+  { emoji: '🌟', kw: ['estrella', 'brillo'] },
+  { emoji: '✨', kw: ['brillos', 'magia', 'lindo'] },
+  { emoji: '⚡', kw: ['rayo', 'electricidad', 'energia'] },
+  { emoji: '💥', kw: ['explosion', 'boom'] },
+  { emoji: '🎉', kw: ['fiesta', 'festejo', 'cumple', 'celebracion'] },
+  { emoji: '🎊', kw: ['fiesta', 'festejo', 'confeti'] },
+  { emoji: '🎁', kw: ['regalo', 'presente', 'cumple'] },
+  { emoji: '🎂', kw: ['torta', 'cumple', 'pastel'] },
+  { emoji: '🍀', kw: ['trebol', 'suerte', 'verde'] },
+  { emoji: '🍻', kw: ['cerveza', 'birra', 'brindis', 'salud'] },
+  { emoji: '🍺', kw: ['cerveza', 'birra'] },
+  { emoji: '🍷', kw: ['vino', 'copa'] },
+  { emoji: '🧉', kw: ['mate', 'mates'] },
+  { emoji: '☕', kw: ['cafe', 'cafecito'] },
+  { emoji: '🍕', kw: ['pizza', 'comida'] },
+  { emoji: '🍔', kw: ['hamburguesa', 'comida'] },
+  { emoji: '💰', kw: ['dinero', 'plata', 'guita', 'bolsa'] },
+  { emoji: '💵', kw: ['dinero', 'plata', 'billete', 'dolar'] },
+  { emoji: '💸', kw: ['dinero', 'plata', 'volando', 'gasto'] },
+  { emoji: '🤑', kw: ['dinero', 'plata', 'rico'] },
+  { emoji: '💳', kw: ['tarjeta', 'pago', 'credito'] },
+  { emoji: '🏦', kw: ['banco', 'transferencia'] },
+  { emoji: '📈', kw: ['suba', 'grafico', 'ganancia'] },
+  { emoji: '📉', kw: ['baja', 'grafico', 'perdida'] },
+  { emoji: '🎰', kw: ['tragamonedas', 'maquina', 'suerte', 'casino'] },
+  { emoji: '🃏', kw: ['carta', 'comodin', 'joker'] },
+  { emoji: '🎲', kw: ['dado', 'dados', 'azar'] },
+  { emoji: '⚽', kw: ['futbol', 'pelota', 'gol'] },
+  { emoji: '🏆', kw: ['trofeo', 'campeon', 'premio', 'ganador'] },
+  { emoji: '🥇', kw: ['medalla', 'oro', 'primero', 'ganador'] },
+  { emoji: '🎯', kw: ['blanco', 'objetivo', 'diana'] },
+  { emoji: '🚀', kw: ['cohete', 'despegue', 'rapido', 'subida'] },
+  { emoji: '✈️', kw: ['avion', 'viaje', 'vuelo'] },
+  { emoji: '🚗', kw: ['auto', 'coche', 'carro'] },
+  { emoji: '🏠', kw: ['casa', 'hogar'] },
+  { emoji: '📱', kw: ['celular', 'telefono', 'movil'] },
+  { emoji: '💻', kw: ['compu', 'notebook', 'computadora'] },
+  { emoji: '📞', kw: ['telefono', 'llamada'] },
+  { emoji: '⏰', kw: ['reloj', 'alarma', 'hora'] },
+  { emoji: '🔒', kw: ['candado', 'seguro', 'cerrado'] },
+  { emoji: '🔑', kw: ['llave', 'acceso'] },
+  { emoji: '💡', kw: ['idea', 'foco', 'lampara'] },
+  { emoji: '⚠️', kw: ['advertencia', 'cuidado', 'alerta'] },
+  { emoji: '🚫', kw: ['prohibido', 'no', 'bloqueado'] },
+  { emoji: '✅', kw: ['check', 'tilde', 'listo', 'ok', 'aprobado', 'verificado'] },
+  { emoji: '❌', kw: ['cruz', 'no', 'error', 'rechazado'] },
+  { emoji: '❓', kw: ['pregunta', 'duda', 'interrogacion'] },
+  { emoji: '❗', kw: ['exclamacion', 'importante'] },
+  { emoji: '💯', kw: ['cien', 'perfecto', 'total'] },
+  { emoji: '🆗', kw: ['ok', 'aprobado'] },
+  { emoji: '☀️', kw: ['sol', 'soleado', 'dia'] },
+  { emoji: '🌙', kw: ['luna', 'noche'] },
+  { emoji: '🌧️', kw: ['lluvia', 'lloviendo'] },
+  { emoji: '❄️', kw: ['nieve', 'frio', 'copo'] },
+  { emoji: '🌈', kw: ['arcoiris'] },
+  { emoji: '🐶', kw: ['perro', 'perrito'] },
+  { emoji: '🐱', kw: ['gato', 'gatito'] },
+  { emoji: '🦁', kw: ['leon'] },
+  { emoji: '🐔', kw: ['gallina', 'pollo'] },
+  { emoji: '🇦🇷', kw: ['argentina', 'bandera', 'arg'] },
+];
+
+function normalize(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+export function searchEmojisEs(query: string, limit = 24): string[] {
+  const q = normalize(query);
+  if (!q) return [];
+  const out: string[] = [];
+  for (const e of EMOJIS_ES) {
+    if (e.kw.some((k) => normalize(k).includes(q))) {
+      out.push(e.emoji);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}

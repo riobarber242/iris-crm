@@ -60,9 +60,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    await sendWhatsAppText(contact.phone, content);
+    const wamid = await sendWhatsAppText(contact.phone, content);
     if (inserted?.id) {
-      await supabaseAdmin.from('messages').update({ status: 'sent' }).eq('id', inserted.id);
+      await supabaseAdmin.from('messages')
+        .update({ status: 'sent', whatsapp_message_id: wamid })
+        .eq('id', inserted.id);
     }
   } catch (err) {
     console.error('Error sending manual message:', err);

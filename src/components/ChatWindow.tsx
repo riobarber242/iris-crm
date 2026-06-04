@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { useAuth } from '@/components/AuthProvider';
+import { searchEmojisEs } from '@/lib/emoji-es';
 
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
@@ -35,6 +36,29 @@ const EMOJI_CATEGORIES = [
 
 // Opciones de reacción rápida (WhatsApp Reactions API).
 const REACTION_EMOJIS = ['👍', '✅', '👀', '❤️'];
+
+// Clasifica el contenido de un mensaje para renderizarlo. Cubre los mensajes
+// viejos de imagen guardados como texto "image"/"document" o como URL pelada.
+function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'file'; url?: string } {
+  const c = (content ?? '').trim();
+  const isUrl = /^https?:\/\//i.test(c);
+  if (isUrl && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(c)) return { kind: 'image', url: c };
+  if (isUrl) return { kind: 'file', url: c };
+  if (c === 'image')                    return { kind: 'image-missing' };
+  if (c === 'document')                 return { kind: 'doc-missing' };
+  if (c === 'audio' || c === 'voice')   return { kind: 'audio-missing' };
+  return { kind: 'text' };
+}
+
+// Ticks de estado para mensajes salientes (estilo WhatsApp).
+function Ticks({ status }: { status?: string }) {
+  if (status === 'failed')  return <span title="No enviado"  style={{ color: '#E53935', fontSize: '11px' }}>⚠</span>;
+  if (status === 'sending') return <span title="Enviando"    style={{ fontSize: '11px', opacity: 0.6 }}>🕓</span>;
+  if (status === 'read')      return <span title="Leído"      style={{ color: '#34B7F1', fontSize: '11px', fontWeight: 700 }}>✓✓</span>;
+  if (status === 'delivered') return <span title="Entregado"  style={{ color: '#888',    fontSize: '11px', fontWeight: 700 }}>✓✓</span>;
+  // 'sent' o sin status (mensajes viejos) → un tilde gris.
+  return <span title="Enviado" style={{ color: '#888', fontSize: '11px' }}>✓</span>;
+}
 
 type QuickReply = { id: string; title: string; content: string };
 type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
@@ -88,6 +112,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [reactBarFor, setReactBarFor] = useState<string | null>(null); // id del mensaje con barra de reacciones abierta
+  const [emojiQuery, setEmojiQuery] = useState('');
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -161,6 +186,13 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
             return [...m, payload.new];
           });
           setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
+        })
+        // UPDATE: refleja en vivo cambios de status (ticks) y reacciones.
+        .on('postgres_changes', {
+          event: 'UPDATE', schema: 'public', table: 'messages',
+          filter: `contact_id=eq.${contactId}`,
+        }, (payload: any) => {
+          setMessages((m) => m.map((msg) => (msg.id === payload.new.id ? { ...msg, ...payload.new } : msg)));
         })
         .subscribe();
       channelRef.current = channel;
@@ -403,7 +435,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               }}
             >
               <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
-                {roleLabel}{m.status && m.status !== 'sent' ? ` · ${m.status}` : ''}
+                {roleLabel}
               </p>
 
               {media?._type === 'image' ? (
@@ -426,15 +458,34 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   src={media.url}
                   style={{ width: '100%', minWidth: '200px', marginTop: '2px' }}
                 />
-              ) : (
-                <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
-              )}
+              ) : (() => {
+                const b = classifyBody(m.content);
+                if (b.kind === 'image' && b.url) {
+                  const url = b.url;
+                  return (
+                    <img
+                      src={url}
+                      alt="imagen"
+                      style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
+                      onClick={() => setLightboxUrl(url)}
+                    />
+                  );
+                }
+                if (b.kind === 'file' && b.url) {
+                  return <a href={b.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 Ver archivo</a>;
+                }
+                if (b.kind === 'image-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🖼️ Imagen</span>;
+                if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
+                if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
+                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>;
+              })()}
 
-              {m.created_at && (
-                <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5 }} title={new Date(m.created_at).toLocaleString('es-AR')}>
-                  {formatRelativeTime(m.created_at)}
-                </p>
-              )}
+              {/* Hora + ticks (ticks solo en salientes) */}
+              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot ? 'flex-start' : 'flex-end' }}
+                 title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
+                {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
+                {(isBot || isHuman) && <Ticks status={m.status} />}
+              </p>
 
               {/* Reacción aplicada */}
               {m.reaction && (
@@ -498,7 +549,32 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
         {/* Emoji picker panel */}
         {showEmoji && (
-          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 50 }}>
+          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 50, background: '#fff', borderRadius: '12px', boxShadow: '0 6px 24px rgba(0,0,0,0.18)', padding: '8px', width: '320px' }}>
+            {/* Búsqueda en español (el picker solo busca en inglés) */}
+            <input
+              value={emojiQuery}
+              onChange={(e) => setEmojiQuery(e.target.value)}
+              placeholder="Buscar en español: fuego, suerte, plata…"
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid #eee', borderRadius: '8px', fontSize: '13px', outline: 'none', marginBottom: '8px', boxSizing: 'border-box' }}
+            />
+            {emojiQuery.trim() && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', marginBottom: '8px', maxHeight: '96px', overflowY: 'auto' }}>
+                {searchEmojisEs(emojiQuery).length === 0 ? (
+                  <span style={{ fontSize: '12px', color: '#999', padding: '4px' }}>Sin resultados en español. Usá el listado de abajo.</span>
+                ) : (
+                  searchEmojisEs(emojiQuery).map((e, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => { insertEmoji(e); setEmojiQuery(''); }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '22px', padding: '2px', lineHeight: 1 }}
+                    >
+                      {e}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
             <EmojiPicker
               onEmojiClick={(data) => insertEmoji(data.emoji)}
               searchPlaceHolder="Buscar emoji..."

@@ -24,7 +24,9 @@ function logApiError(context: string, err: any) {
   );
 }
 
-export async function sendWhatsAppText(to: string, text: string) {
+// Devuelve el wamid (id del mensaje en WhatsApp) para poder matchear luego los
+// webhooks de status (ticks) y reacciones. null si no vino en la respuesta.
+export async function sendWhatsAppText(to: string, text: string): Promise<string | null> {
   const token       = getToken();
   const phoneId     = getPhoneNumberId();
   const headers     = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
@@ -32,12 +34,14 @@ export async function sendWhatsAppText(to: string, text: string) {
   console.log(`[sendWhatsAppText] → ${to}: "${text.slice(0, 60)}"`);
 
   try {
-    await axios.post(
+    const res = await axios.post(
       `${BASE_URL}/${phoneId}/messages`,
       { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
       { headers },
     );
-    console.log(`[sendWhatsAppText] ✓ Enviado a ${to}`);
+    const wamid = res.data?.messages?.[0]?.id ?? null;
+    console.log(`[sendWhatsAppText] ✓ Enviado a ${to} wamid=${wamid}`);
+    return wamid;
   } catch (err: any) {
     logApiError('sendWhatsAppText', err);
     throw err;
