@@ -163,7 +163,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setInput(next);
     requestAnimationFrame(() => {
       el.focus();
-      const pos = start + [...emoji].length;
+      // Avanzar el cursor en code units UTF-16 (emoji.length), NO en code points.
+      // Usar [...emoji].length deja el cursor en medio del par surrogate y el
+      // próximo insert parte el emoji → surrogate suelto → se guarda como "�".
+      const pos = start + emoji.length;
       el.setSelectionRange(pos, pos);
     });
   }
@@ -406,7 +409,11 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         ref={listRef}
         style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
       >
-        {messages.map((m, i) => {
+        {messages
+          // Ocultar mensajes de reacción guardados como texto "reaction" (viejos,
+          // de antes de manejar las reacciones como badge). No son burbujas.
+          .filter((m) => m.content !== 'reaction' && (m as any).type !== 'reaction')
+          .map((m, i) => {
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
           // Mensajes humanos: nombre real del agente; fallback "Operador" para los viejos sin atribución
