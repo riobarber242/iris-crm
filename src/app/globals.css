@@ -130,6 +130,11 @@ button, input, textarea, select {
 
   .dash-grid  { grid-template-columns: repeat(2, 1fr) !important; }
   .chat-msg   { max-width: 88% !important; }
+
+  /* Charts: apilar en vertical y que cada uno entre en el ancho de pantalla. */
+  .dash-charts { flex-direction: column !important; gap: 20px !important; padding: 16px !important; }
+  .dash-chart  { min-width: 0 !important; width: 100% !important; flex: 1 1 auto !important; }
+  .dash-chart svg { max-width: 100% !important; height: auto !important; }
 }
 
 /* Celular chico: aliviar el header y el input del chat. */

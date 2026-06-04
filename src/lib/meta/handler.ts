@@ -107,7 +107,9 @@ async function saveComprobanteImage(mediaId: string, contactId: string): Promise
 
 // Sube la imagen a Storage y la guarda como comprobante (estado pendiente).
 // Se llama SIEMPRE que entra una imagen/documento, sin importar el estado del bot.
-async function persistComprobanteImage(message: any, contactId: string): Promise<void> {
+// Sube la imagen a Storage, la guarda como comprobante y devuelve la URL pública
+// (o null si no se pudo). Se llama SIEMPRE que entra una imagen/documento.
+async function persistComprobanteImage(message: any, contactId: string): Promise<string | null> {
   const mediaId = message.image?.id ?? message.document?.id ?? null;
   const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId) : null;
 
@@ -126,6 +128,8 @@ async function persistComprobanteImage(message: any, contactId: string): Promise
   } catch (err) {
     console.error('[image] Excepción guardando comprobante:', err);
   }
+
+  return supabaseImageUrl;
 }
 
 // ─── Webhook entry ────────────────────────────────────────────────────────────
@@ -198,12 +202,27 @@ async function processMessage(
   }
   console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} isNew=${isNew} status=${contact.status} conversation_state=${contact.conversation_state ?? 'null'}`);
 
+  // ── Comprobantes/imágenes: subir ANTES de guardar el mensaje, para que el
+  //    mensaje entrante de tipo image se guarde como media (no como texto "image")
+  //    y se renderice como imagen en el chat del CRM. La imagen también se guarda
+  //    como comprobante (operador la necesita).
+  let inboundImageUrl: string | null = null;
+  if (type === 'image' || type === 'document') {
+    inboundImageUrl = await persistComprobanteImage(message, contact.id);
+  }
+
+  // Contenido del mensaje del usuario.
+  const userContent =
+    type === 'text'                          ? text
+    : (type === 'image' && inboundImageUrl)  ? JSON.stringify({ _type: 'image', url: inboundImageUrl, caption: (message.image?.caption ?? '').trim() })
+    : type;
+
   // ── Save user message ──────────────────────────────────────────────────────
   try {
     const { error } = await supabaseAdmin.from('messages').insert({
       contact_id:          contact.id,
       role:                'user',
-      content:             type === 'text' ? text : type,
+      content:             userContent,
       whatsapp_message_id: messageId,
       type,
     });
@@ -213,7 +232,7 @@ async function processMessage(
       const { error: err2 } = await supabaseAdmin.from('messages').insert({
         contact_id: contact.id,
         role:       'user',
-        content:    type === 'text' ? text : type,
+        content:    userContent,
       });
       if (err2) console.error('[webhook] Retry insert también falló:', err2.message);
     }
@@ -292,12 +311,7 @@ async function processMessage(
     }
   }
 
-  // ─── Comprobantes: SIEMPRE se guardan (el operador los necesita) ──────────
-  // Independiente del bot: aunque el contacto sea preexistente o el bot esté
-  // apagado, la imagen se persiste como comprobante.
-  if (type === 'image' || type === 'document') {
-    await persistComprobanteImage(message, contact.id);
-  }
+  // (La imagen/comprobante ya se subió y guardó arriba, antes de guardar el mensaje.)
 
   // ── Decisión del bot (regla principal + horario) ─────────────────────────
   // Lógica pura en bot-decision.ts (testeable). Resumen:

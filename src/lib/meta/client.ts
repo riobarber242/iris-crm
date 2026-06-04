@@ -27,7 +27,7 @@ function logApiError(context: string, err: any) {
 export async function sendWhatsAppText(to: string, text: string) {
   const token       = getToken();
   const phoneId     = getPhoneNumberId();
-  const headers     = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers     = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   console.log(`[sendWhatsAppText] → ${to}: "${text.slice(0, 60)}"`);
 
@@ -47,7 +47,7 @@ export async function sendWhatsAppText(to: string, text: string) {
 export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string) {
   const token   = getToken();
   const phoneId = getPhoneNumberId();
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
     await axios.post(
@@ -70,7 +70,7 @@ export async function sendWhatsAppTemplate(
 ) {
   const token   = getToken();
   const phoneId = phoneNumberId ?? getPhoneNumberId();
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   const body: any = {
     messaging_product: 'whatsapp',
@@ -94,10 +94,29 @@ export async function sendWhatsAppTemplate(
   }
 }
 
+// Reacción a un mensaje del cliente (WhatsApp Reactions API).
+// emoji = '' quita la reacción. messageId = wamid del mensaje a reaccionar.
+export async function sendWhatsAppReaction(to: string, messageId: string, emoji: string) {
+  const token   = getToken();
+  const phoneId = getPhoneNumberId();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
+
+  try {
+    await axios.post(
+      `${BASE_URL}/${phoneId}/messages`,
+      { messaging_product: 'whatsapp', to, type: 'reaction', reaction: { message_id: messageId, emoji } },
+      { headers },
+    );
+  } catch (err: any) {
+    logApiError('sendWhatsAppReaction', err);
+    throw err;
+  }
+}
+
 export async function sendWhatsAppAudio(to: string, audioUrl: string) {
   const token   = getToken();
   const phoneId = getPhoneNumberId();
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
     await axios.post(
@@ -113,7 +132,7 @@ export async function sendWhatsAppAudio(to: string, audioUrl: string) {
 
 export async function fetchWhatsAppMediaUrl(mediaId: string): Promise<string> {
   const token   = getToken();
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   console.log(`[fetchWhatsAppMediaUrl] mediaId=${mediaId}`);
 

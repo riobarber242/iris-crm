@@ -73,7 +73,7 @@ function DonutChart({
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', flex: 1, minWidth: '220px' }}>
+    <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', flex: 1, minWidth: '220px' }}>
       <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>{title}</p>
 
       <svg width="160" height="160" viewBox="0 0 160 160">
@@ -138,7 +138,7 @@ function BarChart({ data, title }: { data: MonthItem[]; title: string }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 2, minWidth: '320px' }}>
+    <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 2, minWidth: '320px' }}>
       <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>{title}</p>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
         {/* Zero line */}
@@ -194,7 +194,7 @@ function ArgentinaMap({ data }: { data: ProvinceItem[] }) {
   const hasData     = data.length > 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
+    <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
       <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
         Distribución por provincia
       </p>
@@ -279,7 +279,7 @@ export default function DashboardCharts() {
   const twoMonths = data.revenueByMonth.slice(-2);
 
   return (
-    <div style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+    <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
       <DonutChart data={contactData}     title="Estado de contactos"  emptyLabel="Sin contactos" />
       <DonutChart data={comprobanteData} title="Comprobantes"         emptyLabel="Sin comprobantes" />
       <ArgentinaMap data={data.provinceData ?? []} />

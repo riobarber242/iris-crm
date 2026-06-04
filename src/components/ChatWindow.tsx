@@ -16,7 +16,25 @@ type Message = {
   created_at?: string;
   status?: string;
   agent_name?: string | null;
+  whatsapp_message_id?: string | null;
+  reaction?: string | null;
 };
+
+// Categorías del emoji picker en español (la librería no tiene locale 'es').
+const EMOJI_CATEGORIES = [
+  { category: 'suggested',      name: 'Recientes' },
+  { category: 'smileys_people', name: 'Caritas y personas' },
+  { category: 'animals_nature', name: 'Animales y naturaleza' },
+  { category: 'food_drink',     name: 'Comida y bebida' },
+  { category: 'travel_places',  name: 'Viajes y lugares' },
+  { category: 'activities',     name: 'Actividades' },
+  { category: 'objects',        name: 'Objetos' },
+  { category: 'symbols',        name: 'Símbolos' },
+  { category: 'flags',          name: 'Banderas' },
+] as any;
+
+// Opciones de reacción rápida (WhatsApp Reactions API).
+const REACTION_EMOJIS = ['👍', '✅', '👀', '❤️'];
 
 type QuickReply = { id: string; title: string; content: string };
 type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
@@ -69,6 +87,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [reactBarFor, setReactBarFor] = useState<string | null>(null); // id del mensaje con barra de reacciones abierta
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -321,6 +341,29 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setTimeout(() => setCooldown(false), 2000);
   }
 
+  // ── Reacciones a mensajes del cliente (WhatsApp Reactions API) ───────────
+  async function sendReaction(msg: Message, emoji: string) {
+    if (!msg.id) return;
+    const next = msg.reaction === emoji ? '' : emoji; // re-clic en la misma → quita
+    setReactBarFor(null);
+    setMessages((m) => m.map((x) => (x.id === msg.id ? { ...x, reaction: next || null } : x)));
+    try {
+      await fetch('/api/messages/react', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messageId: msg.id, emoji: next }),
+      });
+    } catch { /* el estado optimista ya refleja el cambio */ }
+  }
+
+  function startLongPress(id: string) {
+    if (longPressRef.current) clearTimeout(longPressRef.current);
+    longPressRef.current = setTimeout(() => setReactBarFor(id), 450);
+  }
+  function cancelLongPress() {
+    if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+  }
+
   const canSend = !loading && !cooldown && !isRecording && (!!input.trim() || !!imageFile || !!audioBlob);
 
   return (
@@ -337,11 +380,19 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           // Mensajes humanos: nombre real del agente; fallback "Operador" para los viejos sin atribución
           const roleLabel = isBot ? 'Iris 🤖' : isHuman ? (m.agent_name || 'Operador') : 'Cliente';
           const media = parseMedia(m.content);
+          // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
+          const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
           return (
             <div
               key={m.id ?? i}
               className="chat-msg"
+              onMouseEnter={() => { if (reactable) setReactBarFor(m.id!); }}
+              onMouseLeave={() => setReactBarFor((cur) => (cur === m.id ? null : cur))}
+              onTouchStart={() => { if (reactable) startLongPress(m.id!); }}
+              onTouchEnd={cancelLongPress}
+              onTouchMove={cancelLongPress}
               style={{
+                position: 'relative',
                 maxWidth: '78%',
                 alignSelf: isBot ? 'flex-start' : 'flex-end',
                 background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
@@ -384,6 +435,38 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   {formatRelativeTime(m.created_at)}
                 </p>
               )}
+
+              {/* Reacción aplicada */}
+              {m.reaction && (
+                <span style={{
+                  position: 'absolute', bottom: '-9px', right: '8px',
+                  background: '#fff', borderRadius: '999px', padding: '1px 5px',
+                  fontSize: '13px', lineHeight: 1, boxShadow: '0 1px 4px rgba(0,0,0,0.22)',
+                }}>
+                  {m.reaction}
+                </span>
+              )}
+
+              {/* Barra de reacciones (hover desktop / long-press mobile) */}
+              {reactable && reactBarFor === m.id && (
+                <div style={{
+                  position: 'absolute', top: '-40px', right: 0,
+                  display: 'flex', gap: '2px',
+                  background: '#fff', borderRadius: '999px', padding: '4px 6px',
+                  boxShadow: '0 3px 12px rgba(0,0,0,0.18)', zIndex: 5,
+                }}>
+                  {REACTION_EMOJIS.map((e) => (
+                    <button
+                      key={e}
+                      type="button"
+                      onClick={() => sendReaction(m, e)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '2px 4px' }}
+                    >
+                      {e}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -418,7 +501,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 50 }}>
             <EmojiPicker
               onEmojiClick={(data) => insertEmoji(data.emoji)}
+              searchPlaceHolder="Buscar emoji..."
               searchPlaceholder="Buscar emoji..."
+              categories={EMOJI_CATEGORIES}
+              previewConfig={{ defaultCaption: 'Elegí un emoji…', showPreview: true, defaultEmoji: '1f60a' }}
               lazyLoadEmojis
             />
           </div>
