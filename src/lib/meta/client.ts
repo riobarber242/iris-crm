@@ -66,9 +66,10 @@ export async function sendWhatsAppTemplate(
   templateName: string,
   languageCode: string,
   variables: string[],
+  phoneNumberId?: string,
 ) {
   const token   = getToken();
-  const phoneId = getPhoneNumberId();
+  const phoneId = phoneNumberId ?? getPhoneNumberId();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const body: any = {
