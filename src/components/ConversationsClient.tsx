@@ -96,8 +96,9 @@ export default function ConversationsClient() {
     if (query.trim()) {
       const q = query.toLowerCase();
       const matchUser  = c.casino_username?.toLowerCase().includes(q);
+      const matchName  = c.name?.toLowerCase().includes(q);
       const matchPhone = c.phone?.includes(q);
-      if (!matchUser && !matchPhone) return false;
+      if (!matchUser && !matchName && !matchPhone) return false;
     }
 
     return true;
@@ -110,7 +111,7 @@ export default function ConversationsClient() {
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Buscar por usuario casino o teléfono..."
+        placeholder="Buscar por usuario casino, nombre o teléfono..."
         style={{
           width: '100%',
           padding: '12px 16px',
@@ -212,7 +213,9 @@ export default function ConversationsClient() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
                   <p style={{ fontSize: '15px', fontWeight: badgeType ? 800 : 700, color: '#000', margin: 0 }}>
-                    {contact.casino_username || contact.phone}
+                    {(contact.casino_username ?? '').trim()
+                      || (contact.name ?? '').trim()
+                      || contact.phone}
                   </p>
                   <p style={{ fontSize: '12px', color: '#999', margin: '2px 0 0 0' }}>{contact.phone}</p>
                 </div>
