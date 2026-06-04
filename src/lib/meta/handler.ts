@@ -4,6 +4,7 @@ import { sendWhatsAppText } from './client';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
+import { decideBotResponse } from './bot-decision';
 
 async function getSystemPrompt(): Promise<string> {
   try {
@@ -17,11 +18,6 @@ async function getSystemPrompt(): Promise<string> {
 
 const COMPROBANTES_BUCKET = 'comprobantes';
 const BOT_ENABLED_KEY     = 'bot_enabled';
-
-// Estados de onboarding que pertenecen al bot. Si un contacto está en uno de
-// estos, el bot inició la conversación y la continúa. Cualquier otro estado
-// (null en un contacto preexistente, 'done', 'en_proceso') NO es del bot.
-const BOT_FLOW_STATES = new Set(['greeting', 'asked_intention', 'waiting_screenshot', 'asked_if_loader', 'asked_name']);
 
 // Mensajes del bot.
 const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual. Para ayudarte mejor necesito hacerte unas preguntas 😊\n\n¿Venís por las fichas de prueba o querés cargar?';
@@ -303,36 +299,29 @@ async function processMessage(
     await persistComprobanteImage(message, contact.id);
   }
 
-  // ── Kill switch global del bot ──────────────────────────────────────────
-  if (!botEnabled) {
-    console.log('[bot] bot_enabled=false — sin respuesta automática');
-    return;
-  }
+  // ── Decisión del bot (regla principal + horario) ─────────────────────────
+  // Lógica pura en bot-decision.ts (testeable). Resumen:
+  //  · bot apagado / bloqueado            → silencio
+  //  · contacto preexistente              → silencio (cola del operador)
+  //  · número nuevo fuera de horario      → aviso "no hay operadores" (una vez)
+  //  · onboarding en curso fuera de hora  → silencio (no se onboardea de noche)
+  //  · resto (atiende el bot, en horario) → seguir el flujo
+  const operatorAvailable = await hasActiveOperator();
+  const decision = decideBotResponse({
+    botEnabled,
+    blocked: !!contact.blocked,
+    isNew,
+    conversationState: (contact.conversation_state as string | null) ?? null,
+    operatorAvailable,
+  });
+  console.log(`[bot] decisión=${JSON.stringify(decision)} isNew=${isNew} state=${contact.conversation_state ?? 'null'} operador=${operatorAvailable}`);
 
-  // ── Contacto bloqueado → silencio total ─────────────────────────────────
-  if (contact.blocked) {
-    console.log('[bot] Contacto bloqueado — sin respuesta');
-    return;
-  }
-
-  // ── FUERA DE HORARIO (aplica a TODOS) ───────────────────────────────────
-  // Si no hay ningún operador activo dentro de su horario, se avisa y se corta.
-  if (!(await hasActiveOperator())) {
-    console.log('[bot] Sin operadores en horario — enviando aviso fuera de horario');
+  if (decision.action === 'silent') return;
+  if (decision.action === 'out_of_hours') {
     await replyAndSave(OUT_OF_HOURS_MSG);
     return;
   }
-
-  // ── REGLA PRINCIPAL: el bot SOLO atiende números nuevos/desconocidos ─────
-  // "Bot-owned" = recién creado en este mensaje (isNew), o ya está en un
-  // onboarding que el propio bot inició (conversation_state ∈ BOT_FLOW_STATES).
-  // Cualquier contacto que YA existía antes de este mensaje (importado, cliente,
-  // etc.) va directo a la cola del operador, SIN importar su status.
-  const inBotFlow = BOT_FLOW_STATES.has((contact.conversation_state as string | null) ?? '');
-  if (!isNew && !inBotFlow) {
-    console.log('[bot] Contacto preexistente → cola del operador, sin respuesta del bot');
-    return;
-  }
+  // decision.action === 'flow' → continúa con image-in-flow / audio / state machine
 
   // ─── A partir de acá: contacto nuevo o en onboarding iniciado por el bot ──
 
