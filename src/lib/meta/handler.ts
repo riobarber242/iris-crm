@@ -23,6 +23,7 @@ const BOT_ENABLED_KEY     = 'bot_enabled';
 const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual 🤖 Para orientarte mejor necesito hacerte un par de preguntas. ¿Es tu primera vez con nosotros o ya tenés cuenta?';
 const HANDOFF_MSG     = '¡Listo! Un operador humano te va a atender en breve 👋';
 const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
+const OFFLINE_MSG      = 'Hola! En este momento no estamos operando. Volvemos pronto, te respondemos cuando volvamos 🙏';
 
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
 // Step 1: GET graph.facebook.com/v18.0/{mediaId}?fields=url  → temporary download URL
@@ -358,6 +359,15 @@ async function processMessage(
 
   // (La imagen/comprobante ya se subió y guardó arriba, antes de guardar el mensaje.)
 
+  // ── MODO OFFLINE — prioridad sobre TODO lo demás ─────────────────────────
+  // Responde a TODOS (conocidos y desconocidos) con el aviso de "no operamos";
+  // sin onboarding, sin handoff, sin importar el bot toggle ni el horario.
+  if (await getOfflineMode()) {
+    console.log('[bot] OFFLINE activo — respondiendo aviso y cortando');
+    if (!contact.blocked) await replyAndSave(OFFLINE_MSG);
+    return;
+  }
+
   // ── Decisión del bot (regla principal + horario) ─────────────────────────
   // Lógica pura en bot-decision.ts (testeable). Resumen:
   //  · bot apagado / bloqueado            → silencio
@@ -601,6 +611,20 @@ async function hasActiveOperator(): Promise<boolean> {
   } catch (err) {
     console.warn('[hasActiveOperator] Excepción:', err);
     return true; // fail open
+  }
+}
+
+// Modo OFFLINE: si está activo, el bot solo manda el aviso de "no operamos".
+// Default false (fail-closed: ante error NO se asume offline).
+async function getOfflineMode(): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle();
+    if (error) { console.warn('[getOfflineMode] Error leyendo settings:', error.message); return false; }
+    return data?.value === 'true';
+  } catch (err) {
+    console.warn('[getOfflineMode] Excepción:', err);
+    return false;
   }
 }
 

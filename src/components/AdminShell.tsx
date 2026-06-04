@@ -30,6 +30,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     ? [...navItems.slice(0, 6), 'agentes', 'settings']
     : navItems;
   const [botEnabled, setBotEnabled] = useState(true);
+  const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0 });
@@ -42,6 +43,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
         .then((r) => r.json())
         .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
         .catch(() => setMounted(true));
+      fetch('/api/settings/offline-mode')
+        .then((r) => r.json())
+        .then((d) => setOfflineMode(!!d.offline))
+        .catch(() => {});
     }
 
     fetchBotStatus();
@@ -110,6 +115,22 @@ export function AdminShell({ children }: { children: ReactNode }) {
     fetchUnreadRef.current();
     setMobileNavOpen(false); // cerrar el drawer al navegar
   }, [pathname]);
+
+  async function toggleOffline() {
+    const next = !offlineMode;
+    setOfflineMode(next);
+    try {
+      const res = await fetch('/api/settings/offline-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offline: next }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) setOfflineMode(!next);
+    } catch {
+      setOfflineMode(!next);
+    }
+  }
 
   async function toggleBot() {
     const next = !botEnabled;
@@ -181,6 +202,54 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
         {/* Toggle Bot/Humano */}
         <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+
+          {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span className="app-botword" style={{
+              fontSize: '13px',
+              fontWeight: 900,
+              color: offlineMode ? '#FF8C00' : '#777',
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              opacity: mounted ? 1 : 0,
+              transition: 'opacity 0.2s, color 0.2s',
+              lineHeight: 1,
+            }}>
+              OFFLINE
+            </span>
+            <button
+              onClick={toggleOffline}
+              className="toggle-3d"
+              aria-label={offlineMode ? 'Desactivar modo offline' : 'Activar modo offline'}
+              title={offlineMode ? 'Modo offline ACTIVO — el bot avisa que no operamos' : 'Activar modo offline'}
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                width: '64px',
+                height: '34px',
+                borderRadius: '17px',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '3px',
+                background: offlineMode ? '#FF4444' : '#3a3a3a',
+                outline: 'none',
+                transition: 'background 0.2s',
+              }}
+            >
+              <span style={{
+                display: 'block',
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: '#FFFFFF',
+                transform: offlineMode ? 'translateX(30px)' : 'translateX(0)',
+                transition: 'transform 0.2s',
+                flexShrink: 0,
+              }} />
+            </button>
+          </div>
+
           <span className="app-botword" style={{
             fontSize: '20px',
             fontWeight: 900,
