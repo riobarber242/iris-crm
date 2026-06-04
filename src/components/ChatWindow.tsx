@@ -114,6 +114,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [reactBarFor, setReactBarFor] = useState<string | null>(null); // id del mensaje con barra de reacciones abierta
   const [emojiQuery, setEmojiQuery] = useState('');
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactBarLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
@@ -425,8 +426,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
             <div
               key={m.id ?? i}
               className="chat-msg"
-              onMouseEnter={() => { if (reactable) setReactBarFor(m.id!); }}
-              onMouseLeave={() => setReactBarFor((cur) => (cur === m.id ? null : cur))}
+              onMouseEnter={() => {
+                if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+                if (reactable) setReactBarFor(m.id!);
+              }}
+              onMouseLeave={() => {
+                if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+                reactBarLeaveTimer.current = setTimeout(() => setReactBarFor(null), 300);
+              }}
               onTouchStart={() => { if (reactable) startLongPress(m.id!); }}
               onTouchEnd={cancelLongPress}
               onTouchMove={cancelLongPress}
@@ -509,7 +516,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               {/* Barra de reacciones (hover desktop / long-press mobile) */}
               {reactable && reactBarFor === m.id && (
                 <div
-                  onMouseEnter={() => setReactBarFor(m.id!)}
+                  onMouseEnter={() => {
+                    if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+                    setReactBarFor(m.id!);
+                  }}
                   onMouseLeave={() => setReactBarFor(null)}
                   style={{
                   position: 'absolute', top: '-44px', right: 0,
