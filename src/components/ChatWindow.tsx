@@ -193,9 +193,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     // token vencido, blip de red). El merge conserva las burbujas optimistas.
     const poll = setInterval(() => fetchMessages(), 8000);
 
-    const supabase = getSupabaseBrowser();
-    if (!supabase) return () => clearInterval(poll);
-    supabaseRef.current = supabase;
+    const client = getSupabaseBrowser();
+    if (!client) return () => clearInterval(poll);
+    supabaseRef.current = client;
 
     function onInsert(payload: any) {
       setMessages((m) => {
@@ -213,8 +213,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
 
-    function subscribe() {
-      const channel = supabase
+    const subscribe = () => {
+      const channel = client
         .channel(`messages:contact:${contactId}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` }, onInsert)
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` }, onUpdate)
@@ -231,20 +231,20 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             reconnectTimer = setTimeout(() => {
               if (disposed) return;
-              try { supabase.removeChannel(channel); } catch {}
+              try { client.removeChannel(channel); } catch {}
               subscribe();
             }, delay);
           }
         });
       channelRef.current = channel;
-    }
+    };
     subscribe();
 
     return () => {
       disposed = true;
       clearInterval(poll);
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      try { if (channelRef.current) supabase.removeChannel(channelRef.current); } catch {}
+      try { if (channelRef.current) client.removeChannel(channelRef.current); } catch {}
     };
   }, [contactId, fetchMessages]);
 
