@@ -95,7 +95,7 @@ button, input, textarea, select {
 .dash-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr;
 }
 @media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
