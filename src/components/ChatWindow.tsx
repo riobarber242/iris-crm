@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { useAuth } from '@/components/AuthProvider';
 import { searchEmojisEs } from '@/lib/emoji-es';
 
@@ -135,7 +136,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   // Así el polling de respaldo nunca borra una burbuja en vuelo.
   const fetchMessages = useCallback(async () => {
     try {
-      const res = await fetch(`/api/messages?contactId=${contactId}`);
+      const res = await fetchWithTimeout(`/api/messages?contactId=${contactId}`);
       if (!res.ok) { setLoadError(true); return; }
       setLoadError(false);
       const server: Message[] = (await res.json()).reverse();
@@ -362,7 +363,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name };
     setMessages((m) => [...m, temp]);
     try {
-      const res = await fetch('/api/messages', {
+      const res = await fetchWithTimeout('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId, content }),
@@ -401,7 +402,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     form.append('caption', caption);
     setSendError(null);
     try {
-      const res = await fetch('/api/messages/image', { method: 'POST', body: form });
+      const res = await fetchWithTimeout('/api/messages/image', { method: 'POST', body: form }, 30000);
       const saved = res.ok ? await res.json() : null;
       if (!saved) setSendError('No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
@@ -429,7 +430,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     form.append('contactId', contactId);
     setSendError(null);
     try {
-      const res = await fetch('/api/messages/audio', { method: 'POST', body: form });
+      const res = await fetchWithTimeout('/api/messages/audio', { method: 'POST', body: form }, 30000);
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
       if (!saved) setSendError('No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
