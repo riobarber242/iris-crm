@@ -91,6 +91,15 @@ button, input, textarea, select {
   box-shadow: none;
 }
 
+/* ── Dashboard grid (mobile-first) ──────────────────────────────────────────── */
+.dash-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1024px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 /* Hamburguesa oculta en desktop; overlay del drawer oculto por defecto. */
 .app-hamburger { display: none; }
@@ -116,9 +125,6 @@ button, input, textarea, select {
     z-index: 90;
     background: rgba(0, 0, 0, 0.45);
   }
-
-  /* Dashboard: 5 → 3 columnas. */
-  .dash-grid { grid-template-columns: repeat(3, 1fr) !important; }
 }
 
 /* Celular. */
@@ -127,7 +133,6 @@ button, input, textarea, select {
   .app-logo   { font-size: 40px !important; letter-spacing: -1px !important; }
   .app-main   { padding: 14px !important; }
 
-  .dash-grid  { grid-template-columns: repeat(2, 1fr) !important; }
   .chat-msg   { max-width: 88% !important; }
 
   /* Charts: apilar en vertical y que cada uno entre en el ancho de pantalla. */
@@ -138,7 +143,6 @@ button, input, textarea, select {
 
 /* Celular: métricas en UNA sola columna, todo apilado, sin overflow horizontal. */
 @media (max-width: 640px) {
-  .dash-grid     { grid-template-columns: 1fr !important; }
   .dash-grid > * { min-width: 0 !important; width: 100% !important; }
 }
 
