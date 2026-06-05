@@ -232,7 +232,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             reconnectTimer = setTimeout(() => {
               if (disposed) return;
-              try { client.removeChannel(channel); } catch {}
+              try { client.removeChannel(channel); } catch (err) { console.warn('[chat realtime] removeChannel (reconexión) falló:', err); }
               subscribe();
             }, delay);
           }
@@ -245,7 +245,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       disposed = true;
       clearInterval(poll);
       if (reconnectTimer) clearTimeout(reconnectTimer);
-      try { if (channelRef.current) client.removeChannel(channelRef.current); } catch {}
+      try { if (channelRef.current) client.removeChannel(channelRef.current); } catch (err) { console.warn('[chat realtime] removeChannel (cleanup) falló:', err); }
     };
   }, [contactId, fetchMessages]);
 

@@ -78,7 +78,7 @@ export default function ConversationsClient() {
 
     return () => {
       clearInterval(timer);
-      try { if (channelRef.current) sbRef.current?.removeChannel(channelRef.current); } catch {}
+      try { if (channelRef.current) sbRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[conversations realtime] removeChannel falló:', err); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -50,7 +50,7 @@ export function useRealtime(
 
     return () => {
       if (timer) clearInterval(timer);
-      try { supabase.removeChannel(ch); } catch {}
+      try { supabase.removeChannel(ch); } catch (err) { console.warn('[useRealtime] removeChannel falló:', err); }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // stable: channelName and subs don't change after mount

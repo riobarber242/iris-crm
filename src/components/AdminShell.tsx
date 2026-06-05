@@ -103,7 +103,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     return () => {
       clearInterval(timer);
       window.removeEventListener('refresh-unread', handleRefreshEvent);
-      try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch {}
+      try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch (err) { console.warn('[unread realtime] removeChannel falló:', err); }
     };
   }, []);
 

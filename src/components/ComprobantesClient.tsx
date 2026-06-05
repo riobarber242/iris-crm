@@ -161,7 +161,7 @@ export default function ComprobantesClient() {
 
     return () => {
       clearInterval(interval);
-      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
+      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[comprobantes realtime] removeChannel falló:', err); }
     };
   }, []);
 

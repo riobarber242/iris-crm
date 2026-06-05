@@ -140,7 +140,7 @@ export default function DashboardClient() {
 
     return () => {
       clearInterval(interval);
-      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {}
+      try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[dashboard realtime] removeChannel falló:', err); }
     };
   }, []);
 
