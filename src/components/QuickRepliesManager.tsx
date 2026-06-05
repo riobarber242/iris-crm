@@ -9,6 +9,9 @@ export default function QuickRepliesManager() {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState('');
 
   async function load() {
     const res = await fetch('/api/quick-replies');
@@ -32,6 +35,31 @@ export default function QuickRepliesManager() {
       await load();
     }
     setSaving(false);
+  }
+
+  function startEdit(r: QuickReply) {
+    setEditingId(r.id);
+    setEditTitle(r.title);
+    setEditContent(r.content);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditTitle(null);
+    setEditContent('');
+  }
+
+  async function handleUpdate(id: string) {
+    if (!editTitle?.trim() || !editContent.trim()) return;
+    const res = await fetch('/api/quick-replies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, title: editTitle, content: editContent }),
+    });
+    if (res.ok) {
+      cancelEdit();
+      await load();
+    }
   }
 
   async function handleDelete(id: string) {
@@ -64,21 +92,72 @@ export default function QuickRepliesManager() {
             gap: '12px',
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#999', margin: '0 0 4px 0' }}>
-              {r.title}
-            </p>
-            <p style={{ fontSize: '14px', color: '#1a1a1a', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {r.content}
-            </p>
-          </div>
-          <button
-            onClick={() => handleDelete(r.id)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}
-            title="Eliminar"
-          >
-            ×
-          </button>
+          {editingId === r.id ? (
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <input
+                value={editTitle ?? ''}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Título"
+                style={{ background: '#fff', border: 'none', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#1a1a1a', outline: 'none' }}
+              />
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                placeholder="Mensaje..."
+                rows={3}
+                style={{ background: '#fff', border: 'none', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', color: '#1a1a1a', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={() => handleUpdate(r.id)}
+                  disabled={!editTitle?.trim() || !editContent.trim()}
+                  style={{
+                    background: !editTitle?.trim() || !editContent.trim() ? '#e0e0e0' : '#C8FF00',
+                    color: '#000',
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    padding: '10px 18px',
+                    cursor: !editTitle?.trim() || !editContent.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Guardar
+                </button>
+                <button
+                  onClick={cancelEdit}
+                  style={{ background: '#fff', color: '#1a1a1a', fontWeight: 700, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '10px 18px', cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#999', margin: '0 0 4px 0' }}>
+                  {r.title}
+                </p>
+                <p style={{ fontSize: '14px', color: '#1a1a1a', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {r.content}
+                </p>
+              </div>
+              <button
+                onClick={() => startEdit(r)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '16px', lineHeight: 1, padding: '2px', flexShrink: 0 }}
+                title="Editar"
+              >
+                ✏️
+              </button>
+              <button
+                onClick={() => handleDelete(r.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}
+                title="Eliminar"
+              >
+                ×
+              </button>
+            </>
+          )}
         </div>
       ))}
 
