@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleWhatsappWebhook } from '@/lib/meta/handler';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -25,6 +26,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const limited = checkRateLimit(request, 'webhook', 200);
+  if (limited) return limited;
+
   console.log('[webhook route] POST recibido');
 
   const rawBody = await request.text();

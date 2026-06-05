@@ -11,6 +11,7 @@ const PUBLIC_PREFIXES = [
   '/api/webhook',         // webhook de WhatsApp (Meta) — externo, sin cookie
   '/api/cron',            // cron de Vercel — externo, sin cookie
   '/api/admin/seed-auth', // bootstrap del admin, gateado por su propio secret
+  '/api/health',          // healthcheck para monitoreo externo — sin cookie
 ];
 
 // Solo admin

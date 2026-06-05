@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { verifyPassword } from '@/lib/auth';
 import { signSession, COOKIE_NAME, MAX_AGE_SEC } from '@/lib/session';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export async function POST(request: Request) {
+  const limited = checkRateLimit(request, 'login', 10);
+  if (limited) return limited;
+
   let body: any;
   try { body = await request.json(); } catch { body = {}; }
   const username = String(body.username ?? '').trim();

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { getSessionAgent } from '@/lib/current-agent';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -25,6 +26,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const limited = checkRateLimit(request, 'messages', 60);
+  if (limited) return limited;
+
   try {
     const body = await request.json().catch(() => null);
     if (!body) {
