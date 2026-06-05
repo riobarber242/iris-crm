@@ -369,7 +369,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         body: JSON.stringify({ contactId, content }),
       });
       const saved = res.ok ? await res.json() : null;
-      if (!saved) setSendError('No se pudo enviar el mensaje. Reintentá.');
+      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar el mensaje. Reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar el mensaje. Revisá tu conexión y reintentá.');
@@ -403,8 +403,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setSendError(null);
     try {
       const res = await fetchWithTimeout('/api/messages/image', { method: 'POST', body: form }, 30000);
-      const saved = res.ok ? await res.json() : null;
-      if (!saved) setSendError('No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
+      const saved = (res.ok || res.status === 207) ? await res.json() : null;
+      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar la imagen. Revisá tu conexión y reintentá.');
@@ -432,7 +432,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetchWithTimeout('/api/messages/audio', { method: 'POST', body: form }, 30000);
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
-      if (!saved) setSendError('No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
+      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar el audio. Revisá tu conexión y reintentá.');

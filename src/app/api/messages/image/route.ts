@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppImage } from '@/lib/meta/client';
 
-export const config = { api: { bodyParser: false } };
-
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
@@ -43,13 +41,15 @@ export async function POST(req: NextRequest) {
     try {
       await sendWhatsAppImage(contact.phone, publicUrl, caption);
     } catch {
-      // Image uploaded but WhatsApp failed — still save to DB as failed
+      // Imagen subida pero WhatsApp falló: guardamos la fila como 'failed' y la
+      // devolvemos con 207 (igual que audio). Así el cliente la reconcilia por id
+      // y el evento Realtime no genera una burbuja duplicada.
       const { data: saved } = await supabaseAdmin
         .from('messages')
         .insert({ contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'failed' })
         .select()
         .single();
-      return NextResponse.json(saved ?? {}, { status: 500 });
+      return NextResponse.json(saved ?? {}, { status: 207 });
     }
 
     const { data: saved, error: dbError } = await supabaseAdmin
