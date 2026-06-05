@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from './AuthProvider';
 
 // Convierte la VAPID public key (base64url) a Uint8Array para pushManager.subscribe.
@@ -13,24 +13,57 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-// Registra el service worker, pide permiso de notificaciones y suscribe al push.
-// Solo corre cuando hay un agente logueado (necesitamos su id para guardar la sub).
+// Registra el service worker, gestiona el aviso de "nueva versión" y suscribe al
+// push (solo cuando hay un agente logueado, porque guardamos la sub por agente).
 export default function PWARegister() {
   const { agent } = useAuth();
+  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
 
+  // ── Registro del SW + detección de versión nueva ──────────────────────────
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!('serviceWorker' in navigator)) return;
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+
+    let reloaded = false;
+
+    navigator.serviceWorker.register('/sw.js').then((registration) => {
+      console.log('[PWA] SW registrado:', registration.scope);
+
+      // Ya había una versión esperando al cargar la página.
+      if (registration.waiting && navigator.serviceWorker.controller) {
+        setWaitingWorker(registration.waiting);
+      }
+
+      // Una versión nueva empezó a instalarse mientras la app está abierta.
+      registration.addEventListener('updatefound', () => {
+        const installing = registration.installing;
+        if (!installing) return;
+        installing.addEventListener('statechange', () => {
+          if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+            setWaitingWorker(installing);
+          }
+        });
+      });
+    }).catch((err) => console.warn('[PWA] Error registrando SW:', err));
+
+    // Cuando el SW nuevo toma control (tras SKIP_WAITING) → recargar una vez.
+    const onControllerChange = () => {
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+  }, []);
+
+  // ── Push: pedir permiso y suscribir (depende del agente logueado) ─────────
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 
     let cancelled = false;
 
     (async () => {
       try {
-        const registration = await navigator.serviceWorker.register('/sw.js');
-        console.log('[PWA] SW registrado:', registration.scope);
         console.log('[PWA] agent:', agent?.id ?? 'null');
-
-        // Sin agente logueado: registramos el SW pero no suscribimos al push.
         if (!agent) return;
         if (!('PushManager' in window) || !('Notification' in window)) return;
 
@@ -41,15 +74,13 @@ export default function PWARegister() {
           return;
         }
 
-        // Pedir permiso solo si el usuario aún no decidió.
         console.log('[PWA] Notification.permission:', Notification.permission);
         let permission = Notification.permission;
         if (permission === 'default') permission = await Notification.requestPermission();
         if (permission !== 'granted' || cancelled) return;
 
-        await navigator.serviceWorker.ready;
+        const registration = await navigator.serviceWorker.ready;
 
-        // Reusar suscripción existente o crear una nueva.
         const existing = await registration.pushManager.getSubscription();
         const subscription = existing ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -64,12 +95,42 @@ export default function PWARegister() {
           body: JSON.stringify({ subscription, agentId: agent.id }),
         });
       } catch (err) {
-        console.warn('[pwa] Error registrando SW / push:', err);
+        console.warn('[pwa] Error suscribiendo push:', err);
       }
     })();
 
     return () => { cancelled = true; };
   }, [agent]);
 
-  return null;
+  function applyUpdate() {
+    waitingWorker?.postMessage({ type: 'SKIP_WAITING' });
+    setWaitingWorker(null);
+  }
+
+  if (!waitingWorker) return null;
+
+  return (
+    <div
+      style={{
+        position: 'fixed', bottom: '16px', left: '50%', transform: 'translateX(-50%)',
+        zIndex: 9999, background: '#1a1a1a', color: '#fff',
+        borderRadius: '12px', padding: '10px 12px 10px 16px',
+        display: 'flex', alignItems: 'center', gap: '12px',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.32)', maxWidth: 'calc(100vw - 32px)',
+      }}
+      role="status"
+    >
+      <span style={{ fontSize: '14px' }}>Hay una nueva versión disponible</span>
+      <button
+        onClick={applyUpdate}
+        style={{
+          background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '14px',
+          border: 'none', borderRadius: '8px', padding: '8px 14px', cursor: 'pointer',
+          flexShrink: 0,
+        }}
+      >
+        Actualizar
+      </button>
+    </div>
+  );
 }
