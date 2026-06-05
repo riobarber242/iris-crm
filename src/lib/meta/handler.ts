@@ -5,6 +5,7 @@ import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
 import { decideBotResponse } from './bot-decision';
+import { notifyActiveAgents } from '../push';
 
 async function getSystemPrompt(): Promise<string> {
   try {
@@ -284,6 +285,24 @@ async function processMessage(
     }
   } catch (err) {
     console.error('[webhook] Error inesperado guardando mensaje usuario:', err);
+  }
+
+  // ── Push a los operadores: avisar que entró un mensaje de cliente ───────────
+  // Best-effort: nunca debe romper el flujo del bot si el push falla.
+  try {
+    const preview =
+      type === 'text'                ? text
+      : type === 'image'             ? '📷 Imagen'
+      : type === 'document'          ? '📄 Documento'
+      : ['audio', 'voice'].includes(type) ? '🎤 Audio'
+      : type;
+    await notifyActiveAgents({
+      title: 'IRIS',
+      body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
+      url: `/conversations/${contact.id}`,
+    });
+  } catch (err) {
+    console.warn('[webhook] notifyActiveAgents falló (ignorado):', err);
   }
 
   // ── Bot enabled check ──────────────────────────────────────────────────────
