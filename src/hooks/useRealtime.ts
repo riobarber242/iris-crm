@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 type Sub = {
   table: string;
@@ -33,13 +33,11 @@ export function useRealtime(
       ? setInterval(() => cbRef.current(), intervalMs)
       : null;
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) {
+    const supabase = getSupabaseBrowser();
+    if (!supabase) {
       return () => { if (timer) clearInterval(timer); };
     }
 
-    const supabase = createClient(url, key);
     let ch = supabase.channel(channelName);
     for (const { table, event = '*' } of subs) {
       ch = ch.on(

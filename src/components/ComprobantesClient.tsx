@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 type ComprobanteItem = {
@@ -148,11 +149,10 @@ export default function ComprobantesClient() {
     // Polling every 10 s — works even if Supabase Realtime isn't configured
     const interval = setInterval(fetchSilent, 10_000);
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (url && key) {
-      supabaseRef.current = createClient(url, key);
-      const ch = supabaseRef.current
+    const sb = getSupabaseBrowser();
+    if (sb) {
+      supabaseRef.current = sb;
+      const ch = sb
         .channel('realtime-comprobantes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, fetchSilent)
         .subscribe();

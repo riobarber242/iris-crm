@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 
@@ -91,10 +91,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     function handleRefreshEvent() { fetchUnread(); }
     window.addEventListener('refresh-unread', handleRefreshEvent);
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (url && key) {
-      const sb = createClient(url, key);
+    const sb = getSupabaseBrowser();
+    if (sb) {
       unreadSupabaseRef.current = sb;
       const ch = sb.channel('unread-badge')
         .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, fetchUnread)

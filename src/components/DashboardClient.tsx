@@ -2,7 +2,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import DashboardCharts from './DashboardCharts';
 
 type Stats = {
@@ -123,11 +124,10 @@ export default function DashboardClient() {
     // Polling every 15 s — guaranteed refresh regardless of Realtime status
     const interval = setInterval(fetchStats, 15_000);
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (url && key) {
-      supabaseRef.current = createClient(url, key);
-      const channel = supabaseRef.current
+    const sb = getSupabaseBrowser();
+    if (sb) {
+      supabaseRef.current = sb;
+      const channel = sb
         .channel('realtime-dashboard')
         .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     fetchStats)
         .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, fetchStats)

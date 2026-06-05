@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 function playNotificationBeep() {
@@ -64,10 +64,8 @@ export default function ConversationsClient() {
     fetchConversations();
     const timer = setInterval(() => fetchRef.current(), 5_000);
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (url && key) {
-      const sb = createClient(url, key);
+    const sb = getSupabaseBrowser();
+    if (sb) {
       sbRef.current = sb;
       const trigger = () => fetchRef.current();
       const ch = sb.channel('realtime-conversations')

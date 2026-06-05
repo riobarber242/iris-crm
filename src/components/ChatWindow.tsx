@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { useAuth } from '@/components/AuthProvider';
 import { searchEmojisEs } from '@/lib/emoji-es';
 
@@ -192,11 +193,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     // token vencido, blip de red). El merge conserva las burbujas optimistas.
     const poll = setInterval(() => fetchMessages(), 8000);
 
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (!url || !key) return () => clearInterval(poll);
-
-    const supabase = createClient(url, key);
+    const supabase = getSupabaseBrowser();
+    if (!supabase) return () => clearInterval(poll);
     supabaseRef.current = supabase;
 
     function onInsert(payload: any) {
