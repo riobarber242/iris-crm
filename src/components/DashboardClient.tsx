@@ -146,7 +146,7 @@ export default function DashboardClient() {
 
   if (!stats) {
     return (
-      <div className="dash-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+      <div className="dash-grid" style={{ gap: '16px' }}>
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {[0, 1, 2, 3].map((j) => (
@@ -195,7 +195,7 @@ export default function DashboardClient() {
       </div>
     </Link>
 
-    <div className="dash-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+    <div className="dash-grid" style={{ gap: '16px' }}>
 
       {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
       <Column title="Conversaciones" icon="💬">
