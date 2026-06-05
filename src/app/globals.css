@@ -98,7 +98,7 @@ button, input, textarea, select {
   grid-template-columns: repeat(2, 1fr);
 }
 @media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1024px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
+@media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
 
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 /* Hamburguesa oculta en desktop; overlay del drawer oculto por defecto. */
