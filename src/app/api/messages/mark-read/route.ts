@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  const contactId = body.contactId;
+  const body = await request.json().catch(() => null);
+  const contactId = body?.contactId;
 
   if (!contactId) {
     return new NextResponse('Falta contactId', { status: 400 });
