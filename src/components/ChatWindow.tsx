@@ -99,6 +99,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [cooldown, setCooldown] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // Image state
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -127,13 +129,23 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  async function fetchMessages() {
+  // Trae los mensajes del server y los fusiona conservando los mensajes
+  // optimistas locales (los que todavía no tienen id en la DB: enviando/fallidos).
+  // Así el polling de respaldo nunca borra una burbuja en vuelo.
+  const fetchMessages = useCallback(async () => {
     try {
       const res = await fetch(`/api/messages?contactId=${contactId}`);
-      if (!res.ok) return;
-      setMessages((await res.json()).reverse());
-    } catch {}
-  }
+      if (!res.ok) { setLoadError(true); return; }
+      setLoadError(false);
+      const server: Message[] = (await res.json()).reverse();
+      setMessages((prev) => {
+        const optimistic = prev.filter((m) => !m.id); // sin id = aún no guardado
+        return [...server, ...optimistic];
+      });
+    } catch {
+      setLoadError(true);
+    }
+  }, [contactId]);
 
   useEffect(() => {
     fetch('/api/quick-replies')
@@ -174,36 +186,69 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
   useEffect(() => {
     fetchMessages();
+
+    // A1 — Polling de respaldo: aunque Realtime ande, refrescamos cada 8s para
+    // no perder mensajes si el websocket se cae en silencio (tab en background,
+    // token vencido, blip de red). El merge conserva las burbujas optimistas.
+    const poll = setInterval(() => fetchMessages(), 8000);
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
-    if (!url || !key) return;
-    supabaseRef.current = createClient(url, key);
-    try {
-      const channel = supabaseRef.current
+    if (!url || !key) return () => clearInterval(poll);
+
+    const supabase = createClient(url, key);
+    supabaseRef.current = supabase;
+
+    function onInsert(payload: any) {
+      setMessages((m) => {
+        if (payload.new.id && m.some((msg) => msg.id === payload.new.id)) return m;
+        return [...m, payload.new];
+      });
+      setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
+    }
+    function onUpdate(payload: any) {
+      setMessages((m) => m.map((msg) => (msg.id === payload.new.id ? { ...msg, ...payload.new } : msg)));
+    }
+
+    // A2 — Reconexión automática con backoff exponencial ante errores del canal.
+    let retry = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    function subscribe() {
+      const channel = supabase
         .channel(`messages:contact:${contactId}`)
-        .on('postgres_changes', {
-          event: 'INSERT', schema: 'public', table: 'messages',
-          filter: `contact_id=eq.${contactId}`,
-        }, (payload: any) => {
-          setMessages((m) => {
-            if (payload.new.id && m.some((msg) => msg.id === payload.new.id)) return m;
-            return [...m, payload.new];
-          });
-          setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
-        })
-        // UPDATE: refleja en vivo cambios de status (ticks) y reacciones.
-        .on('postgres_changes', {
-          event: 'UPDATE', schema: 'public', table: 'messages',
-          filter: `contact_id=eq.${contactId}`,
-        }, (payload: any) => {
-          setMessages((m) => m.map((msg) => (msg.id === payload.new.id ? { ...msg, ...payload.new } : msg)));
-        })
-        .subscribe();
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` }, onInsert)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `contact_id=eq.${contactId}` }, onUpdate)
+        .subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            retry = 0;
+            fetchMessages(); // re-sincronizar lo que se haya perdido mientras estaba caído
+            return;
+          }
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            if (disposed) return;
+            const delay = Math.min(30000, 1000 * 2 ** retry);
+            retry++;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(() => {
+              if (disposed) return;
+              try { supabase.removeChannel(channel); } catch {}
+              subscribe();
+            }, delay);
+          }
+        });
       channelRef.current = channel;
-    } catch {}
-    return () => { try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch {} };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contactId]);
+    }
+    subscribe();
+
+    return () => {
+      disposed = true;
+      clearInterval(poll);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      try { if (channelRef.current) supabase.removeChannel(channelRef.current); } catch {}
+    };
+  }, [contactId, fetchMessages]);
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -308,6 +353,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     const content = input.trim();
     if (!content) return;
     setInput('');
+    await sendText(content);
+  }
+
+  // Núcleo del envío de texto, reutilizable por el botón y por "Reintentar".
+  async function sendText(content: string) {
+    setSendError(null);
     setLoading(true);
     setCooldown(true);
     const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name };
@@ -319,12 +370,22 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         body: JSON.stringify({ contactId, content }),
       });
       const saved = res.ok ? await res.json() : null;
+      if (!saved) setSendError('No se pudo enviar el mensaje. Reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
+      setSendError('No se pudo enviar el mensaje. Revisá tu conexión y reintentá.');
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }
     setLoading(false);
     setTimeout(() => setCooldown(false), 2000);
+  }
+
+  // Reintenta un mensaje de texto fallido (los de media requieren re-adjuntar).
+  async function retrySend(failed: Message) {
+    if (loading || cooldown) return;
+    if (parseMedia(failed.content)) return;
+    setMessages((m) => m.filter((x) => x !== failed));
+    await sendText(failed.content);
   }
 
   async function handleSendImage() {
@@ -340,11 +401,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     form.append('file', imageFile);
     form.append('contactId', contactId);
     form.append('caption', caption);
+    setSendError(null);
     try {
       const res = await fetch('/api/messages/image', { method: 'POST', body: form });
       const saved = res.ok ? await res.json() : null;
+      if (!saved) setSendError('No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
+      setSendError('No se pudo enviar la imagen. Revisá tu conexión y reintentá.');
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }
     if (preview) URL.revokeObjectURL(preview);
@@ -365,11 +429,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('mpeg') ? 'mp3' : 'webm';
     form.append('file', blob, `audio.${ext}`);
     form.append('contactId', contactId);
+    setSendError(null);
     try {
       const res = await fetch('/api/messages/audio', { method: 'POST', body: form });
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
+      if (!saved) setSendError('No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
+      setSendError('No se pudo enviar el audio. Revisá tu conexión y reintentá.');
       setMessages((m) => m.map((msg) => msg === temp ? { ...msg, status: 'failed' } : msg));
     }
     if (preview) URL.revokeObjectURL(preview);
@@ -410,6 +477,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         ref={listRef}
         style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
       >
+        {loadError && messages.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', fontSize: '13px' }}>
+            <span>⚠ No se pudieron cargar los mensajes.</span>
+            <button type="button" onClick={() => fetchMessages()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontWeight: 700, textDecoration: 'underline', fontSize: '13px', padding: 0 }}>Reintentar</button>
+          </div>
+        )}
         {messages
           // Ocultar mensajes de reacción guardados como texto "reaction" (viejos,
           // de antes de manejar las reacciones como badge). No son burbujas.
@@ -500,6 +573,15 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                  title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
                 {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
                 {(isBot || isHuman) && <Ticks status={m.status} />}
+                {isHuman && m.status === 'failed' && !media && (
+                  <button
+                    type="button"
+                    onClick={() => retrySend(m)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E53935', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+                  >
+                    Reintentar
+                  </button>
+                )}
               </p>
 
               {/* Reacción aplicada */}
@@ -627,6 +709,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         {/* Hidden file inputs */}
         <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageFileChange} />
         <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={handleAudioFileChange} />
+
+        {/* Error de envío visible (A3) */}
+        {sendError && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px', fontSize: '13px' }}>
+            <span style={{ flex: 1 }}>⚠ {sendError}</span>
+            <button type="button" onClick={() => setSendError(null)} aria-label="Cerrar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontSize: '18px', lineHeight: 1, padding: '2px' }}>×</button>
+          </div>
+        )}
 
         <form onSubmit={handleSend} className="chat-input-row" style={{ display: 'flex', gap: '10px' }}>
 
