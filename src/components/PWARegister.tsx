@@ -27,18 +27,22 @@ export default function PWARegister() {
     (async () => {
       try {
         const registration = await navigator.serviceWorker.register('/sw.js');
+        console.log('[PWA] SW registrado:', registration.scope);
+        console.log('[PWA] agent:', agent?.id ?? 'null');
 
         // Sin agente logueado: registramos el SW pero no suscribimos al push.
         if (!agent) return;
         if (!('PushManager' in window) || !('Notification' in window)) return;
 
         const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        console.log('[PWA] vapidKey presente:', !!vapidKey);
         if (!vapidKey) {
           console.warn('[pwa] NEXT_PUBLIC_VAPID_PUBLIC_KEY no configurada — sin push');
           return;
         }
 
         // Pedir permiso solo si el usuario aún no decidió.
+        console.log('[PWA] Notification.permission:', Notification.permission);
         let permission = Notification.permission;
         if (permission === 'default') permission = await Notification.requestPermission();
         if (permission !== 'granted' || cancelled) return;
