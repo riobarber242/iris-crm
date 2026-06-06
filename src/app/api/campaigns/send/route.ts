@@ -44,7 +44,8 @@ export async function POST(request: Request) {
 
   await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId);
 
-  const contacts = await resolveContacts(campaign.target_filter ?? 'todos');
+  let contacts = await resolveContacts(campaign.target_filter ?? 'todos');
+  if (campaign.send_limit) contacts = contacts.slice(0, Number(campaign.send_limit));
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
 

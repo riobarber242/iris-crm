@@ -13,7 +13,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -35,6 +35,7 @@ export async function POST(request: Request) {
     template_name:      campaignType === 'template_meta' ? template_name.trim() : null,
     template_language:  campaignType === 'template_meta' ? (template_language ?? 'es') : null,
     template_variables: campaignType === 'template_meta' ? (template_variables ?? []) : null,
+    send_limit:         send_limit ? Number(send_limit) : null,
   }).select('*').single();
 
   if (error) return new NextResponse(error.message, { status: 500 });

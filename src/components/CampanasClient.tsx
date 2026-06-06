@@ -58,6 +58,7 @@ export default function CampanasClient() {
   const [name,             setName]             = useState('');
   const [campaignType,     setCampaignType]     = useState<CampaignType>('texto_libre');
   const [filter,           setFilter]           = useState('todos');
+  const [sendLimit,        setSendLimit]        = useState('');
   const [message,          setMessage]          = useState('');
   const [templateName,     setTemplateName]     = useState('');
   const [templateLang,     setTemplateLang]     = useState('es');
@@ -99,7 +100,7 @@ export default function CampanasClient() {
   }
 
   function resetForm() {
-    setName(''); setCampaignType('texto_libre'); setFilter('todos');
+    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setSendLimit('');
     setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
     setError(''); setRecipientCount(null);
   }
@@ -133,7 +134,7 @@ export default function CampanasClient() {
 
     setCreating(true); setError('');
     try {
-      const body: any = { name: name.trim(), target_filter: filter, type: campaignType };
+      const body: any = { name: name.trim(), target_filter: filter, type: campaignType, send_limit: sendLimit ? Number(sendLimit) : null };
       if (campaignType === 'texto_libre') {
         body.message = message.trim();
       } else {
@@ -250,6 +251,17 @@ export default function CampanasClient() {
                 )}
               </p>
             )}
+          </div>
+
+          {/* Límite de contactos */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={labelStyle}>Límite de contactos (opcional)</label>
+            <input
+              type="number" min={1} value={sendLimit}
+              onChange={(e) => setSendLimit(e.target.value)}
+              placeholder="Sin límite"
+              style={inputStyle}
+            />
           </div>
 
           {/* Contenido según tipo */}
