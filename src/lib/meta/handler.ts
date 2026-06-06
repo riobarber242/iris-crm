@@ -5,7 +5,7 @@ import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
 import { decideBotResponse } from './bot-decision';
-import { notifyActiveAgents } from '../push';
+import { notifyContactAgents } from '../push';
 
 async function getSystemPrompt(): Promise<string> {
   try {
@@ -296,13 +296,13 @@ async function processMessage(
       : type === 'document'          ? '📄 Documento'
       : ['audio', 'voice'].includes(type) ? '🎤 Audio'
       : type;
-    await notifyActiveAgents({
+    await notifyContactAgents(contact.assigned_agent_id ?? null, {
       title: 'IRIS',
       body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
       url: `/conversations/${contact.id}`,
     });
   } catch (err) {
-    console.warn('[webhook] notifyActiveAgents falló (ignorado):', err);
+    console.warn('[webhook] notifyContactAgents falló (ignorado):', err);
   }
 
   // ── Bot enabled check ──────────────────────────────────────────────────────
@@ -520,7 +520,7 @@ async function processMessage(
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 const CONTACT_COLS =
-  'id, phone, name, status, casino_username, conversation_state, last_read_at, blocked';
+  'id, phone, name, status, casino_username, conversation_state, last_read_at, blocked, assigned_agent_id';
 
 // Extracts the national significant number (area code + subscriber) so numbers
 // stored in different formats still match. WhatsApp sends AR mobiles as

@@ -53,6 +53,47 @@ export async function notifyAgent(agentId: string, payload: PushPayload): Promis
   return sent;
 }
 
+// Notifica según la asignación del chat (multi-operador):
+//  - chat con agente asignado → push SOLO a ese agente + a los admins activos.
+//  - chat sin asignar         → push a todos los agentes activos (comportamiento previo).
+// Devuelve cuántos push salieron.
+export async function notifyContactAgents(assignedAgentId: string | null, payload: PushPayload): Promise<number> {
+  if (!ensureVapid()) return 0;
+
+  let targetIds: string[];
+
+  if (assignedAgentId) {
+    // Agente asignado + admins activos (los admins ven todo, así que también avisamos).
+    const { data: admins, error } = await supabaseAdmin
+      .from('agents')
+      .select('id')
+      .eq('active', true)
+      .eq('role', 'admin');
+    if (error) console.warn('[push] Error leyendo admins:', error.message);
+    targetIds = Array.from(new Set<string>([assignedAgentId, ...(admins ?? []).map((a: { id: string }) => a.id)]));
+  } else {
+    const { data: agents, error } = await supabaseAdmin
+      .from('agents')
+      .select('id')
+      .eq('active', true);
+    if (error) { console.warn('[push] Error leyendo agents:', error.message); return 0; }
+    targetIds = (agents ?? []).map((a: { id: string }) => a.id);
+  }
+
+  if (targetIds.length === 0) return 0;
+
+  const { data: subs, error: sErr } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('id, subscription')
+    .in('agent_id', targetIds);
+  if (sErr) { console.warn('[push] Error leyendo push_subscriptions:', sErr.message); return 0; }
+
+  let sent = 0;
+  for (const row of subs ?? []) if (await sendToSubscription(row, payload)) sent++;
+  console.log(`[push] notifyContactAgents(assigned=${assignedAgentId ?? 'none'}) → ${sent}/${(subs ?? []).length} push enviados`);
+  return sent;
+}
+
 // Notifica a TODOS los agentes activos con suscripción. Devuelve cuántos push salieron.
 export async function notifyActiveAgents(payload: PushPayload): Promise<number> {
   if (!ensureVapid()) return 0;
