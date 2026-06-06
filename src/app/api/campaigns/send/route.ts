@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
 async function resolveContacts(filter: string) {
-  const base = supabaseAdmin.from('contacts').select('id, phone').neq('blocked', true);
+  const base = supabaseAdmin.from('contacts').select('id, phone, name').neq('blocked', true);
 
   if (filter === 'inactivo_30d' || filter === 'inactivo_45d') {
     const days   = filter === 'inactivo_30d' ? 30 : 45;
@@ -52,19 +52,23 @@ export async function POST(request: Request) {
 
   for (const contact of contacts) {
     try {
+      const resolvedVars = vars.map((v: string) =>
+        v === '{{nombre}}' ? (contact.name ?? contact.phone) : v
+      );
+
       if (isTemplate) {
         await sendWhatsAppTemplate(
           contact.phone,
           campaign.template_name,
           campaign.template_language ?? 'es',
-          vars,
+          resolvedVars,
         );
       } else {
         await sendWhatsAppText(contact.phone, campaign.message);
       }
 
       const msgContent = isTemplate
-        ? `[Template: ${campaign.template_name}]${vars.length ? ` (${vars.join(', ')})` : ''}`
+        ? `[Template: ${campaign.template_name}]${resolvedVars.length ? ` (${resolvedVars.join(', ')})` : ''}`
         : campaign.message;
 
       await supabaseAdmin.from('messages').insert({
