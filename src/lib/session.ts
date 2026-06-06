@@ -8,7 +8,7 @@ export const MAX_AGE_SEC  = 60 * 60 * 24 * 7; // 7 días
 export type SessionPayload = {
   sub:  string;            // agent id
   name: string;
-  role: 'admin' | 'agent';
+  role: 'admin' | 'agent' | 'operator';
   exp:  number;            // epoch seconds
 };
 

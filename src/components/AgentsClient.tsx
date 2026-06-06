@@ -1,16 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useAuth } from './AuthProvider';
 
 type Agent = {
   id: string;
   username: string;
   name: string;
   email: string | null;
-  role: 'admin' | 'agent';
+  role: 'admin' | 'agent' | 'operator';
   active: boolean;
   schedule_start: string | null;
   schedule_end: string | null;
+  system_prompt: string | null;
   created_at: string;
 };
 
@@ -26,6 +28,7 @@ const btn = (bg: string, fg: string): React.CSSProperties => ({
 function hhmm(t: string | null) { return t ? t.slice(0, 5) : ''; }
 
 export default function AgentsClient() {
+  const { agent: me } = useAuth();
   const [agents,  setAgents]  = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
@@ -73,7 +76,7 @@ export default function AgentsClient() {
 
   function startEdit(a: Agent) {
     setEditId(a.id);
-    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end) });
+    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '' });
   }
 
   async function deleteAgent(a: Agent) {
@@ -133,6 +136,7 @@ export default function AgentsClient() {
         <Field label="Rol">
           <select style={inputStyle} value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>
             <option value="agent">Agente</option>
+            <option value="operator">Operador</option>
             <option value="admin">Admin</option>
           </select>
         </Field>
@@ -154,6 +158,8 @@ export default function AgentsClient() {
 
           {agents.map((a) => {
             const editing = editId === a.id;
+            // El system prompt solo lo edita un admin, o el propio operador sobre su perfil.
+            const canEditPrompt = me?.role === 'admin' || me?.id === a.id;
             return (
               <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
                 {/* usuario */}
@@ -172,9 +178,9 @@ export default function AgentsClient() {
                 {/* rol */}
                 {editing
                   ? <select style={inputStyle} value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Agent['role'] })}>
-                      <option value="agent">Agente</option><option value="admin">Admin</option>
+                      <option value="agent">Agente</option><option value="operator">Operador</option><option value="admin">Admin</option>
                     </select>
-                  : <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : 'Agente'}</span>}
+                  : <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : a.role === 'operator' ? 'Operador' : 'Agente'}</span>}
 
                 {/* horario */}
                 {editing
@@ -213,6 +219,21 @@ export default function AgentsClient() {
                     </>
                   )}
                 </span>
+
+                {/* system prompt (full-width, solo al editar) */}
+                {editing && canEditPrompt && (
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Instrucciones del bot (system prompt)
+                    </label>
+                    <textarea
+                      style={{ ...inputStyle, minHeight: '90px', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                      value={draft.system_prompt ?? ''}
+                      onChange={e => setDraft({ ...draft, system_prompt: e.target.value })}
+                      placeholder="Ej: Sos un asistente amable que trabaja para una empresa de recargas llamada Iris. Siempre saludá al cliente por su nombre y ofrecé ayuda para completar su recarga."
+                    />
+                  </div>
+                )}
               </div>
             );
           })}

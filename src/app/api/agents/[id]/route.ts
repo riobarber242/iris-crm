@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, created_at';
 
 // PATCH /api/agents/[id] — editar agente (admin)
 // Campos permitidos: name, role, active, schedule_start, schedule_end.
@@ -18,10 +18,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const updates: Record<string, any> = {};
   if (body.name !== undefined)           updates.name           = String(body.name).trim();
   if (body.email !== undefined)          updates.email          = String(body.email).trim() || null;
-  if (body.role !== undefined)           updates.role           = body.role === 'admin' ? 'admin' : 'agent';
+  if (body.role !== undefined)           updates.role           = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
   if (body.active !== undefined)         updates.active         = !!body.active;
   if (body.schedule_start !== undefined) updates.schedule_start = body.schedule_start || null;
   if (body.schedule_end !== undefined)   updates.schedule_end   = body.schedule_end   || null;
+  if (body.system_prompt !== undefined)  updates.system_prompt  = String(body.system_prompt);
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'Nada para actualizar' }, { status: 400 });
@@ -32,7 +33,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (updates.active === false) {
       return NextResponse.json({ error: 'No podés desactivar tu propia cuenta' }, { status: 400 });
     }
-    if (updates.role === 'agent') {
+    if (updates.role !== undefined && updates.role !== 'admin') {
       return NextResponse.json({ error: 'No podés quitarte el rol de admin a vos mismo' }, { status: 400 });
     }
   }

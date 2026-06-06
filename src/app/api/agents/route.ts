@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, created_at';
 
 // GET /api/agents — lista de agentes (admin)
 export async function GET() {
@@ -33,9 +33,10 @@ export async function POST(request: Request) {
   const name     = String(body.name ?? '').trim();
   const email    = String(body.email ?? '').trim() || null;
   const password = String(body.password ?? '');
-  const role     = body.role === 'admin' ? 'admin' : 'agent';
+  const role     = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
   const schedule_start = body.schedule_start || null;
   const schedule_end   = body.schedule_end   || null;
+  const system_prompt  = body.system_prompt != null ? String(body.system_prompt) : null;
 
   if (!username || !name || !password) {
     return NextResponse.json({ error: 'Faltan usuario, nombre o contraseña' }, { status: 400 });
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
       active: true,
       schedule_start,
       schedule_end,
+      system_prompt,
     })
     .select(AGENT_FIELDS)
     .single();

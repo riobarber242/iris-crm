@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 
-export type Agent = { id: string; name: string; role: 'admin' | 'agent' };
+export type Agent = { id: string; name: string; role: 'admin' | 'agent' | 'operator' };
 
 type AuthCtx = {
   agent:   Agent | null;

@@ -25,9 +25,11 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { agent, logout } = useAuth();
-  // "Agentes" solo lo ve el admin (insertado antes de "Configuración")
-  const items = agent?.role === 'admin'
-    ? [...navItems.slice(0, 6), 'agentes', 'settings']
+  // "Agentes" solo lo ve el admin (insertado antes de "Configuración").
+  // El operator tiene un menú reducido (sin campañas, configuración ni operadores).
+  const items =
+    agent?.role === 'admin'    ? [...navItems.slice(0, 6), 'agentes', 'settings']
+    : agent?.role === 'operator' ? ['dashboard', 'conversations', 'comprobantes']
     : navItems;
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -280,7 +282,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               <span className="app-agent-name" style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
                 <span style={{ fontSize: '14px', fontWeight: 800, color: '#fff' }}>{agent.name}</span>
                 <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#aaff00' }}>
-                  {agent.role === 'admin' ? 'Admin' : 'Agente'}
+                  {agent.role === 'admin' ? 'Admin' : agent.role === 'operator' ? 'Operador' : 'Agente'}
                 </span>
               </span>
               <button

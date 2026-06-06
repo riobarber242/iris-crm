@@ -7,7 +7,25 @@ import { inferProvinciaFromPhone } from '../phone-province';
 import { decideBotResponse } from './bot-decision';
 import { notifyContactAgents } from '../push';
 
-async function getSystemPrompt(): Promise<string> {
+// Resuelve el system prompt para Groq con esta prioridad:
+//   1. system_prompt del operador asignado al contacto (si no está vacío)
+//   2. system_prompt global guardado en settings
+//   3. irisSystemPrompt hardcodeado
+// `assignedAgentId` es contacts.assigned_agent_id del contacto activo.
+async function getSystemPrompt(assignedAgentId?: string | null): Promise<string> {
+  // 1. Prompt por operador (agente asignado).
+  if (assignedAgentId) {
+    try {
+      const { data: agent } = await supabaseAdmin
+        .from('agents').select('system_prompt').eq('id', assignedAgentId).maybeSingle();
+      const perAgent = (agent?.system_prompt ?? '').trim();
+      if (perAgent) return perAgent;
+    } catch {
+      // si falla, caemos al prompt global / default
+    }
+  }
+
+  // 2. Prompt global (settings) → 3. default hardcodeado.
   try {
     const { data } = await supabaseAdmin
       .from('settings').select('value').eq('key', 'system_prompt').limit(1).maybeSingle();

@@ -17,6 +17,17 @@ const PUBLIC_PREFIXES = [
 // Solo admin
 const ADMIN_PREFIXES = ['/agentes', '/api/agents'];
 
+// Prohibido para el rol 'operator': campañas, configuración y el prompt del bot.
+// (/agentes y /api/agents ya están cubiertos por ADMIN_PREFIXES.)
+// Nota: /api/settings/bot-enabled y /api/settings/offline-mode siguen accesibles
+// porque el header los lee para todos; solo bloqueamos la página y el prompt.
+const OPERATOR_FORBIDDEN_PREFIXES = [
+  '/campanas',
+  '/api/campaigns',
+  '/settings',
+  '/api/settings/system-prompt',
+];
+
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
@@ -44,6 +55,14 @@ export async function middleware(req: NextRequest) {
     if (isApi) return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
     const url = req.nextUrl.clone();
     url.pathname = '/dashboard';
+    return NextResponse.redirect(url);
+  }
+
+  // Rutas vedadas al rol operator
+  if (session.role === 'operator' && matchesPrefix(pathname, OPERATOR_FORBIDDEN_PREFIXES)) {
+    if (isApi) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+    const url = req.nextUrl.clone();
+    url.pathname = '/conversations';
     return NextResponse.redirect(url);
   }
 
