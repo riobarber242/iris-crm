@@ -6,6 +6,7 @@ type Agent = {
   id: string;
   username: string;
   name: string;
+  email: string | null;
   role: 'admin' | 'agent';
   active: boolean;
   schedule_start: string | null;
@@ -30,7 +31,7 @@ export default function AgentsClient() {
   const [error,   setError]   = useState('');
 
   // create form
-  const [nu, setNu] = useState({ username: '', name: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
+  const [nu, setNu] = useState({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
   const [creating, setCreating] = useState(false);
 
   // inline edit
@@ -61,7 +62,7 @@ export default function AgentsClient() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNu({ username: '', name: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
+        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
         fetchAgents();
       } else {
         setError(d.error ?? 'No se pudo crear');
@@ -72,7 +73,16 @@ export default function AgentsClient() {
 
   function startEdit(a: Agent) {
     setEditId(a.id);
-    setDraft({ name: a.name, role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end) });
+    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end) });
+  }
+
+  async function deleteAgent(a: Agent) {
+    if (!confirm(`¿Eliminar al operador "${a.name}"? Sus chats quedarán sin asignar. Esta acción no se puede deshacer.`)) return;
+    setError('');
+    const res = await fetch(`/api/agents/${a.id}`, { method: 'DELETE' });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok) fetchAgents();
+    else setError(d.error ?? 'No se pudo eliminar');
   }
 
   async function saveEdit(id: string) {
@@ -118,6 +128,7 @@ export default function AgentsClient() {
       <form onSubmit={createAgent} style={{ background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
         <Field label="Usuario"><input style={inputStyle} value={nu.username} onChange={e => setNu({ ...nu, username: e.target.value })} placeholder="matias" /></Field>
         <Field label="Nombre"><input style={inputStyle} value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })} placeholder="Matías" /></Field>
+        <Field label="Email"><input style={inputStyle} type="email" value={nu.email} onChange={e => setNu({ ...nu, email: e.target.value })} placeholder="matias@iris.com" /></Field>
         <Field label="Contraseña"><input style={inputStyle} type="password" value={nu.password} onChange={e => setNu({ ...nu, password: e.target.value })} placeholder="••••••" /></Field>
         <Field label="Rol">
           <select style={inputStyle} value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>
@@ -137,14 +148,14 @@ export default function AgentsClient() {
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando agentes…</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.8fr 1.2fr 0.8fr 1.6fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            <span>Usuario</span><span>Nombre</span><span>Rol</span><span>Horario</span><span>Estado</span><span>Acciones</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <span>Usuario</span><span>Nombre</span><span>Email</span><span>Rol</span><span>Horario</span><span>Estado</span><span>Acciones</span>
           </div>
 
           {agents.map((a) => {
             const editing = editId === a.id;
             return (
-              <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.8fr 1.2fr 0.8fr 1.6fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
+              <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
                 {/* usuario */}
                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{a.username}</span>
 
@@ -152,6 +163,11 @@ export default function AgentsClient() {
                 {editing
                   ? <input style={inputStyle} value={draft.name ?? ''} onChange={e => setDraft({ ...draft, name: e.target.value })} />
                   : <span style={{ fontSize: '13px', color: '#333' }}>{a.name}</span>}
+
+                {/* email */}
+                {editing
+                  ? <input style={inputStyle} type="email" value={draft.email ?? ''} onChange={e => setDraft({ ...draft, email: e.target.value })} placeholder="email@iris.com" />
+                  : <span style={{ fontSize: '12px', color: a.email ? '#555' : '#ccc' }}>{a.email || '—'}</span>}
 
                 {/* rol */}
                 {editing
@@ -193,6 +209,7 @@ export default function AgentsClient() {
                         {a.active ? 'Desactivar' : 'Activar'}
                       </button>
                       <button onClick={() => { setResetId(a.id); setNewPass(''); }} style={btn('#F0F0F0', '#333')}>Reset pass</button>
+                      <button onClick={() => deleteAgent(a)} style={btn('#FFE5E5', '#CC3333')}>Eliminar</button>
                     </>
                   )}
                 </span>

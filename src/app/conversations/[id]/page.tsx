@@ -3,13 +3,14 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { AdminShell } from '@/components/AdminShell';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import ChatWindow from '@/components/ChatWindow';
 import ContactHeader from '@/components/ContactHeader';
 
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, messages(content, created_at, role)')
+    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, assigned_agent_id, messages(content, created_at, role)')
     .eq('id', id)
     .single();
 
@@ -34,24 +35,27 @@ async function fetchRecargasResumen(contactId: string) {
 export default async function ConversationPage({ params }: any) {
   const id = params.id as string;
 
+  const session = await getSessionAgent();
+  const contact = await fetchContact(id);
+
+  // Un agente solo puede abrir un chat asignado a él; el admin, cualquiera.
+  if (!contact || (session?.role !== 'admin' && contact.assigned_agent_id !== session?.sub)) {
+    return (
+      <AdminShell>
+        <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>
+          {contact ? 'No tenés acceso a esta conversación.' : 'Contacto no encontrado.'}
+        </div>
+      </AdminShell>
+    );
+  }
+
   // Mark as read server-side so badge clears on next poll
   await supabaseAdmin
     .from('contacts')
     .update({ last_read_at: new Date().toISOString() })
     .eq('id', id);
 
-  const [contact, recargas] = await Promise.all([
-    fetchContact(id),
-    fetchRecargasResumen(id),
-  ]);
-
-  if (!contact) {
-    return (
-      <AdminShell>
-        <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>Contacto no encontrado.</div>
-      </AdminShell>
-    );
-  }
+  const recargas = await fetchRecargasResumen(id);
 
   return (
     <AdminShell>
@@ -88,6 +92,7 @@ export default async function ConversationPage({ params }: any) {
           conversationState={contact.conversation_state ?? null}
           initialNotes={contact.notes ?? ''}
           initialProvincia={contact.provincia ?? null}
+          initialAssignedAgentId={contact.assigned_agent_id ?? null}
           recargasCount={recargas.count}
           recargasMonto={recargas.montoTotal}
         />

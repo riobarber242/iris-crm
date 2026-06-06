@@ -1,6 +1,9 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from './AuthProvider';
+
+type AgentOption = { id: string; name: string; active: boolean };
 
 const PROVINCIAS = [
   'CABA', 'Buenos Aires', 'Catamarca', 'Chaco', 'Chubut', 'Córdoba',
@@ -43,6 +46,7 @@ export default function ContactHeader({
   conversationState,
   initialNotes,
   initialProvincia,
+  initialAssignedAgentId,
   recargasCount,
   recargasMonto,
 }: {
@@ -54,6 +58,7 @@ export default function ContactHeader({
   conversationState?:     string | null;
   initialNotes?:          string;
   initialProvincia?:      string | null;
+  initialAssignedAgentId?: string | null;
   recargasCount?:         number;
   recargasMonto?:         number;
 }) {
@@ -69,6 +74,29 @@ export default function ContactHeader({
   const [botState,      setBotState]      = useState(conversationState ?? null);
   const [resetLoading,  setResetLoading]  = useState(false);
   const [provincia,     setProvincia]     = useState(initialProvincia ?? '');
+  const [assignedAgent, setAssignedAgent] = useState(initialAssignedAgentId ?? '');
+  const [agents,        setAgents]        = useState<AgentOption[]>([]);
+
+  const { agent } = useAuth();
+  const isAdmin = agent?.role === 'admin';
+
+  // El admin necesita la lista de operadores para reasignar el chat.
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch('/api/agents')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: AgentOption[]) => setAgents(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [isAdmin]);
+
+  async function saveAssignedAgent(value: string) {
+    setAssignedAgent(value);
+    await fetch('/api/conversations', {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ contactId, assigned_agent_id: value || null }),
+    }).catch(() => {});
+  }
 
   async function handleStatusChange(newStatus: string) {
     setStatusLoading(true);
@@ -290,6 +318,33 @@ export default function ContactHeader({
                   <option key={p} value={p}>{p}</option>
                 ))}
               </select>
+
+              {/* Asignar operador (solo admin) */}
+              {isAdmin && (
+                <select
+                  value={assignedAgent}
+                  onChange={(e) => saveAssignedAgent(e.target.value)}
+                  title="Asignar este chat a un operador"
+                  style={{
+                    background:   assignedAgent ? '#eef6ff' : '#F5F5F5',
+                    color:        assignedAgent ? '#1f6fd6' : '#aaa',
+                    fontWeight:   700,
+                    fontSize:     '12px',
+                    border:       assignedAgent ? '1px solid #c5dcf5' : '1px solid #eee',
+                    borderRadius: '8px',
+                    padding:      '4px 10px',
+                    cursor:       'pointer',
+                    outline:      'none',
+                  }}
+                >
+                  <option value="">👤 Sin asignar</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.active ? a.name : `${a.name} (inactivo)`}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               {/* Bot state badge + reset */}
               {botLabel ? (

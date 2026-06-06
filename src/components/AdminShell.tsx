@@ -16,7 +16,7 @@ const navLabels: Record<string, string> = {
   comprobantes:  'Comprobantes',
   leads:         'Top Clientes',
   campanas:      'Campañas',
-  agentes:       'Agentes',
+  agentes:       'Operadores',
   settings:      'Configuración',
 };
 

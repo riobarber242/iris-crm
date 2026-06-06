@@ -2,7 +2,26 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { getSessionAgent } from '@/lib/current-agent';
+import type { SessionPayload } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
+
+// Un agente solo puede acceder a un contacto asignado a él; el admin, a todos.
+// Devuelve null si tiene acceso, o una NextResponse de error si no.
+async function guardContactAccess(
+  session: SessionPayload,
+  contactId: string,
+): Promise<NextResponse | null> {
+  if (session.role === 'admin') return null;
+  const { data } = await supabaseAdmin
+    .from('contacts')
+    .select('assigned_agent_id')
+    .eq('id', contactId)
+    .single();
+  if (!data || data.assigned_agent_id !== session.sub) {
+    return new NextResponse('Sin acceso a este contacto', { status: 403 });
+  }
+  return null;
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -11,6 +30,11 @@ export async function GET(request: Request) {
   if (!contactId) {
     return new NextResponse('Falta contactId', { status: 400 });
   }
+
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+  const denied = await guardContactAccess(session, contactId);
+  if (denied) return denied;
 
   const { data, error } = await supabaseAdmin
     .from('messages')
@@ -41,6 +65,12 @@ export async function POST(request: Request) {
       return new NextResponse('Faltan contactId o content', { status: 400 });
     }
 
+    // Atribución: quién envía el mensaje (derivado de la cookie de sesión, no del cliente)
+    const session = await getSessionAgent();
+    if (!session) return new NextResponse('No autenticado', { status: 401 });
+    const denied = await guardContactAccess(session, contactId);
+    if (denied) return denied;
+
     const { data: contact, error: contactError } = await supabaseAdmin
       .from('contacts')
       .select('phone')
@@ -50,9 +80,6 @@ export async function POST(request: Request) {
     if (contactError || !contact) {
       return new NextResponse('No se encontró el contacto', { status: 404 });
     }
-
-    // Atribución: quién envía el mensaje (derivado de la cookie de sesión, no del cliente)
-    const session = await getSessionAgent();
 
     const { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert({
       contact_id: contactId,

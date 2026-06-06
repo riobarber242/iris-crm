@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 
 // Returns two pending-attention counts:
 // newPending      (orange): no casino_username, bot finished, last msg inbound
 // recurringPending (red):   has casino_username, last msg inbound
+// Los agentes solo cuentan sus chats asignados; el admin, todos.
 export async function GET() {
   try {
+    const session = await getSessionAgent();
+    if (!session) return new NextResponse('No autenticado', { status: 401 });
+    const isAgent = session.role !== 'admin';
+
     const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
     const utcNow     = new Date();
     const argNow     = new Date(utcNow.getTime() - ART_OFFSET_MS);
@@ -14,9 +20,11 @@ export async function GET() {
     ));
 
     // 1. All contacts with relevant fields including last_read_at
-    const { data: contacts, error: cErr } = await supabaseAdmin
+    let contactsQuery = supabaseAdmin
       .from('contacts')
       .select('id, casino_username, status, conversation_state, last_read_at');
+    if (isAgent) contactsQuery = contactsQuery.eq('assigned_agent_id', session.sub);
+    const { data: contacts, error: cErr } = await contactsQuery;
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
 
     const contactMap = new Map<string, any>(
@@ -60,11 +68,17 @@ export async function GET() {
       }
     }
 
-    // 4. Comprobantes pendientes
-    const { count: comprobantesPending } = await supabaseAdmin
+    // 4. Comprobantes pendientes (para agentes, solo los de sus contactos)
+    let comprobantesQuery = supabaseAdmin
       .from('comprobantes')
       .select('id', { count: 'exact', head: true })
       .eq('estado', 'pendiente');
+    if (isAgent) {
+      const ownedIds = Array.from(contactMap.keys());
+      // Si el agente no tiene contactos, no puede haber comprobantes suyos.
+      comprobantesQuery = comprobantesQuery.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);
+    }
+    const { count: comprobantesPending } = await comprobantesQuery;
 
     return NextResponse.json({
       total:              newPending + recurringPending,
