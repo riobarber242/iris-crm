@@ -3,7 +3,15 @@ import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
 async function resolveContacts(filter: string) {
-  const base = supabaseAdmin.from('contacts').select('id, phone, name').neq('blocked', true);
+  const base = supabaseAdmin
+    .from('contacts').select('id, phone, name').neq('blocked', true)
+    .order('created_at', { ascending: true });
+
+  if (filter.startsWith('phone:')) {
+    const phone = filter.slice('phone:'.length).trim();
+    const { data } = await base.eq('phone', phone);
+    return data ?? [];
+  }
 
   if (filter === 'inactivo_30d' || filter === 'inactivo_45d') {
     const days   = filter === 'inactivo_30d' ? 30 : 45;
@@ -15,7 +23,8 @@ async function resolveContacts(filter: string) {
         .from('comprobantes')
         .select('contact_id')
         .eq('estado', 'verificado')
-        .gte('created_at', cutoff),
+        .gte('created_at', cutoff)
+        .order('created_at', { ascending: true }),
     ]);
 
     const recentIds = new Set((recentRecargas ?? []).map((r: any) => r.contact_id));
