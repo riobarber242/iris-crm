@@ -6,6 +6,7 @@ import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
 import { decideBotResponse } from './bot-decision';
 import { notifyContactAgents } from '../push';
+import { generateBotResponse } from '../groq';
 
 // Resuelve el system prompt para Groq con esta prioridad:
 //   1. system_prompt del operador asignado al contacto (si no está vacío)
@@ -32,6 +33,32 @@ async function getSystemPrompt(assignedAgentId?: string | null): Promise<string>
     return data?.value ?? irisSystemPrompt;
   } catch {
     return irisSystemPrompt;
+  }
+}
+
+// Híbrido acotado: cuando el usuario contesta algo fuera de guion en un estado del
+// onboarding, intenta una respuesta natural con Groq usando el prompt del operador
+// asignado, reencauzando hacia el objetivo del estado. Si Groq no está configurado
+// o falla, devuelve null y el caller usa el mensaje hardcodeado de siempre.
+async function aiSteerReply(
+  stateGoal: string,
+  userText: string,
+  assignedAgentId: string | null,
+): Promise<string | null> {
+  if (!process.env.GROQ_API_KEY) return null;        // sin Groq → guion hardcodeado
+  if (!userText.trim()) return null;
+  try {
+    const base = await getSystemPrompt(assignedAgentId);
+    const systemPrompt =
+      `${base}\n\nContexto: estás en el onboarding por WhatsApp y el usuario respondió ` +
+      `algo fuera de lo esperado. Objetivo actual: ${stateGoal}. Respondé en UNA sola frase ` +
+      `breve (máx 25 palabras), amable, en español argentino con voseo, y reencauzá la charla ` +
+      `hacia ese objetivo. No inventes datos ni precios.`;
+    const reply = (await generateBotResponse(systemPrompt, userText))?.trim();
+    return reply || null;
+  } catch (err) {
+    console.warn('[bot] aiSteerReply falló, uso guion:', err);
+    return null;
   }
 }
 
@@ -486,7 +513,11 @@ async function processMessage(
           { newState: 'waiting_screenshot' },
         );
       } else {
-        await replyAndSave('¿Es tu primera vez con nosotros o ya tenés cuenta?');
+        const ai = await aiSteerReply(
+          'que el usuario aclare si es su primera vez o si ya tiene cuenta',
+          text, contact.assigned_agent_id ?? null,
+        );
+        await replyAndSave(ai ?? '¿Es tu primera vez con nosotros o ya tenés cuenta?');
       }
       break;
     }
@@ -496,8 +527,12 @@ async function processMessage(
       if (/no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
         await replyAndSave(handoffMsg, { markInProgress: true });
       } else {
+        const ai = await aiSteerReply(
+          'que el usuario mande la captura del canal de WhatsApp para poder continuar',
+          text, contact.assigned_agent_id ?? null,
+        );
         await replyAndSave(
-          'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podés, avisame.',
+          ai ?? 'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podés, avisame.',
         );
       }
       break;
@@ -513,7 +548,11 @@ async function processMessage(
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
         await replyAndSave(handoffMsg, { markInProgress: true });
       } else {
-        await replyAndSave('Sos de recargar seguido? Respondé si o no 😊');
+        const ai = await aiSteerReply(
+          'que el usuario responda si recarga seguido (sí o no)',
+          text, contact.assigned_agent_id ?? null,
+        );
+        await replyAndSave(ai ?? 'Sos de recargar seguido? Respondé si o no 😊');
       }
       break;
     }
