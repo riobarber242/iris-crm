@@ -53,7 +53,7 @@ export async function POST(request: Request) {
   for (const contact of contacts) {
     try {
       const resolvedVars = vars.map((v: string) =>
-        v === '{{nombre}}' ? (contact.name ?? contact.phone) : v
+        v.trim().toLowerCase() === '{{nombre}}' ? (contact.name ?? contact.phone) : v
       );
 
       if (isTemplate) {

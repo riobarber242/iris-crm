@@ -279,6 +279,9 @@ export default function CampanasClient() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={labelStyle}>Variables del template <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(una por línea en el template)</span></label>
+                <p style={{ fontSize: '11px', color: '#1a7a3a', margin: 0, fontWeight: 600 }}>
+                  Usá <code>{'{{nombre}}'}</code> para que cada contacto reciba su propio nombre (o su teléfono si no tiene).
+                </p>
                 {templateVars.map((v, i) => (
                   <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <span style={{ fontSize: '12px', color: '#aaa', minWidth: '28px' }}>{`{{${i + 1}}}`}</span>
@@ -288,6 +291,14 @@ export default function CampanasClient() {
                       placeholder={`Valor de {{${i + 1}}}`}
                       style={{ ...inputStyle, flex: 1 }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => { const next = [...templateVars]; next[i] = '{{nombre}}'; setTemplateVars(next); }}
+                      title="Insertar el nombre del contacto"
+                      style={{ background: '#f0fff4', border: '1px solid #86efac', borderRadius: '8px', padding: '8px 10px', fontSize: '11px', color: '#1a7a3a', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                      + {'{{nombre}}'}
+                    </button>
                     {templateVars.length > 1 && (
                       <button type="button" onClick={() => setTemplateVars(templateVars.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '18px', cursor: 'pointer', padding: '0 4px' }}>×</button>
                     )}
