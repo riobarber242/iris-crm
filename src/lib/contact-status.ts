@@ -51,7 +51,7 @@ export async function reconcileContactStatus(contactId: string): Promise<void> {
   const monthStart = currentMonthStartISO();
 
   const [contactRes, everRes, monthRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('status, blocked').eq('id', contactId).maybeSingle(),
+    supabaseAdmin.from('contacts').select('status').eq('id', contactId).maybeSingle(),
     supabaseAdmin.from('comprobantes').select('id')
       .eq('contact_id', contactId).eq('estado', 'verificado').limit(1),
     supabaseAdmin.from('comprobantes').select('id')
@@ -59,7 +59,7 @@ export async function reconcileContactStatus(contactId: string): Promise<void> {
   ]);
 
   const contact = contactRes.data;
-  if (!contact || contact.blocked) return;
+  if (!contact || contact.status === 'bloqueado') return;
 
   const hasEver  = !!(everRes.data && everRes.data.length);
   const hasMonth = !!(monthRes.data && monthRes.data.length);
