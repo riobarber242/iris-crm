@@ -16,6 +16,7 @@ export async function GET(request: Request) {
   let query = supabaseAdmin
     .from('contacts')
     .select('*, messages!inner(*)')
+    .eq('tenant_id', session.tenant_id)
     .order('created_at', { ascending: false })
     .order('created_at', { foreignTable: 'messages', ascending: false });
   if (session.role !== 'admin') {
@@ -106,7 +107,7 @@ export async function PATCH(request: Request) {
     updates.last_read_at = new Date().toISOString();
   }
 
-  const { data, error } = await supabaseAdmin.from('contacts').update(updates).eq('id', contactId).select('*').single();
+  const { data, error } = await supabaseAdmin.from('contacts').update(updates).eq('id', contactId).eq('tenant_id', session.tenant_id).select('*').single();
   if (error) {
     return new NextResponse(error.message, { status: 500 });
   }
