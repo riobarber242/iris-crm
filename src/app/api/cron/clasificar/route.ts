@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { currentMonthStartISO, targetStatusFor } from '@/lib/contact-status';
 
-export async function GET(request: Request) {
-  const debug = new URL(request.url).searchParams.get('debug') === 'true';
+export async function GET() {
   try {
     const monthStart = currentMonthStartISO();
 
@@ -13,11 +12,9 @@ export async function GET(request: Request) {
       .neq('status', 'bloqueado');
 
     if (cErr) return NextResponse.json({ error: cErr.message }, { status: 500 });
-    if (!contacts || contacts.length === 0) return NextResponse.json({ updated: 0, detalle: [], debug: { contacts: 0 } });
+    if (!contacts || contacts.length === 0) return NextResponse.json({ updated: 0, detalle: [] });
 
-    const ids = contacts.map((c: any) => c.id);
-
-    const [{ data: everVerif, error: everErr }, { data: monthVerif, error: monthErr }] = await Promise.all([
+    const [{ data: everVerif }, { data: monthVerif }] = await Promise.all([
       supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado'),
       supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado').gte('created_at', monthStart),
     ]);
@@ -39,27 +36,6 @@ export async function GET(request: Request) {
       if (target === 'cliente_activo') toActivo.push(contact.id);
       else if (target === 'inactivo')  toInactivo.push(contact.id);
       else                             toNuevo.push(contact.id);
-    }
-
-    if (debug) {
-      return NextResponse.json({
-        debug: {
-          monthStart,
-          contactsCandidatos: contacts.length,
-          everErr: everErr?.message ?? null,
-          everErrFull: everErr ? JSON.stringify(everErr) : null,
-          monthErr: monthErr?.message ?? null,
-          monthErrFull: monthErr ? JSON.stringify(monthErr) : null,
-          everSetSize: everSet.size,
-          monthSetSize: monthSet.size,
-          toActivo: toActivo.length,
-          toInactivo: toInactivo.length,
-          toNuevo: toNuevo.length,
-          sampleContacts: contacts.slice(0, 3),
-          everVerifSample: (everVerif ?? []).slice(0, 3),
-          monthVerifSample: (monthVerif ?? []).slice(0, 3),
-        }
-      });
     }
 
     await Promise.all([
