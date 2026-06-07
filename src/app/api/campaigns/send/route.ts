@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
-async function resolveContacts(filter: string) {
+async function resolveContacts(filter: string, tenantId: string) {
   const base = supabaseAdmin
-    .from('contacts').select('id, phone, name').neq('blocked', true)
+    .from('contacts').select('id, phone, name').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
   if (filter.startsWith('phone:')) {
@@ -22,6 +23,7 @@ async function resolveContacts(filter: string) {
       supabaseAdmin
         .from('comprobantes')
         .select('contact_id')
+        .eq('tenant_id', tenantId)
         .eq('estado', 'verificado')
         .gte('created_at', cutoff)
         .order('created_at', { ascending: true }),
@@ -41,19 +43,22 @@ async function resolveContacts(filter: string) {
 }
 
 export async function POST(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
   const body = await request.json().catch(() => null);
   const campaignId = body?.campaignId as string | undefined;
   if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
 
   const { data: campaign, error: cErr } = await supabaseAdmin
-    .from('campaigns').select('*').eq('id', campaignId).single();
+    .from('campaigns').select('*').eq('id', campaignId).eq('tenant_id', session.tenant_id).single();
 
   if (cErr || !campaign) return new NextResponse('Campaña no encontrada', { status: 404 });
   if (campaign.status === 'completada') return new NextResponse('La campaña ya fue enviada', { status: 409 });
 
-  await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId);
+  await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
-  let contacts = await resolveContacts(campaign.target_filter ?? 'todos');
+  let contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id);
   if (campaign.send_limit) contacts = contacts.slice(0, Number(campaign.send_limit));
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
@@ -85,6 +90,7 @@ export async function POST(request: Request) {
         contact_id: contact.id,
         role:       'human',
         content:    msgContent,
+        tenant_id:  session.tenant_id,
       });
       sent++;
     } catch {
@@ -96,7 +102,7 @@ export async function POST(request: Request) {
   await supabaseAdmin
     .from('campaigns')
     .update({ status: 'completada', sent_count: sent })
-    .eq('id', campaignId);
+    .eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
   return NextResponse.json({ ok: true, sent, total: contacts.length });
 }

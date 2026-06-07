@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppTemplate } from '@/lib/meta/client';
 
 // Campaña de reactivación de contactos inactivos.
@@ -19,12 +20,13 @@ function nombreParaTemplate(c: { name: string | null; phone: string }): string {
 }
 
 // Mapa contact_id → fecha del último comprobante.
-async function lastComprobanteByContact(ids: string[]): Promise<Map<string, string>> {
+async function lastComprobanteByContact(ids: string[], tenantId: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (ids.length === 0) return map;
   const { data } = await supabaseAdmin
     .from('comprobantes')
     .select('contact_id, created_at')
+    .eq('tenant_id', tenantId)
     .in('contact_id', ids)
     .order('created_at', { ascending: false });
   for (const row of data ?? []) {
@@ -35,9 +37,13 @@ async function lastComprobanteByContact(ids: string[]): Promise<Map<string, stri
 
 // GET → lista de contactos inactivos con fecha de último comprobante.
 export async function GET() {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
   const { data: contacts, error } = await supabaseAdmin
     .from('contacts')
     .select('id, phone, name, casino_username')
+    .eq('tenant_id', session.tenant_id)
     .eq('status', 'inactivo')
     .neq('blocked', true)
     .order('created_at', { ascending: false });
@@ -45,7 +51,7 @@ export async function GET() {
   if (error) return new NextResponse(error.message, { status: 500 });
 
   const list = contacts ?? [];
-  const lastMap = await lastComprobanteByContact(list.map((c: any) => c.id));
+  const lastMap = await lastComprobanteByContact(list.map((c: any) => c.id), session.tenant_id);
 
   return NextResponse.json(
     list.map((c: any) => ({ ...c, last_comprobante_at: lastMap.get(c.id) ?? null })),
@@ -54,12 +60,16 @@ export async function GET() {
 
 // POST → envía la campaña a todos los inactivos (o a los contactIds seleccionados).
 export async function POST(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
   const body = await request.json().catch(() => null);
   const contactIds: string[] | undefined = Array.isArray(body?.contactIds) ? body.contactIds : undefined;
 
   let query = supabaseAdmin
     .from('contacts')
     .select('id, phone, name, casino_username')
+    .eq('tenant_id', session.tenant_id)
     .eq('status', 'inactivo')
     .neq('blocked', true);
 
@@ -83,6 +93,7 @@ export async function POST(request: Request) {
         contact_id: c.id,
         role:       'human',
         content:    `[Campaña reactivación] plantilla ${TEMPLATE_NAME} ({{1}}=${nombre})`,
+        tenant_id:  session.tenant_id,
       });
       sent++;
     } catch {
@@ -105,6 +116,7 @@ export async function POST(request: Request) {
     type:              'template_meta',
     template_name:     TEMPLATE_NAME,
     template_language: TEMPLATE_LANG,
+    tenant_id:         session.tenant_id,
   };
 
   let campaignId: string | null = null;
