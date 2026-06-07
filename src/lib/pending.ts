@@ -4,8 +4,9 @@
 // Reglas de negocio (sin estado persistido en la base; todo derivado):
 //  · "No leída" mientras last_read_at < último mensaje. SOLO un humano que abre
 //    el chat (bump de last_read_at) la marca como leída → limpia el pendiente.
-//  · 🔴 ROJO    = no leída + CRM ONLINE (no offline) + conversation_state='done'
-//                 (terminó el onboarding) → necesita atención humana directa.
+//  · 🔴 ROJO    = no leída + CRM ONLINE (no offline) + conversation_state ∈
+//                 {'done','known_client'} → terminó el onboarding, o es un cliente
+//                 ya reconocido (tiene casino_username) → atención humana directa.
 //  · 🟠 NARANJA = no leída + el último mensaje lo mandó un robot (role
 //                 'assistant': bot Groq o aviso de offline).
 //  · Si el último mensaje es de un operador humano (role 'human') → NO pendiente
@@ -30,8 +31,8 @@ export function classifyPending(opts: {
   // El operador humano fue el último en hablar → la conversación ya está atendida.
   if (lastRole === 'human') return null;
 
-  // 🔴 ROJO: onboarding terminado y estamos online.
-  if (!offline && conversationState === 'done') return 'red';
+  // 🔴 ROJO: onboarding terminado o cliente ya reconocido, estando online.
+  if (!offline && (conversationState === 'done' || conversationState === 'known_client')) return 'red';
 
   // 🟠 NARANJA: respondió un robot pero sigue pendiente de un humano.
   if (lastRole === 'assistant') return 'orange';

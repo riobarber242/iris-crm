@@ -437,6 +437,23 @@ async function processMessage(
     return;
   }
 
+  // ── Cliente ya reconocido (fast path, ANTES de cualquier flujo) ─────────────
+  // Si el número ya existe en contacts con casino_username y está en el punto de
+  // entrada (contacto nuevo o conversation_state nulo), NO se onboardea: se lo
+  // saluda por su usuario y queda listo para atención humana. El estado
+  // 'known_client' hace que classifyPending lo marque ROJO mientras esté online.
+  // (Un contacto nuevo nunca trae casino_username, así que en la práctica esto
+  // aplica a números preexistentes que recién escriben.)
+  const atEntryPoint = isNew || (contact.conversation_state ?? null) === null;
+  if (atEntryPoint && botEnabled && !contact.blocked && contact.casino_username) {
+    console.log(`[bot] Cliente reconocido (${contact.casino_username}) → known_client, sin onboarding`);
+    await replyAndSave(
+      `¡Hola ${contact.casino_username}! Ya te reconocemos, en un momento te atendemos 👋`,
+      { newState: 'known_client' },
+    );
+    return;
+  }
+
   // Mensaje de cierre del onboarding (handoff): cambia si estamos offline.
   const handoffMsg = offline ? OFFLINE_HANDOFF_MSG : HANDOFF_MSG;
 

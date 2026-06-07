@@ -35,6 +35,7 @@ const BOT_STATE_LABEL: Record<string, string> = {
   asked_name:        'Esperando nombre',
   done:              'Flujo completado',
   en_proceso:        'Flujo completado',
+  known_client:      'Cliente reconocido',
 };
 
 export default function ContactHeader({
