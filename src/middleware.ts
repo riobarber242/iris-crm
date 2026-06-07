@@ -15,7 +15,7 @@ const PUBLIC_PREFIXES = [
 ];
 
 // Solo admin
-const ADMIN_PREFIXES = ['/agentes', '/api/agents'];
+const ADMIN_PREFIXES = ['/agentes', '/api/agents', '/admin', '/api/tenants'];
 
 // Prohibido para el rol 'operator': campañas, configuración y el prompt del bot.
 // (/agentes y /api/agents ya están cubiertos por ADMIN_PREFIXES.)

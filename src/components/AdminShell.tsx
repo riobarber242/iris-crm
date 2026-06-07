@@ -18,6 +18,7 @@ const navLabels: Record<string, string> = {
   leads:         'Top Clientes',
   campanas:      'Campañas',
   agentes:       'Operadores',
+  tenants:       'Tenants',
   settings:      'Configuración',
 };
 
@@ -29,7 +30,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   // "Agentes" solo lo ve el admin (insertado antes de "Configuración").
   // El operator tiene un menú reducido (sin campañas, configuración ni operadores).
   const items =
-    agent?.role === 'admin'    ? [...navItems.slice(0, 6), 'agentes', 'settings']
+    agent?.role === 'admin'    ? [...navItems.slice(0, 6), 'agentes', 'tenants', 'settings']
     : agent?.role === 'operator' ? ['dashboard', 'conversations', 'comprobantes']
     : navItems;
   const [botEnabled, setBotEnabled] = useState(true);
@@ -340,7 +341,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
         }}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {items.map((item) => {
-              const path = item === 'dashboard' ? '/dashboard' : `/${item}`;
+              const path = item === 'dashboard' ? '/dashboard'
+                         : item === 'tenants'   ? '/admin/tenants'
+                         : `/${item}`;
               const active = pathname === path;
               return (
                 <Link

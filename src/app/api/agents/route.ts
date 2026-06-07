@@ -22,7 +22,8 @@ export async function GET() {
 
 // POST /api/agents — crear agente (admin)
 export async function POST(request: Request) {
-  if (!(await requireAdmin())) {
+  const admin = await requireAdmin();
+  if (!admin) {
     return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
   }
 
@@ -57,6 +58,8 @@ export async function POST(request: Request) {
       schedule_start,
       schedule_end,
       system_prompt,
+      // Multi-tenant: el nuevo agente hereda el tenant del admin que lo crea.
+      tenant_id: admin.tenant_id,
     })
     .select(AGENT_FIELDS)
     .single();
