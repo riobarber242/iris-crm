@@ -53,29 +53,31 @@ export async function notifyAgent(agentId: string, payload: PushPayload): Promis
   return sent;
 }
 
-// Notifica según la asignación del chat (multi-operador):
-//  - chat con agente asignado → push SOLO a ese agente + a los admins activos.
-//  - chat sin asignar         → push a todos los agentes activos (comportamiento previo).
+// Notifica según la asignación del chat (multi-operador), SOLO dentro del tenant:
+//  - chat con agente asignado → push SOLO a ese agente + a los admins activos del tenant.
+//  - chat sin asignar         → push a todos los agentes activos del tenant.
 // Devuelve cuántos push salieron.
-export async function notifyContactAgents(assignedAgentId: string | null, payload: PushPayload): Promise<number> {
+export async function notifyContactAgents(assignedAgentId: string | null, tenantId: string, payload: PushPayload): Promise<number> {
   if (!ensureVapid()) return 0;
 
   let targetIds: string[];
 
   if (assignedAgentId) {
-    // Agente asignado + admins activos (los admins ven todo, así que también avisamos).
+    // Agente asignado + admins activos DEL TENANT (los admins ven todo lo suyo).
     const { data: admins, error } = await supabaseAdmin
       .from('agents')
       .select('id')
       .eq('active', true)
-      .eq('role', 'admin');
+      .eq('role', 'admin')
+      .eq('tenant_id', tenantId);
     if (error) console.warn('[push] Error leyendo admins:', error.message);
     targetIds = Array.from(new Set<string>([assignedAgentId, ...(admins ?? []).map((a: { id: string }) => a.id)]));
   } else {
     const { data: agents, error } = await supabaseAdmin
       .from('agents')
       .select('id')
-      .eq('active', true);
+      .eq('active', true)
+      .eq('tenant_id', tenantId);
     if (error) { console.warn('[push] Error leyendo agents:', error.message); return 0; }
     targetIds = (agents ?? []).map((a: { id: string }) => a.id);
   }

@@ -388,7 +388,7 @@ async function processMessage(
       : type === 'document'          ? '📄 Documento'
       : ['audio', 'voice'].includes(type) ? '🎤 Audio'
       : type;
-    await notifyContactAgents(contact.assigned_agent_id ?? null, {
+    await notifyContactAgents(contact.assigned_agent_id ?? null, tenantId, {
       title: 'IRIS',
       body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
       url: `/conversations/${contact.id}`,

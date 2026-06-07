@@ -1,19 +1,25 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 
 const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 export async function GET() {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+  const tid = session.tenant_id;
+
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
   sixMonthsAgo.setDate(1);
   sixMonthsAgo.setHours(0, 0, 0, 0);
 
   const [contactsRes, comprobantesRes, recargasRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('status, provincia'),
-    supabaseAdmin.from('comprobantes').select('estado'),
+    supabaseAdmin.from('contacts').select('status, provincia').eq('tenant_id', tid),
+    supabaseAdmin.from('comprobantes').select('estado').eq('tenant_id', tid),
     supabaseAdmin.from('comprobantes')
       .select('monto, created_at')
+      .eq('tenant_id', tid)
       .eq('estado', 'verificado')
       .gte('created_at', sixMonthsAgo.toISOString()),
   ]);
