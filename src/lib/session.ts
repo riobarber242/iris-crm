@@ -9,6 +9,7 @@ export type SessionPayload = {
   sub:  string;            // agent id
   name: string;
   role: 'admin' | 'agent' | 'operator';
+  tenant_id: string;       // multi-tenant: tenant del agente
   exp:  number;            // epoch seconds
 };
 

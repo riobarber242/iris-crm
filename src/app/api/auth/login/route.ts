@@ -19,7 +19,7 @@ export async function POST(request: Request) {
 
   const { data: agent } = await supabaseAdmin
     .from('agents')
-    .select('id, username, password_hash, name, role, active')
+    .select('id, username, password_hash, name, role, active, tenant_id')
     .eq('username', username)
     .maybeSingle();
 
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Tu cuenta está desactivada. Contactá al administrador.' }, { status: 403 });
   }
 
-  const token = await signSession({ sub: agent.id, name: agent.name, role: agent.role });
+  const token = await signSession({ sub: agent.id, name: agent.name, role: agent.role, tenant_id: agent.tenant_id ?? '00000000-0000-0000-0000-000000000001' });
 
   const res = NextResponse.json({ id: agent.id, name: agent.name, role: agent.role });
   res.cookies.set(COOKIE_NAME, token, {
