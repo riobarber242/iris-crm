@@ -8,12 +8,29 @@ import { decideBotResponse } from './bot-decision';
 import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
 
+// Tenant principal (fallback cuando no se puede resolver por whatsapp_phone_id).
+const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
+// Resuelve el tenant a partir del phone_number_id que llega en el webhook,
+// matcheando tenants.whatsapp_phone_id. Si no hay match (o error) → Principal.
+async function resolveTenantId(phoneNumberId: string | undefined): Promise<string> {
+  if (!phoneNumberId) return PRINCIPAL_TENANT_ID;
+  try {
+    const { data } = await supabaseAdmin
+      .from('tenants').select('id').eq('whatsapp_phone_id', phoneNumberId).maybeSingle();
+    return data?.id ?? PRINCIPAL_TENANT_ID;
+  } catch (err) {
+    console.warn('[webhook] resolveTenantId falló, uso Principal:', err);
+    return PRINCIPAL_TENANT_ID;
+  }
+}
+
 // Resuelve el system prompt para Groq con esta prioridad:
 //   1. system_prompt del operador asignado al contacto (si no está vacío)
-//   2. system_prompt global guardado en settings
+//   2. system_prompt del tenant guardado en settings
 //   3. irisSystemPrompt hardcodeado
 // `assignedAgentId` es contacts.assigned_agent_id del contacto activo.
-async function getSystemPrompt(assignedAgentId?: string | null): Promise<string> {
+async function getSystemPrompt(assignedAgentId: string | null | undefined, tenantId: string): Promise<string> {
   // 1. Prompt por operador (agente asignado).
   if (assignedAgentId) {
     try {
@@ -26,10 +43,10 @@ async function getSystemPrompt(assignedAgentId?: string | null): Promise<string>
     }
   }
 
-  // 2. Prompt global (settings) → 3. default hardcodeado.
+  // 2. Prompt del tenant (settings) → 3. default hardcodeado.
   try {
     const { data } = await supabaseAdmin
-      .from('settings').select('value').eq('key', 'system_prompt').limit(1).maybeSingle();
+      .from('settings').select('value').eq('key', 'system_prompt').eq('tenant_id', tenantId).limit(1).maybeSingle();
     return data?.value ?? irisSystemPrompt;
   } catch {
     return irisSystemPrompt;
@@ -44,11 +61,12 @@ async function aiSteerReply(
   stateGoal: string,
   userText: string,
   assignedAgentId: string | null,
+  tenantId: string,
 ): Promise<string | null> {
   if (!process.env.GROQ_API_KEY) return null;        // sin Groq → guion hardcodeado
   if (!userText.trim()) return null;
   try {
-    const base = await getSystemPrompt(assignedAgentId);
+    const base = await getSystemPrompt(assignedAgentId, tenantId);
     const systemPrompt =
       `${base}\n\nContexto: estás en el onboarding por WhatsApp y el usuario respondió ` +
       `algo fuera de lo esperado. Objetivo actual: ${stateGoal}. Respondé en UNA sola frase ` +
@@ -157,7 +175,7 @@ async function saveComprobanteImage(mediaId: string, contactId: string): Promise
 // Se llama SIEMPRE que entra una imagen/documento, sin importar el estado del bot.
 // Sube la imagen a Storage, la guarda como comprobante y devuelve la URL pública
 // (o null si no se pudo). Se llama SIEMPRE que entra una imagen/documento.
-async function persistComprobanteImage(message: any, contactId: string): Promise<string | null> {
+async function persistComprobanteImage(message: any, contactId: string, tenantId: string): Promise<string | null> {
   const mediaId = message.image?.id ?? message.document?.id ?? null;
   const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId) : null;
 
@@ -170,6 +188,7 @@ async function persistComprobanteImage(message: any, contactId: string): Promise
       image_url:  supabaseImageUrl,
       monto:      0,
       estado:     'pendiente',
+      tenant_id:  tenantId,
     });
     if (error) console.error('[image] Error guardando comprobante en DB:', error.message);
     else       console.log('[image] Comprobante guardado OK');
@@ -251,6 +270,10 @@ async function processMessage(
     return;
   }
 
+  // ── Multi-tenant: resolver el tenant por el phone_number_id del webhook ──────
+  const tenantId = await resolveTenantId(_phoneNumberId);
+  console.log(`[webhook] tenant resuelto=${tenantId} (phone_number_id=${_phoneNumberId ?? 'null'})`);
+
   // ── Deduplication ──────────────────────────────────────────────────────────
   try {
     const { data: dup } = await supabaseAdmin
@@ -286,7 +309,7 @@ async function processMessage(
   }
 
   // ── Contact ────────────────────────────────────────────────────────────────
-  const { contact, isNew } = await findOrCreateContact(from, contactMeta?.profile?.name ?? null);
+  const { contact, isNew } = await findOrCreateContact(from, contactMeta?.profile?.name ?? null, tenantId);
   if (!contact) {
     console.error('[webhook] No se pudo crear/obtener contacto para', from);
     return;
@@ -321,7 +344,7 @@ async function processMessage(
   //    como comprobante (operador la necesita).
   let inboundImageUrl: string | null = null;
   if (type === 'image' || type === 'document') {
-    inboundImageUrl = await persistComprobanteImage(message, contact.id);
+    inboundImageUrl = await persistComprobanteImage(message, contact.id, tenantId);
   }
 
   // Contenido del mensaje del usuario.
@@ -338,6 +361,7 @@ async function processMessage(
       content:             userContent,
       whatsapp_message_id: messageId,
       type,
+      tenant_id:           tenantId,
     });
     if (error) {
       console.warn('[webhook] Insert mensaje usuario falló:', error.message, '— reintentando sin campos opcionales');
@@ -347,6 +371,7 @@ async function processMessage(
         role:                'user',
         content:             userContent,
         whatsapp_message_id: messageId,
+        tenant_id:           tenantId,
       });
       if (err2) console.error('[webhook] Retry insert también falló:', err2.message);
     }
@@ -373,7 +398,7 @@ async function processMessage(
   }
 
   // ── Bot enabled check ──────────────────────────────────────────────────────
-  const botEnabled = await getBotEnabled();
+  const botEnabled = await getBotEnabled(tenantId);
   console.log(
     `[webhook] bot_enabled=${botEnabled} | contact.id=${contact.id}` +
     ` status=${contact.status} conversation_state=${contact.conversation_state ?? 'null'}`,
@@ -392,7 +417,7 @@ async function processMessage(
     try {
       const { data: inserted, error } = await supabaseAdmin
         .from('messages')
-        .insert({ contact_id: contact.id, role: 'assistant', content: textResp })
+        .insert({ contact_id: contact.id, role: 'assistant', content: textResp, tenant_id: tenantId })
         .select('id')
         .single();
       if (error) {
@@ -452,7 +477,7 @@ async function processMessage(
   // · OFFLINE + bot PRENDIDO → onboarding normal, pero el mensaje de cierre
   //   (handoff) cambia al aviso de "no hay operadores" (ver handoffMsg). El bot
   //   sigue trabajando igual; solo cambia el cierre.
-  const offline = await getOfflineMode();
+  const offline = await getOfflineMode(tenantId);
   if (offline) {
     console.log('[bot] OFFLINE — aviso directo a todos');
     if (!contact.blocked) await replyAndSave(OFFLINE_MSG);
@@ -488,7 +513,7 @@ async function processMessage(
   //  · resto (atiende el bot, en horario) → seguir el flujo
   // En OFFLINE el bot atiende igual el onboarding (no se aplica el corte por
   // horario), y el cierre usa handoffMsg.
-  const operatorAvailable = offline ? true : await hasActiveOperator();
+  const operatorAvailable = offline ? true : await hasActiveOperator(tenantId);
   const decision = decideBotResponse({
     botEnabled,
     blocked: !!contact.blocked,
@@ -554,7 +579,7 @@ async function processMessage(
       } else {
         const ai = await aiSteerReply(
           'que el usuario aclare si es su primera vez o si ya tiene cuenta',
-          text, contact.assigned_agent_id ?? null,
+          text, contact.assigned_agent_id ?? null, tenantId,
         );
         await replyAndSave(ai ?? '¿Es tu primera vez con nosotros o ya tenés cuenta?');
       }
@@ -568,7 +593,7 @@ async function processMessage(
       } else {
         const ai = await aiSteerReply(
           'que el usuario mande la captura del canal de WhatsApp para poder continuar',
-          text, contact.assigned_agent_id ?? null,
+          text, contact.assigned_agent_id ?? null, tenantId,
         );
         await replyAndSave(
           ai ?? 'Necesito que me mandes la captura del canal de WhatsApp para poder continuar. Si no podés, avisame.',
@@ -589,7 +614,7 @@ async function processMessage(
       } else {
         const ai = await aiSteerReply(
           'que el usuario responda si recarga seguido (sí o no)',
-          text, contact.assigned_agent_id ?? null,
+          text, contact.assigned_agent_id ?? null, tenantId,
         );
         await replyAndSave(ai ?? 'Sos de recargar seguido? Respondé si o no 😊');
       }
@@ -636,6 +661,7 @@ function phoneCore(raw: string): string {
 async function findOrCreateContact(
   phone: string,
   _whatsappName: string | null,
+  tenantId: string,
 ): Promise<{ contact: any | null; isNew: boolean }> {
   // _whatsappName is intentionally ignored — bot never writes name to contacts.
   // Explicit column list avoids PostgREST schema-cache issues with recently added columns.
@@ -678,7 +704,7 @@ async function findOrCreateContact(
     const provincia = inferProvinciaFromPhone(phone);
     const { data: inserted, error } = await supabaseAdmin
       .from('contacts')
-      .insert({ phone, name: null, status: 'nuevo', ...(provincia ? { provincia } : {}) })
+      .insert({ phone, name: null, status: 'nuevo', tenant_id: tenantId, ...(provincia ? { provincia } : {}) })
       .select('*')
       .single();
 
@@ -710,11 +736,12 @@ function timeToMinutes(t: string | null | undefined): number | null {
 // Un agente activo sin horario definido cuenta como disponible 24h.
 // Fail-open: ante error o sin agentes, asume que hay operadores (no manda el
 // aviso de fuera de horario por las dudas).
-async function hasActiveOperator(): Promise<boolean> {
+async function hasActiveOperator(tenantId: string): Promise<boolean> {
   try {
     const { data: agents, error } = await supabaseAdmin
       .from('agents')
-      .select('active, schedule_start, schedule_end');
+      .select('active, schedule_start, schedule_end')
+      .eq('tenant_id', tenantId);
 
     if (error) { console.warn('[hasActiveOperator] Error leyendo agents:', error.message); return true; }
     if (!agents || agents.length === 0) return true;
@@ -741,10 +768,10 @@ async function hasActiveOperator(): Promise<boolean> {
 
 // Modo OFFLINE: si está activo, el bot solo manda el aviso de "no operamos".
 // Default false (fail-closed: ante error NO se asume offline).
-async function getOfflineMode(): Promise<boolean> {
+async function getOfflineMode(tenantId: string): Promise<boolean> {
   try {
     const { data, error } = await supabaseAdmin
-      .from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle();
+      .from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', tenantId).limit(1).maybeSingle();
     if (error) { console.warn('[getOfflineMode] Error leyendo settings:', error.message); return false; }
     return data?.value === 'true';
   } catch (err) {
@@ -753,13 +780,14 @@ async function getOfflineMode(): Promise<boolean> {
   }
 }
 
-async function getBotEnabled(): Promise<boolean> {
+async function getBotEnabled(tenantId: string): Promise<boolean> {
   try {
-    // Read ALL possible key formats for bot control
+    // Read ALL possible key formats for bot control (de este tenant)
     const { data: rows, error } = await supabaseAdmin
       .from('settings')
       .select('key, value')
       .in('key', [BOT_ENABLED_KEY, 'bot_mode'])
+      .eq('tenant_id', tenantId)
       .limit(10);
 
     if (error) {
