@@ -432,7 +432,7 @@ async function processMessage(
 
     // 2. Send via WhatsApp API — always attempt regardless of DB result
     try {
-      const wamid = await sendWhatsAppText(from!, textResp);
+      const wamid = await sendWhatsAppText(from!, textResp, tenantId);
       if (dbInsertOk && insertedId) {
         await supabaseAdmin.from('messages')
           .update({ status: 'sent', whatsapp_message_id: wamid })

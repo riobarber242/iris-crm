@@ -77,9 +77,11 @@ export async function POST(request: Request) {
           campaign.template_name,
           campaign.template_language ?? 'es',
           resolvedVars,
+          undefined,
+          session.tenant_id,
         );
       } else {
-        await sendWhatsAppText(contact.phone, campaign.message);
+        await sendWhatsAppText(contact.phone, campaign.message, session.tenant_id);
       }
 
       const msgContent = isTemplate

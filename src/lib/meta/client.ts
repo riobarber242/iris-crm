@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { supabaseAdmin } from '../db';
 
 const BASE_URL = 'https://graph.facebook.com/v18.0';
 
@@ -14,6 +15,31 @@ function getPhoneNumberId(): string {
   return id;
 }
 
+// Resuelve las credenciales de WhatsApp a usar para enviar.
+//  · Si `tenantId` tiene en la tabla tenants AMBOS (whatsapp_access_token y
+//    whatsapp_phone_id) → usa ese par (envía desde el número del tenant).
+//  · Si no (tenant sin credenciales propias, o sin tenantId) → fallback a las
+//    env vars globales. Es un par atómico: nunca se mezcla token de un origen con
+//    phone_id de otro.
+async function resolveCreds(tenantId?: string): Promise<{ token: string; phoneId: string }> {
+  if (tenantId) {
+    try {
+      const { data } = await supabaseAdmin
+        .from('tenants')
+        .select('whatsapp_access_token, whatsapp_phone_id')
+        .eq('id', tenantId)
+        .maybeSingle();
+      if (data?.whatsapp_access_token && data?.whatsapp_phone_id) {
+        return { token: data.whatsapp_access_token, phoneId: data.whatsapp_phone_id };
+      }
+    } catch (err) {
+      console.warn('[WhatsApp] resolveCreds falló, uso env globales:', err);
+    }
+  }
+  // Fallback: credenciales globales de env (tenant Principal / sin creds propias).
+  return { token: getToken(), phoneId: getPhoneNumberId() };
+}
+
 function logApiError(context: string, err: any) {
   const status = err?.response?.status;
   const data   = err?.response?.data;
@@ -26,9 +52,8 @@ function logApiError(context: string, err: any) {
 
 // Devuelve el wamid (id del mensaje en WhatsApp) para poder matchear luego los
 // webhooks de status (ticks) y reacciones. null si no vino en la respuesta.
-export async function sendWhatsAppText(to: string, text: string): Promise<string | null> {
-  const token       = getToken();
-  const phoneId     = getPhoneNumberId();
+export async function sendWhatsAppText(to: string, text: string, tenantId?: string): Promise<string | null> {
+  const { token, phoneId } = await resolveCreds(tenantId);
   const headers     = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   console.log(`[sendWhatsAppText] → ${to}: "${text.slice(0, 60)}"`);
@@ -48,9 +73,8 @@ export async function sendWhatsAppText(to: string, text: string): Promise<string
   }
 }
 
-export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string) {
-  const token   = getToken();
-  const phoneId = getPhoneNumberId();
+export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string, tenantId?: string) {
+  const { token, phoneId } = await resolveCreds(tenantId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
@@ -71,9 +95,13 @@ export async function sendWhatsAppTemplate(
   languageCode: string,
   variables: string[],
   phoneNumberId?: string,
+  tenantId?: string,
 ) {
-  const token   = getToken();
-  const phoneId = phoneNumberId ?? getPhoneNumberId();
+  const creds   = await resolveCreds(tenantId);
+  const token   = creds.token;
+  // Un phoneNumberId explícito (ej. plantilla con número dedicado) tiene prioridad
+  // sobre el del tenant/env.
+  const phoneId = phoneNumberId ?? creds.phoneId;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   const body: any = {
@@ -117,9 +145,8 @@ export async function sendWhatsAppReaction(to: string, messageId: string, emoji:
   }
 }
 
-export async function sendWhatsAppAudio(to: string, audioUrl: string) {
-  const token   = getToken();
-  const phoneId = getPhoneNumberId();
+export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?: string) {
+  const { token, phoneId } = await resolveCreds(tenantId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {

@@ -92,7 +92,7 @@ export async function PATCH(request: Request) {
       if (autoMsg) {
         const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
         const msg = `Tu recarga de $${montoFmt} fue confirmada ✅ ¡Ya podés jugar!`;
-        sendWhatsAppText(contact.phone, msg).catch(() => {
+        sendWhatsAppText(contact.phone, msg, session.tenant_id).catch(() => {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
         });
       }

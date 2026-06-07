@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppAudio } from '@/lib/meta/client';
 
 const MIME_TO_EXT: Record<string, string> = {
@@ -13,6 +14,9 @@ const MIME_TO_EXT: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSessionAgent();
+    if (!session) return new NextResponse('No autenticado', { status: 401 });
+
     const form = await req.formData();
     const file = form.get('file') as File | null;
     const contactId = form.get('contactId') as string | null;
@@ -25,6 +29,7 @@ export async function POST(req: NextRequest) {
       .from('contacts')
       .select('phone')
       .eq('id', contactId)
+      .eq('tenant_id', session.tenant_id)
       .single();
 
     if (!contact) {
@@ -50,14 +55,14 @@ export async function POST(req: NextRequest) {
 
     let whatsappStatus: 'sent' | 'failed' = 'sent';
     try {
-      await sendWhatsAppAudio(contact.phone, publicUrl);
+      await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id);
     } catch {
       whatsappStatus = 'failed';
     }
 
     const { data: saved, error: dbError } = await supabaseAdmin
       .from('messages')
-      .insert({ contact_id: contactId, role: 'human', content, status: whatsappStatus })
+      .insert({ contact_id: contactId, role: 'human', content, status: whatsappStatus, tenant_id: session.tenant_id })
       .select()
       .single();
 

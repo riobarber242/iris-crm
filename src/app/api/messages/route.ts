@@ -100,7 +100,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const wamid = await sendWhatsAppText(contact.phone, content);
+      const wamid = await sendWhatsAppText(contact.phone, content, session.tenant_id);
       if (inserted?.id) {
         await supabaseAdmin.from('messages')
           .update({ status: 'sent', whatsapp_message_id: wamid })

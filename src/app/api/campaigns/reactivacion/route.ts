@@ -88,7 +88,7 @@ export async function POST(request: Request) {
   for (const c of contacts as InactivoContact[]) {
     const nombre = nombreParaTemplate(c);
     try {
-      await sendWhatsAppTemplate(c.phone, TEMPLATE_NAME, TEMPLATE_LANG, [nombre], REACTIVACION_PHONE_ID);
+      await sendWhatsAppTemplate(c.phone, TEMPLATE_NAME, TEMPLATE_LANG, [nombre], REACTIVACION_PHONE_ID, session.tenant_id);
       await supabaseAdmin.from('messages').insert({
         contact_id: c.id,
         role:       'human',
