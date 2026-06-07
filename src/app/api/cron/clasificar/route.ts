@@ -18,8 +18,8 @@ export async function GET(request: Request) {
     const ids = contacts.map((c: any) => c.id);
 
     const [{ data: everVerif, error: everErr }, { data: monthVerif, error: monthErr }] = await Promise.all([
-      supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado').in('contact_id', ids),
-      supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado').gte('created_at', monthStart).in('contact_id', ids),
+      supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado'),
+      supabaseAdmin.from('comprobantes').select('contact_id').eq('estado', 'verificado').gte('created_at', monthStart),
     ]);
 
     const everSet  = new Set((everVerif  ?? []).map((r: any) => r.contact_id));
