@@ -45,6 +45,10 @@ export async function GET() {
       else                             toNuevo.push(contact.id);
     }
 
+    console.log('[cron/clasificar] contactos candidatos:', contacts.length);
+    console.log('[cron/clasificar] everSet size:', everSet.size, 'monthSet size:', monthSet.size);
+    console.log('[cron/clasificar] toActivo:', toActivo.length, 'toInactivo:', toInactivo.length, 'toNuevo:', toNuevo.length);
+
     // 4. Bulk updates — 3 queries en lugar de N.
     const updates = await Promise.all([
       toActivo.length   ? supabaseAdmin.from('contacts').update({ status: 'cliente_activo' }).in('id', toActivo)   : null,
