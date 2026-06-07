@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
 
 function countUnique(data: { contact_id: string }[]): number {
@@ -39,17 +40,14 @@ function buildDates() {
   const prevMonthStart = new Date(Date.UTC(argYear, argMonth - 1, 1, 3, 0, 0, 0));
   const prevMonthEnd   = monthStart; // exclusive
 
-  console.log('[dashboard_stats] Date ranges (UTC):',
-    `today=${todayStart.toISOString()}`,
-    `week=${weekStart.toISOString()}`,
-    `month=${monthStart.toISOString()}`,
-    `prevMonth=[${prevMonthStart.toISOString()}, ${prevMonthEnd.toISOString()})`,
-  );
-
   return { todayStart, weekStart, monthStart, prevMonthStart, prevMonthEnd };
 }
 
 export async function GET() {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+  const tid = session.tenant_id;
+
   const { todayStart, weekStart, monthStart, prevMonthStart, prevMonthEnd } = buildDates();
 
   // Rolling 30-day window for the operator first-response SLA
@@ -65,44 +63,44 @@ export async function GET() {
     opContactsRes, slaMsgsRes,
   ] = await Promise.all([
     // Conversaciones — unique contact_ids with any message in period
-    supabaseAdmin.from('messages').select('contact_id').gte('created_at', todayStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id').gte('created_at', weekStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id').gte('created_at', monthStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id')
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', todayStart.toISOString()),
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', weekStart.toISOString()),
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', monthStart.toISOString()),
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid)
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
     // Contactos nuevos — contacts created in period
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', todayStart.toISOString()),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', weekStart.toISOString()),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).gte('created_at', monthStart.toISOString()),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', todayStart.toISOString()),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', weekStart.toISOString()),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', monthStart.toISOString()),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid)
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
     // Contactos por status real
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'cliente_activo'),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'inactivo'),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('status', 'nuevo'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('status', 'cliente_activo'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('status', 'inactivo'),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('status', 'nuevo'),
     // Total de contactos (denominador de la tasa de conversión)
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }),
+    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid),
 
     // Comprobantes pendientes
-    supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('estado', 'pendiente'),
+    supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('estado', 'pendiente'),
 
     // Montos verificados (HOY se usa solo para contar recargas; el monto de hoy ya no se muestra)
-    supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado').gte('created_at', todayStart.toISOString()),
-    supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado').gte('created_at', monthStart.toISOString()),
-    supabaseAdmin.from('comprobantes').select('monto').eq('estado', 'verificado')
+    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', todayStart.toISOString()),
+    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', monthStart.toISOString()),
+    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado')
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
     // IDs de contactos en gestión manual (para "Sin responder" y "Chats activos hoy")
-    supabaseAdmin.from('contacts').select('id')
+    supabaseAdmin.from('contacts').select('id').eq('tenant_id', tid)
       .or('conversation_state.eq.done,conversation_state.eq.en_proceso,status.eq.en_proceso'),
 
     // Mensajes de los últimos 30 días para el SLA de 1ra respuesta del operador
-    supabaseAdmin.from('messages').select('contact_id, role, created_at')
+    supabaseAdmin.from('messages').select('contact_id, role, created_at').eq('tenant_id', tid)
       .gte('created_at', slaWindowStart.toISOString())
       .order('created_at', { ascending: true }),
   ]);
@@ -147,7 +145,7 @@ export async function GET() {
   let chatsActivosHoy = 0;
   if (opIds.length > 0) {
     const { data: activosHoy } = await supabaseAdmin.from('messages').select('contact_id')
-      .in('contact_id', opIds).gte('created_at', todayStart.toISOString());
+      .eq('tenant_id', tid).in('contact_id', opIds).gte('created_at', todayStart.toISOString());
     chatsActivosHoy = new Set((activosHoy ?? []).map((m: any) => m.contact_id as string)).size;
   }
 
@@ -155,9 +153,9 @@ export async function GET() {
   // Sin filtro de fecha. 🟠 naranja = robot respondió y sin leer;
   // 🔴 rojo = online + onboarding 'done' y sin leer. Solo la lectura humana limpia.
   const [offlineSetRes, pendContactsRes, pendMsgsRes] = await Promise.all([
-    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle(),
-    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at'),
-    supabaseAdmin.from('messages').select('contact_id, role, created_at').order('created_at', { ascending: false }),
+    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', tid).limit(1).maybeSingle(),
+    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at').eq('tenant_id', tid),
+    supabaseAdmin.from('messages').select('contact_id, role, created_at').eq('tenant_id', tid).order('created_at', { ascending: false }),
   ]);
   const offlineMode = offlineSetRes.data?.value === 'true';
 

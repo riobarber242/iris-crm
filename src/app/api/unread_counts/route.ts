@@ -19,14 +19,15 @@ export async function GET() {
     let offline = false;
     {
       const { data } = await supabaseAdmin
-        .from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle();
+        .from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', session.tenant_id).limit(1).maybeSingle();
       offline = data?.value === 'true';
     }
 
     // 1. Contactos con su estado y last_read_at. Agentes: solo los asignados.
     let contactsQuery = supabaseAdmin
       .from('contacts')
-      .select('id, conversation_state, last_read_at');
+      .select('id, conversation_state, last_read_at')
+      .eq('tenant_id', session.tenant_id);
     if (isAgent) contactsQuery = contactsQuery.eq('assigned_agent_id', session.sub);
     const { data: contacts, error: cErr } = await contactsQuery;
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
@@ -37,6 +38,7 @@ export async function GET() {
     const { data: msgs, error: mErr } = await supabaseAdmin
       .from('messages')
       .select('contact_id, role, created_at')
+      .eq('tenant_id', session.tenant_id)
       .order('created_at', { ascending: false });
     if (mErr) return new NextResponse(mErr.message, { status: 500 });
 
@@ -65,7 +67,8 @@ export async function GET() {
     let comprobantesQuery = supabaseAdmin
       .from('comprobantes')
       .select('id', { count: 'exact', head: true })
-      .eq('estado', 'pendiente');
+      .eq('estado', 'pendiente')
+      .eq('tenant_id', session.tenant_id);
     if (isAgent) {
       const ownedIds = Array.from(contactMap.keys());
       comprobantesQuery = comprobantesQuery.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);

@@ -11,13 +11,15 @@ async function guardContactAccess(
   session: SessionPayload,
   contactId: string,
 ): Promise<NextResponse | null> {
-  if (session.role === 'admin') return null;
+  // Scope por tenant para TODOS los roles (incluye admin → no cruza tenants).
   const { data } = await supabaseAdmin
     .from('contacts')
     .select('assigned_agent_id')
     .eq('id', contactId)
-    .single();
-  if (!data || data.assigned_agent_id !== session.sub) {
+    .eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!data) return new NextResponse('Sin acceso a este contacto', { status: 403 });
+  if (session.role !== 'admin' && data.assigned_agent_id !== session.sub) {
     return new NextResponse('Sin acceso a este contacto', { status: 403 });
   }
   return null;
@@ -40,6 +42,7 @@ export async function GET(request: Request) {
     .from('messages')
     .select('*')
     .eq('contact_id', contactId)
+    .eq('tenant_id', session.tenant_id)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -75,6 +78,7 @@ export async function POST(request: Request) {
       .from('contacts')
       .select('phone')
       .eq('id', contactId)
+      .eq('tenant_id', session.tenant_id)
       .single();
 
     if (contactError || !contact) {
@@ -87,6 +91,7 @@ export async function POST(request: Request) {
       content,
       agent_id:   session?.sub  ?? null,
       agent_name: session?.name ?? null,
+      tenant_id:  session.tenant_id,
     }).select('*').single();
 
     if (insertError || !inserted) {
