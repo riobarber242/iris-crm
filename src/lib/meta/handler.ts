@@ -293,6 +293,28 @@ async function processMessage(
   }
   console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} isNew=${isNew} status=${contact.status} conversation_state=${contact.conversation_state ?? 'null'}`);
 
+  // ── Sincronizar identidad conocida (name ⇄ casino_username) ──────────────────
+  // Si ya sabemos quién es (el contacto tiene name o casino_username con valor),
+  // dejamos AMBOS campos seteados con el mismo valor. Prioridad: casino_username;
+  // si no, name. Va ANTES de cualquier decisión de flujo (onboarding/known_client).
+  // No corre para contactos nuevos (ambos null) ni si ya están sincronizados.
+  {
+    const known = (contact.casino_username ?? '').trim() || (contact.name ?? '').trim();
+    if (known && (contact.casino_username !== known || contact.name !== known)) {
+      const { error } = await supabaseAdmin
+        .from('contacts')
+        .update({ name: known, casino_username: known })
+        .eq('id', contact.id);
+      if (error) {
+        console.warn('[webhook] Sync name/casino_username falló:', error.message);
+      } else {
+        contact.name           = known;
+        contact.casino_username = known;
+        console.log(`[webhook] Identidad sincronizada → name=casino_username="${known}"`);
+      }
+    }
+  }
+
   // ── Comprobantes/imágenes: subir ANTES de guardar el mensaje, para que el
   //    mensaje entrante de tipo image se guarde como media (no como texto "image")
   //    y se renderice como imagen en el chat del CRM. La imagen también se guarda
