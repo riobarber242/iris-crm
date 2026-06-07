@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 
@@ -69,6 +70,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchUnreadRef = useRef<() => void>(() => {});
+  // Conteos previos para detectar SUBIDAS y disparar el sonido correspondiente.
+  // -1 = todavía no cargó (no sonar en el primer fetch).
+  const prevNewRef = useRef<number>(-1);
+  const prevRecRef = useRef<number>(-1);
 
   useEffect(() => {
     async function fetchUnread() {
@@ -76,10 +81,23 @@ export function AdminShell({ children }: { children: ReactNode }) {
         const res = await fetch('/api/unread_counts');
         if (!res.ok) return;
         const data = await res.json();
+        const newP = data.newPending       ?? 0; // 🟠
+        const recP = data.recurringPending ?? 0; // 🔴
+
+        // Sonido en tiempo real al aparecer un pendiente nuevo. Rojo tiene
+        // prioridad. No suena en la primera carga (refs en -1).
+        if (prevRecRef.current >= 0 && recP > prevRecRef.current) {
+          playPendingSound('red');
+        } else if (prevNewRef.current >= 0 && newP > prevNewRef.current) {
+          playPendingSound('orange');
+        }
+        prevNewRef.current = newP;
+        prevRecRef.current = recP;
+
         setUnread({
           total:               data.total               ?? 0,
-          newPending:          data.newPending           ?? 0,
-          recurringPending:    data.recurringPending     ?? 0,
+          newPending:          newP,
+          recurringPending:    recP,
           comprobantesPending: data.comprobantesPending  ?? 0,
         });
       } catch {}

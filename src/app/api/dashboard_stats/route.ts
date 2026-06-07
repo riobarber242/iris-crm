@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { classifyPending } from '@/lib/pending';
 
 function countUnique(data: { contact_id: string }[]): number {
   return new Set(data.map((r) => r.contact_id)).size;
@@ -140,30 +141,46 @@ export async function GET() {
   const montoVerifMes  = sumMonto(montoMesRes.data ?? []);
   const ticketPromedio = recargasMes > 0 ? montoVerifMes / recargasMes : 0;
 
-  // ── Phase 2: "Sin responder" y "Chats activos hoy" sobre contactos en gestión ─
+  // ── Phase 2: "Chats activos hoy" sobre contactos en gestión ───────────────────
   const opIds = (opContactsRes.data ?? []).map((c: any) => c.id as string);
 
-  let sinResponder   = 0;
   let chatsActivosHoy = 0;
-
   if (opIds.length > 0) {
-    const [latestMsgsRes, activosHoyRes] = await Promise.all([
-      supabaseAdmin.from('messages').select('contact_id, role')
-        .in('contact_id', opIds).order('created_at', { ascending: false }),
-      supabaseAdmin.from('messages').select('contact_id')
-        .in('contact_id', opIds).gte('created_at', todayStart.toISOString()),
-    ]);
-
-    const firstSeenRole = new Map<string, string>();
-    for (const msg of (latestMsgsRes.data ?? [])) {
-      if (!firstSeenRole.has(msg.contact_id)) firstSeenRole.set(msg.contact_id, msg.role);
-    }
-    for (const role of firstSeenRole.values()) {
-      if (role === 'user') sinResponder++;
-    }
-
-    chatsActivosHoy = new Set((activosHoyRes.data ?? []).map((m: any) => m.contact_id as string)).size;
+    const { data: activosHoy } = await supabaseAdmin.from('messages').select('contact_id')
+      .in('contact_id', opIds).gte('created_at', todayStart.toISOString());
+    chatsActivosHoy = new Set((activosHoy ?? []).map((m: any) => m.contact_id as string)).size;
   }
+
+  // ── Pendientes (misma regla que el sidebar/lista, ver lib/pending.ts) ─────────
+  // Sin filtro de fecha. 🟠 naranja = robot respondió y sin leer;
+  // 🔴 rojo = online + onboarding 'done' y sin leer. Solo la lectura humana limpia.
+  const [offlineSetRes, pendContactsRes, pendMsgsRes] = await Promise.all([
+    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle(),
+    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at'),
+    supabaseAdmin.from('messages').select('contact_id, role, created_at').order('created_at', { ascending: false }),
+  ]);
+  const offlineMode = offlineSetRes.data?.value === 'true';
+
+  const lastMsgByContact = new Map<string, { role: string; created_at: string }>();
+  for (const m of (pendMsgsRes.data ?? [])) {
+    if (!lastMsgByContact.has(m.contact_id)) lastMsgByContact.set(m.contact_id, { role: m.role, created_at: m.created_at });
+  }
+
+  let pendingOrange = 0;
+  let pendingRed    = 0;
+  for (const c of (pendContactsRes.data ?? [])) {
+    const lm = lastMsgByContact.get(c.id as string);
+    const level = classifyPending({
+      lastRole:          lm?.role,
+      lastMsgAt:         lm?.created_at,
+      lastReadAt:        c.last_read_at,
+      conversationState: c.conversation_state,
+      offline:           offlineMode,
+    });
+    if (level === 'red')         pendingRed++;
+    else if (level === 'orange') pendingOrange++;
+  }
+  const sinResponder = pendingOrange + pendingRed;
 
   return NextResponse.json({
     convToday:     countUnique(convTodayRes.data    ?? []),
@@ -196,5 +213,7 @@ export async function GET() {
 
     // Hero
     sinResponder,
+    pendingOrange,
+    pendingRed,
   });
 }

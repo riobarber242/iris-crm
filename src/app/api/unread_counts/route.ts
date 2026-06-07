@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { classifyPending } from '@/lib/pending';
 
-// Returns two pending-attention counts:
-// newPending      (orange): no casino_username, bot finished, last msg inbound
-// recurringPending (red):   has casino_username, last msg inbound
+// Devuelve los pendientes según la regla de negocio (ver lib/pending.ts):
+//   newPending       (🟠 naranja): último mensaje de un robot, sin leer.
+//   recurringPending (🔴 rojo):    online + onboarding 'done', sin leer.
+// Sin filtro de fecha: mira TODOS los mensajes. Solo la lectura humana limpia.
 // Los agentes solo cuentan sus chats asignados; el admin, todos.
 export async function GET() {
   try {
@@ -12,76 +14,66 @@ export async function GET() {
     if (!session) return new NextResponse('No autenticado', { status: 401 });
     const isAgent = session.role !== 'admin';
 
-    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
-    const utcNow     = new Date();
-    const argNow     = new Date(utcNow.getTime() - ART_OFFSET_MS);
-    const todayStart = new Date(Date.UTC(
-      argNow.getUTCFullYear(), argNow.getUTCMonth(), argNow.getUTCDate(), 3, 0, 0, 0,
-    ));
+    // Modo offline global: sin offline NO hay ROJO (la regla de done→rojo aplica
+    // solo cuando el CRM está operando).
+    let offline = false;
+    {
+      const { data } = await supabaseAdmin
+        .from('settings').select('value').eq('key', 'offline_mode').limit(1).maybeSingle();
+      offline = data?.value === 'true';
+    }
 
-    // 1. All contacts with relevant fields including last_read_at
+    // 1. Contactos con su estado y last_read_at. Agentes: solo los asignados.
     let contactsQuery = supabaseAdmin
       .from('contacts')
-      .select('id, casino_username, status, conversation_state, last_read_at');
+      .select('id, conversation_state, last_read_at');
     if (isAgent) contactsQuery = contactsQuery.eq('assigned_agent_id', session.sub);
     const { data: contacts, error: cErr } = await contactsQuery;
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
 
-    const contactMap = new Map<string, any>(
-      (contacts ?? []).map((c: any) => [c.id, c]),
-    );
+    const contactMap = new Map<string, any>((contacts ?? []).map((c: any) => [c.id, c]));
 
-    // 2. Today's messages — latest per contact (descending), with created_at
+    // 2. Último mensaje por contacto — TODOS los mensajes, sin filtro de fecha.
     const { data: msgs, error: mErr } = await supabaseAdmin
       .from('messages')
       .select('contact_id, role, created_at')
-      .gte('created_at', todayStart.toISOString())
       .order('created_at', { ascending: false });
     if (mErr) return new NextResponse(mErr.message, { status: 500 });
 
-    // Build last-message map per contact (role + created_at)
     const lastMsg = new Map<string, { role: string; created_at: string }>();
     for (const m of (msgs ?? [])) {
       if (!lastMsg.has(m.contact_id)) lastMsg.set(m.contact_id, { role: m.role, created_at: m.created_at });
     }
 
-    // 3. Classify — skip contacts already read after the last message
-    let newPending       = 0;
-    let recurringPending = 0;
-
-    for (const [cId, msg] of lastMsg.entries()) {
-      if (msg.role !== 'user') continue; // last message is outbound → no badge
-
-      const c = contactMap.get(cId);
-      if (!c) continue;
-
-      // Skip if operator already opened after this message
-      if (c.last_read_at && new Date(c.last_read_at) >= new Date(msg.created_at)) continue;
-
-      if (c.casino_username) {
-        recurringPending++; // 🔴 recurring user waiting for manual reply
-      } else {
-        const botDone = c.conversation_state === 'done'
-                     || c.conversation_state === 'en_proceso'
-                     || c.status === 'en_proceso';
-        if (botDone) newPending++; // 🟠 new user, bot finished, operator's turn
-      }
+    // 3. Clasificar cada contacto.
+    let newPending       = 0; // 🟠
+    let recurringPending = 0; // 🔴
+    for (const [cId, c] of contactMap.entries()) {
+      const lm = lastMsg.get(cId);
+      const level = classifyPending({
+        lastRole:          lm?.role,
+        lastMsgAt:         lm?.created_at,
+        lastReadAt:        c.last_read_at,
+        conversationState: c.conversation_state,
+        offline,
+      });
+      if (level === 'red')         recurringPending++;
+      else if (level === 'orange') newPending++;
     }
 
-    // 4. Comprobantes pendientes (para agentes, solo los de sus contactos)
+    // 4. Comprobantes pendientes (para agentes, solo los de sus contactos).
     let comprobantesQuery = supabaseAdmin
       .from('comprobantes')
       .select('id', { count: 'exact', head: true })
       .eq('estado', 'pendiente');
     if (isAgent) {
       const ownedIds = Array.from(contactMap.keys());
-      // Si el agente no tiene contactos, no puede haber comprobantes suyos.
       comprobantesQuery = comprobantesQuery.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);
     }
     const { count: comprobantesPending } = await comprobantesQuery;
 
     return NextResponse.json({
-      total:              newPending + recurringPending,
+      total:               newPending + recurringPending,
       newPending,
       recurringPending,
       comprobantesPending: comprobantesPending ?? 0,

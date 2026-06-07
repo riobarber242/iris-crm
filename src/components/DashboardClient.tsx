@@ -14,6 +14,8 @@ type Stats = {
   comprobantesPending: number;
   montoVerifMes: number; montoVerifMesAnterior: number; ticketPromedio: number;
   sinResponder: number;
+  pendingOrange: number;
+  pendingRed: number;
 };
 
 function fmt(n: number) {
@@ -160,6 +162,11 @@ export default function DashboardClient() {
 
   const sinResponder = stats.sinResponder;
   const hasPending   = sinResponder > 0;
+  const pendingOrange = stats.pendingOrange ?? 0;
+  const pendingRed    = stats.pendingRed ?? 0;
+  // Rojo si hay alguno rojo; si no, naranja; si no, sin pendientes.
+  const heroBg   = pendingRed > 0 ? '#E53935' : pendingOrange > 0 ? '#FF8C00' : '#FFFFFF';
+  const heroIcon = pendingRed > 0 ? '🔴' : pendingOrange > 0 ? '🟠' : '✅';
 
   return (
     <>
@@ -168,7 +175,7 @@ export default function DashboardClient() {
       <div
         className={hasPending ? 'card-3d-lime' : 'card-3d'}
         style={{
-          background: hasPending ? '#E53935' : '#FFFFFF',
+          background: heroBg,
           borderRadius: '18px',
           padding: '20px 26px',
           display: 'flex',
@@ -179,7 +186,7 @@ export default function DashboardClient() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <span style={{ fontSize: '30px' }}>{hasPending ? '🔴' : '✅'}</span>
+          <span style={{ fontSize: '30px' }}>{heroIcon}</span>
           <div>
             <p style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: hasPending ? 'rgba(255,255,255,0.85)' : '#999', margin: 0 }}>
               Sin responder
@@ -187,6 +194,26 @@ export default function DashboardClient() {
             <p style={{ fontSize: '14px', fontWeight: 600, color: hasPending ? '#fff' : '#666', margin: '4px 0 0 0' }}>
               {hasPending ? 'Contactos esperando respuesta de un operador' : 'Todo respondido — sin pendientes'}
             </p>
+            {hasPending && (
+              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                {pendingOrange > 0 && (
+                  <span style={{
+                    background: '#FF8C00', color: '#fff', borderRadius: '999px',
+                    fontSize: '12px', fontWeight: 800, padding: '3px 10px',
+                  }}>
+                    🟠 {fmt(pendingOrange)} naranja
+                  </span>
+                )}
+                {pendingRed > 0 && (
+                  <span style={{
+                    background: '#fff', color: '#E53935', borderRadius: '999px',
+                    fontSize: '12px', fontWeight: 800, padding: '3px 10px',
+                  }}>
+                    🔴 {fmt(pendingRed)} rojo
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <span style={{ fontSize: '52px', fontWeight: 900, color: hasPending ? '#fff' : '#000', lineHeight: 1 }}>

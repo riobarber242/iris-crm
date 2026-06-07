@@ -4,29 +4,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { classifyPending } from '@/lib/pending';
 
-function playNotificationBeep() {
-  try {
-    const ctx  = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const osc  = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type            = 'sine';
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.35);
-  } catch {}
-}
+// El sonido de pendiente nuevo lo dispara AdminShell (centralizado, suena en
+// toda la app y diferencia naranja/rojo). Acá ya no se emite beep para no
+// duplicarlo.
 
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
   const [query,          setQuery]          = useState('');
-  // Tracks the latest inbound message timestamp seen, to detect new arrivals
-  const latestMsgTsRef = useRef<string | null>(null);
+  const [offline,        setOffline]        = useState(false);
   const fetchRef       = useRef<() => void>(() => {});
   const sbRef          = useRef<any>(null);
   const channelRef     = useRef<any>(null);
@@ -36,24 +24,6 @@ export default function ConversationsClient() {
       const res = await fetch('/api/conversations');
       if (!res.ok) return;
       const data: any[] = await res.json();
-
-      // Detect new inbound messages → play beep
-      // Find the most recent user message across all conversations
-      let newestTs: string | null = null;
-      for (const c of data) {
-        const msgs: any[] = c.messages ?? [];
-        const latestInbound = msgs.find((m: any) => m.role === 'user');
-        if (latestInbound?.created_at) {
-          if (!newestTs || latestInbound.created_at > newestTs) {
-            newestTs = latestInbound.created_at;
-          }
-        }
-      }
-      if (newestTs && latestMsgTsRef.current && newestTs > latestMsgTsRef.current) {
-        playNotificationBeep();
-      }
-      if (newestTs) latestMsgTsRef.current = newestTs;
-
       setConversations(data);
     } catch {}
   }
@@ -62,6 +32,11 @@ export default function ConversationsClient() {
   useEffect(() => {
     fetchRef.current = fetchConversations;
     fetchConversations();
+    // El modo offline afecta la clasificación (sin offline no hay rojo).
+    fetch('/api/settings/offline-mode')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setOffline(!!d.offline); })
+      .catch(() => {});
     const timer = setInterval(() => fetchRef.current(), 5_000);
 
     const sb = getSupabaseBrowser();
@@ -181,32 +156,23 @@ export default function ConversationsClient() {
       {filtered.map((contact) => {
         const messages: any[] = contact.messages ?? [];
         const lastMessage     = messages[0];
-        const lastMsgInbound  = lastMessage?.role === 'user';
-        const hasCasinoUser   = !!contact.casino_username;
-        const botFlowDone     = contact.conversation_state === 'done'
-                              || contact.conversation_state === 'en_proceso'
-                              || contact.status === 'en_proceso';
 
-        // Badge clears when operator opened the conversation AFTER the last message
-        // markRead() sets last_read_at = NOW() optimistically, which triggers this
-        const lastReadAt   = contact.last_read_at ? new Date(contact.last_read_at) : null;
-        const lastMsgTime  = lastMessage ? new Date(lastMessage.created_at) : null;
-        const readAfterMsg = !!(lastReadAt && lastMsgTime && lastReadAt >= lastMsgTime);
+        // Clasificación de pendiente (única fuente de verdad, compartida con la API).
+        // markRead() setea last_read_at = NOW() optimistamente → limpia el badge.
+        const badgeType = classifyPending({
+          lastRole:          lastMessage?.role,
+          lastMsgAt:         lastMessage?.created_at,
+          lastReadAt:        contact.last_read_at,
+          conversationState: contact.conversation_state,
+          offline,
+        });
 
-        // Count consecutive inbound messages from top (unanswered)
+        // Cantidad de mensajes del cliente sin leer (para el número del badge).
+        const lastReadAt = contact.last_read_at ? new Date(contact.last_read_at) : null;
         let pendingCount = 0;
         for (const msg of messages) {
+          if (lastReadAt && new Date(msg.created_at) <= lastReadAt) break; // resto ya leído
           if (msg.role === 'user') pendingCount++;
-          else break;
-        }
-
-        // Badge type based on business rules — clears once conversation is opened
-        // 🟠 Orange: new contact, bot finished, operator's turn
-        // 🔴 Red: recurring (has casino_username), waiting for manual reply
-        let badgeType: 'orange' | 'red' | null = null;
-        if (lastMsgInbound && pendingCount > 0 && !readAfterMsg) {
-          if (hasCasinoUser)    badgeType = 'red';
-          else if (botFlowDone) badgeType = 'orange';
         }
 
         const borderColor = badgeType === 'red' ? '#E53935'
@@ -249,7 +215,7 @@ export default function ConversationsClient() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {badgeType && (
+                  {badgeType && pendingCount > 0 && (
                     <span style={{
                       background: badgeType === 'red' ? '#E53935' : '#FF8C00',
                       color: '#fff',
