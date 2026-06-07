@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 
 export async function GET(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
   const url = new URL(request.url);
   const estado = url.searchParams.get('estado');
 
-  let query = supabaseAdmin.from('comprobantes').select('*, contacts(phone, name, casino_username)');
+  let query = supabaseAdmin
+    .from('comprobantes')
+    .select('*, contacts(phone, name, casino_username)')
+    .eq('tenant_id', session.tenant_id);
   if (estado && estado !== 'all') {
     query = query.eq('estado', estado);
   }
@@ -23,6 +30,9 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
   const body = await request.json();
   const comprobanteId = body.comprobanteId;
   const action = body.action;
@@ -38,7 +48,7 @@ export async function PATCH(request: Request) {
       return new NextResponse('Monto inválido', { status: 400 });
     }
     const { data, error } = await supabaseAdmin
-      .from('comprobantes').update({ monto }).eq('id', comprobanteId).select('*').single();
+      .from('comprobantes').update({ monto }).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
     if (error) return new NextResponse(error.message, { status: 500 });
     return NextResponse.json(data);
   }
@@ -46,7 +56,7 @@ export async function PATCH(request: Request) {
   const estado = action === 'verificar' ? 'verificado' : 'rechazado';
 
   const { data: comprobante, error: fetchError } = await supabaseAdmin
-    .from('comprobantes').select('*').eq('id', comprobanteId).single();
+    .from('comprobantes').select('*').eq('id', comprobanteId).eq('tenant_id', session.tenant_id).single();
   if (fetchError || !comprobante) {
     return new NextResponse('Comprobante no encontrado', { status: 404 });
   }
@@ -59,7 +69,7 @@ export async function PATCH(request: Request) {
   }
 
   const { data, error } = await supabaseAdmin
-    .from('comprobantes').update(updatePayload).eq('id', comprobanteId).select('*').single();
+    .from('comprobantes').update(updatePayload).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
   if (error) return new NextResponse(error.message, { status: 500 });
 
   // ── Reconciliar status del contacto con la regla de 3 estados ──
@@ -69,14 +79,14 @@ export async function PATCH(request: Request) {
   const efectiveMonto = updatePayload.monto ?? comprobante.monto;
   if (estado === 'verificado' && efectiveMonto) {
     const { data: contact, error: contactError } = await supabaseAdmin
-      .from('contacts').select('phone').eq('id', comprobante.contact_id).single();
+      .from('contacts').select('phone').eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).single();
     if (!contactError && contact?.phone) {
       // Fire-and-forget: Meta Pixel purchase event
       sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto)).catch(() => {});
 
       // Check if auto-notification is enabled in settings (default: true)
       const { data: settingRow } = await supabaseAdmin
-        .from('settings').select('value').eq('key', 'auto_verificacion_msg').maybeSingle();
+        .from('settings').select('value').eq('key', 'auto_verificacion_msg').eq('tenant_id', session.tenant_id).maybeSingle();
       const autoMsg = settingRow?.value !== 'false';
 
       if (autoMsg) {
