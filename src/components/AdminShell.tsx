@@ -21,7 +21,7 @@ const navLabels: Record<string, string> = {
   settings:      'Configuración',
 };
 
-const BANNER_H = 80;
+const BANNER_H = 72;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -220,7 +220,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <img
             src="/logo-iris-premium.png"
             alt="IRIS Premium"
-            style={{ height: '72px', width: 'auto', flexShrink: 0 }}
+            style={{
+              width: '280px',
+              height: 'auto',
+              flexShrink: 0,
+              marginTop: '-8px',
+              marginBottom: '-8px'
+            }}
           />
         </div>
 
