@@ -217,7 +217,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <img src="/logo-iris-premium.png" alt="IRIS Premium" style={{ height: '52px', width: 'auto', maxWidth: '200px', objectFit: 'contain', display: 'block' }} />
+          <div style={{
+            filter: 'drop-shadow(0px 4px 8px rgba(255,82,0,0.5)) drop-shadow(0px 0px 16px rgba(204,238,0,0.3))',
+            transform: 'perspective(400px) rotateX(4deg)',
+            transformOrigin: 'center bottom',
+          }}>
+            <img
+              src="/logo-iris-premium.png"
+              alt="IRIS Premium"
+              style={{ height: '48px', width: 'auto', display: 'block' }}
+            />
+          </div>
         </div>
 
         {/* Toggle Bot/Humano */}
