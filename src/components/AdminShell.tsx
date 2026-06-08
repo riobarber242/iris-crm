@@ -190,7 +190,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         top: 0,
         zIndex: 50,
         width: '100%',
-        height: `${BANNER_H}px`,
+        minHeight: `${BANNER_H}px`,
         background: '#0a0a0a',
         boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         display: 'flex',
@@ -220,7 +220,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <img
             src="/logo-iris-premium.png"
             alt="IRIS Premium"
-            style={{ height: '64px', width: 'auto', flexShrink: 0 }}
+            style={{ height: '72px', width: 'auto', flexShrink: 0 }}
           />
         </div>
 
