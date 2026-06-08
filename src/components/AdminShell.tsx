@@ -217,13 +217,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <div style={{ background: '#0a0a0a', borderRadius: '6px', padding: '4px 10px', flexShrink: 0 }}>
-            <img
-              src="/logo-iris-premium.png"
-              alt="IRIS Premium"
-              style={{ width: '220px', height: 'auto', display: 'block' }}
-            />
-          </div>
+          <span className="app-logo" style={{
+            fontSize: '58px',
+            fontWeight: 900,
+            lineHeight: 1,
+            letterSpacing: '-2px',
+            color: '#aaff00'
+          }}>
+            IRIS
+          </span>
         </div>
 
         {/* Toggle Bot/Humano */}
