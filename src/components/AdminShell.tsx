@@ -220,7 +220,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <img
             src="/logo-iris-premium.png"
             alt="IRIS Premium"
-            style={{ height: '48px', width: 'auto', flexShrink: 0, transform: 'scale(2.2)', transformOrigin: 'left center' }}
+            style={{ height: '64px', width: 'auto', flexShrink: 0 }}
           />
         </div>
 
