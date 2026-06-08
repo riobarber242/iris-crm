@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, created_at';
 
 // PATCH /api/agents/[id] — editar agente (admin)
-// Campos permitidos: name, role, active, schedule_start, schedule_end.
+// Campos permitidos: name, email, role, active, schedule_start, schedule_end,
+// system_prompt, can_see_top_clients, can_see_campaigns.
 // (username inmutable; password se cambia en /api/agents/[id]/password)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin();
@@ -23,6 +24,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.schedule_start !== undefined) updates.schedule_start = body.schedule_start || null;
   if (body.schedule_end !== undefined)   updates.schedule_end   = body.schedule_end   || null;
   if (body.system_prompt !== undefined)  updates.system_prompt  = String(body.system_prompt);
+  if (body.can_see_top_clients !== undefined) updates.can_see_top_clients = !!body.can_see_top_clients;
+  if (body.can_see_campaigns !== undefined)   updates.can_see_campaigns   = !!body.can_see_campaigns;
+
+  // Si se cambia el rol a algo que no es 'operator', limpiamos los permisos
+  // opcionales (admin/agent ya ven todo; no tiene sentido dejar flags colgados).
+  if (updates.role !== undefined && updates.role !== 'operator') {
+    updates.can_see_top_clients = false;
+    updates.can_see_campaigns   = false;
+  }
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'Nada para actualizar' }, { status: 400 });

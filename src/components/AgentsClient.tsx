@@ -13,6 +13,8 @@ type Agent = {
   schedule_start: string | null;
   schedule_end: string | null;
   system_prompt: string | null;
+  can_see_top_clients: boolean;
+  can_see_campaigns: boolean;
   created_at: string;
 };
 
@@ -34,7 +36,7 @@ export default function AgentsClient() {
   const [error,   setError]   = useState('');
 
   // create form
-  const [nu, setNu] = useState({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
+  const [nu, setNu] = useState({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false });
   const [creating, setCreating] = useState(false);
 
   // inline edit
@@ -65,7 +67,7 @@ export default function AgentsClient() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '' });
+        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false });
         fetchAgents();
       } else {
         setError(d.error ?? 'No se pudo crear');
@@ -76,7 +78,7 @@ export default function AgentsClient() {
 
   function startEdit(a: Agent) {
     setEditId(a.id);
-    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '' });
+    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '', can_see_top_clients: a.can_see_top_clients, can_see_campaigns: a.can_see_campaigns });
   }
 
   async function deleteAgent(a: Agent) {
@@ -142,6 +144,14 @@ export default function AgentsClient() {
         </Field>
         <Field label="Desde"><input style={inputStyle} type="time" value={nu.schedule_start} onChange={e => setNu({ ...nu, schedule_start: e.target.value })} /></Field>
         <Field label="Hasta"><input style={inputStyle} type="time" value={nu.schedule_end} onChange={e => setNu({ ...nu, schedule_end: e.target.value })} /></Field>
+        {nu.role === 'operator' && (
+          <Field label="Permisos">
+            <span style={{ display: 'flex', gap: '14px', alignItems: 'center', height: '34px' }}>
+              <PermCheck label="Top Clientes" checked={nu.can_see_top_clients} onChange={v => setNu({ ...nu, can_see_top_clients: v })} />
+              <PermCheck label="Campañas" checked={nu.can_see_campaigns} onChange={v => setNu({ ...nu, can_see_campaigns: v })} />
+            </span>
+          </Field>
+        )}
         <button type="submit" disabled={creating} style={{ ...btn('#C8FF00', '#000'), padding: '10px 18px', fontSize: '13px' }}>
           {creating ? 'Creando…' : '+ Crear agente'}
         </button>
@@ -180,7 +190,15 @@ export default function AgentsClient() {
                   ? <select style={inputStyle} value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Agent['role'] })}>
                       <option value="agent">Agente</option><option value="operator">Operador</option><option value="admin">Admin</option>
                     </select>
-                  : <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : a.role === 'operator' ? 'Operador' : 'Agente'}</span>}
+                  : <span style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : a.role === 'operator' ? 'Operador' : 'Agente'}</span>
+                      {a.role === 'operator' && (a.can_see_top_clients || a.can_see_campaigns) && (
+                        <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                          {a.can_see_top_clients && <PermPill label="Top" />}
+                          {a.can_see_campaigns && <PermPill label="Camp" />}
+                        </span>
+                      )}
+                    </span>}
 
                 {/* horario */}
                 {editing
@@ -220,6 +238,19 @@ export default function AgentsClient() {
                   )}
                 </span>
 
+                {/* permisos del operador (full-width, solo al editar un operator) */}
+                {editing && draft.role === 'operator' && (
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Permisos del operador
+                    </label>
+                    <span style={{ display: 'flex', gap: '18px', alignItems: 'center' }}>
+                      <PermCheck label="Ver Top Clientes" checked={!!draft.can_see_top_clients} onChange={v => setDraft({ ...draft, can_see_top_clients: v })} />
+                      <PermCheck label="Ver Campañas" checked={!!draft.can_see_campaigns} onChange={v => setDraft({ ...draft, can_see_campaigns: v })} />
+                    </span>
+                  </div>
+                )}
+
                 {/* system prompt (full-width, solo al editar) */}
                 {editing && canEditPrompt && (
                   <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
@@ -249,5 +280,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
       {children}
     </div>
+  );
+}
+
+function PermCheck({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#333', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ width: '16px', height: '16px', accentColor: '#1a8a1a', cursor: 'pointer' }} />
+      {label}
+    </label>
+  );
+}
+
+function PermPill({ label }: { label: string }) {
+  return (
+    <span style={{ background: '#E8F5E9', color: '#1a8a1a', fontSize: '9px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '2px 6px', lineHeight: 1 }}>
+      {label}
+    </span>
   );
 }
