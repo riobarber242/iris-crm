@@ -201,7 +201,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       }}>
 
         {/* Hamburguesa (mobile/tablet) + Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'visible' }}>
           <button
             className="app-hamburger"
             onClick={() => setMobileNavOpen((v) => !v)}
@@ -217,7 +217,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <img src="/logo-iris-premium.png" alt="IRIS Premium" style={{ height: '52px', width: 'auto', objectFit: 'contain', paddingLeft: '8px', paddingTop: '4px', paddingBottom: '4px' }} />
+          <img src="/logo-iris-premium.png" alt="IRIS Premium" style={{ height: '40px', width: 'auto', maxWidth: '160px', objectFit: 'contain', display: 'block' }} />
         </div>
 
         {/* Toggle Bot/Humano */}
