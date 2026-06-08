@@ -217,7 +217,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <svg width="200" height="50" viewBox="140 20 520 125"
+          <svg width="200" height="50" viewBox="0 5 660 155"
                xmlns="http://www.w3.org/2000/svg">
             <rect x="18" y="12" width="120" height="120" rx="22" fill="#111" stroke="#FF5200" strokeWidth="6" />
             <circle cx="78" cy="67" r="35" fill="none" stroke="#CCEE00" strokeWidth="4.5" />
