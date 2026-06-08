@@ -10,6 +10,10 @@ export type SessionPayload = {
   name: string;
   role: 'admin' | 'agent' | 'operator';
   tenant_id: string;       // multi-tenant: tenant del agente
+  // Permisos opcionales — solo relevantes para el rol 'operator'.
+  // En tokens viejos vienen undefined → se tratan como false.
+  can_see_top_clients?: boolean;
+  can_see_campaigns?:   boolean;
   exp:  number;            // epoch seconds
 };
 

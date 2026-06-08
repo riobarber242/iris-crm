@@ -8,8 +8,6 @@ import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 
-const navItems = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'settings'];
-
 const navLabels: Record<string, string> = {
   dashboard:     'Dashboard',
   conversations: 'Conversaciones',
@@ -27,12 +25,22 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { agent, logout } = useAuth();
-  // "Agentes" solo lo ve el admin (insertado antes de "Configuración").
-  // El operator tiene un menú reducido (sin campañas, configuración ni operadores).
-  const items =
-    agent?.role === 'admin'    ? [...navItems.slice(0, 6), 'agentes', 'tenants', 'settings']
-    : agent?.role === 'operator' ? ['dashboard', 'conversations', 'comprobantes']
-    : navItems;
+  // Menú por rol:
+  //  - admin: todo + Operadores + Tenants.
+  //  - agent: todo + Operadores, pero SIN Tenants (administración global).
+  //  - operator: base reducida (conversaciones, contactos, comprobantes) y,
+  //    opcionalmente, Top Clientes y Campañas según sus flags.
+  let items: string[];
+  if (agent?.role === 'admin') {
+    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'settings'];
+  } else if (agent?.role === 'operator') {
+    items = ['conversations', 'contacts', 'comprobantes'];
+    if (agent.can_see_top_clients) items.push('leads');
+    if (agent.can_see_campaigns)   items.push('campanas');
+  } else {
+    // agent
+    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'settings'];
+  }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);

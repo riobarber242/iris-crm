@@ -14,22 +14,40 @@ const PUBLIC_PREFIXES = [
   '/api/health',          // healthcheck para monitoreo externo — sin cookie
 ];
 
-// Solo admin
-const ADMIN_PREFIXES = ['/agentes', '/api/agents', '/admin', '/api/tenants'];
+// Solo admin: administración de tenants (datos globales del sistema).
+const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants'];
 
-// Prohibido para el rol 'operator': campañas, configuración y el prompt del bot.
-// (/agentes y /api/agents ya están cubiertos por ADMIN_PREFIXES.)
-// Nota: /api/settings/bot-enabled y /api/settings/offline-mode siguen accesibles
-// porque el header los lee para todos; solo bloqueamos la página y el prompt.
-const OPERATOR_FORBIDDEN_PREFIXES = [
-  '/campanas',
-  '/api/campaigns',
+// Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
+//  - Dashboard y sus métricas.
+//  - Gestión de operadores (/agentes + /api/agents).
+//  - Configuración del sistema y el system prompt del bot.
+// Nota: /api/settings/bot-enabled y /api/settings/offline-mode quedan FUERA
+// a propósito porque el header los lee para todos los roles; solo bloqueamos
+// la página /settings y el endpoint del system-prompt.
+const STAFF_PREFIXES = [
+  '/dashboard',
+  '/api/dashboard_stats',
+  '/api/dashboard_charts',
+  '/agentes',
+  '/api/agents',
   '/settings',
+  '/configuracion',
   '/api/settings/system-prompt',
 ];
 
+// Campañas: admin + agent siempre; operator solo con can_see_campaigns.
+const CAMPAIGNS_PREFIXES = ['/campanas', '/api/campaigns'];
+
+// Top Clientes: admin + agent siempre; operator solo con can_see_top_clients.
+const LEADS_PREFIXES = ['/leads'];
+
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
+
+// Página de aterrizaje por rol (los operators no tienen dashboard).
+function homeFor(role: string): string {
+  return role === 'operator' ? '/conversations' : '/dashboard';
 }
 
 export async function middleware(req: NextRequest) {
@@ -50,20 +68,34 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Rutas solo-admin
-  if (matchesPrefix(pathname, ADMIN_PREFIXES) && session.role !== 'admin') {
-    if (isApi) return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
+  const { role } = session;
+
+  // Helper: deniega según sea API (403) o página (redirect al home del rol).
+  function deny(message: string) {
+    if (isApi) return NextResponse.json({ error: message }, { status: 403 });
     const url = req.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = homeFor(role);
     return NextResponse.redirect(url);
   }
 
-  // Rutas vedadas al rol operator
-  if (session.role === 'operator' && matchesPrefix(pathname, OPERATOR_FORBIDDEN_PREFIXES)) {
-    if (isApi) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-    const url = req.nextUrl.clone();
-    url.pathname = '/conversations';
-    return NextResponse.redirect(url);
+  // Solo admin (administración de tenants).
+  if (matchesPrefix(pathname, ADMIN_ONLY_PREFIXES) && role !== 'admin') {
+    return deny('Requiere rol admin');
+  }
+
+  // Staff interno (admin + agent): los operators no entran.
+  if (matchesPrefix(pathname, STAFF_PREFIXES) && role === 'operator') {
+    return deny('No autorizado');
+  }
+
+  // Campañas: operator solo si tiene el flag habilitado.
+  if (matchesPrefix(pathname, CAMPAIGNS_PREFIXES) && role === 'operator' && !session.can_see_campaigns) {
+    return deny('No autorizado');
+  }
+
+  // Top Clientes: operator solo si tiene el flag habilitado.
+  if (matchesPrefix(pathname, LEADS_PREFIXES) && role === 'operator' && !session.can_see_top_clients) {
+    return deny('No autorizado');
   }
 
   return NextResponse.next();

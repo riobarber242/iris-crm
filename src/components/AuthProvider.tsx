@@ -2,7 +2,14 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 
-export type Agent = { id: string; name: string; role: 'admin' | 'agent' | 'operator' };
+export type Agent = {
+  id: string;
+  name: string;
+  role: 'admin' | 'agent' | 'operator';
+  // Permisos opcionales del operator (admin/agent siempre tienen acceso).
+  can_see_top_clients?: boolean;
+  can_see_campaigns?:   boolean;
+};
 
 type AuthCtx = {
   agent:   Agent | null;

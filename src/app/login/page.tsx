@@ -21,7 +21,9 @@ export default function LoginPage() {
         body:    JSON.stringify({ username: username.trim(), password }),
       });
       if (res.ok) {
-        router.push('/dashboard');
+        const d = await res.json().catch(() => ({}));
+        // Los operators no tienen dashboard → van directo a Conversaciones.
+        router.push(d.role === 'operator' ? '/conversations' : '/dashboard');
         router.refresh();
       } else {
         const d = await res.json().catch(() => ({}));
