@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, Fragment } from 'react';
 import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
-import DashboardCharts from './DashboardCharts';
+import { DonutChart, BarChart, ArgentinaMap, type ChartsData } from './DashboardCharts';
+import DashboardCustomizer from './DashboardCustomizer';
+import { DEFAULT_LAYOUT, WIDGET_GROUP, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
 
 type Stats = {
   convToday: number; convWeek: number; convMonth: number; convPrevMonth: number;
@@ -107,8 +109,15 @@ function Column({ title, icon, children }: ColumnProps) {
   );
 }
 
+function ChartSkeleton() {
+  return <div className="dash-chart" style={{ flex: 1, minWidth: '220px', background: '#F0F0F0', borderRadius: '14px', minHeight: '200px' }} />;
+}
+
 export default function DashboardClient() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [charts, setCharts] = useState<ChartsData | null>(null);
+  const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
+  const [customizing, setCustomizing] = useState(false);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
 
@@ -120,19 +129,34 @@ export default function DashboardClient() {
     } catch {}
   }
 
+  async function fetchCharts() {
+    try {
+      const res = await fetch('/api/dashboard_charts');
+      if (!res.ok) return;
+      setCharts(await res.json());
+    } catch {}
+  }
+
   useEffect(() => {
     fetchStats();
+    fetchCharts();
+
+    // Layout de personalización (mergeado con defaults en el server).
+    fetch('/api/settings/dashboard-layout')
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d?.layout)) setLayout(mergeLayout(d.layout)); })
+      .catch(() => {});
 
     // Polling every 15 s — guaranteed refresh regardless of Realtime status
-    const interval = setInterval(fetchStats, 15_000);
+    const interval = setInterval(() => { fetchStats(); fetchCharts(); }, 15_000);
 
     const sb = getSupabaseBrowser();
     if (sb) {
       supabaseRef.current = sb;
       const channel = sb
         .channel('realtime-dashboard')
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     fetchStats)
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, fetchStats)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     () => { fetchStats(); fetchCharts(); })
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, () => { fetchStats(); fetchCharts(); })
         .on('postgres_changes', { event: '*',      schema: 'public', table: 'leads' },        fetchStats)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },     fetchStats)
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' },     fetchStats)
@@ -145,6 +169,20 @@ export default function DashboardClient() {
       try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[dashboard realtime] removeChannel falló:', err); }
     };
   }, []);
+
+  async function saveLayout(next: WidgetConfig[]) {
+    setLayout(next); // optimista
+    setCustomizing(false);
+    try {
+      const res = await fetch('/api/settings/dashboard-layout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ layout: next }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(d?.layout)) setLayout(mergeLayout(d.layout));
+    } catch {}
+  }
 
   if (!stats) {
     return (
@@ -160,112 +198,168 @@ export default function DashboardClient() {
     );
   }
 
-  const sinResponder = stats.sinResponder;
-  const hasPending   = sinResponder > 0;
   const pendingOrange = stats.pendingOrange ?? 0;
   const pendingRed    = stats.pendingRed ?? 0;
-  // Rojo si hay alguno rojo; si no, naranja; si no, sin pendientes.
-  const heroBg   = pendingRed > 0 ? '#E53935' : pendingOrange > 0 ? '#FF8C00' : '#FFFFFF';
-  const heroIcon = pendingRed > 0 ? '🔴' : pendingOrange > 0 ? '🟠' : '✅';
+
+  // Datos derivados para los charts (solo si ya cargaron).
+  const contactData     = charts ? charts.contactsByStatus.map((d)     => ({ label: d.label, value: d.count, color: d.color })) : [];
+  const comprobanteData = charts ? charts.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color })) : [];
+  const twoMonths       = charts ? charts.revenueByMonth.slice(-2) : [];
+
+  function renderWidget(w: WidgetConfig): React.ReactNode {
+    const s = stats!;
+    switch (w.id) {
+      case 'sin_responder': {
+        const sinResponder = s.sinResponder;
+        const hasPending   = sinResponder > 0;
+        const heroBg   = pendingRed > 0 ? '#E53935' : pendingOrange > 0 ? '#FF8C00' : '#FFFFFF';
+        const heroIcon = pendingRed > 0 ? '🔴' : pendingOrange > 0 ? '🟠' : '✅';
+        return (
+          <Link href="/conversations" style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}>
+            <div
+              className={hasPending ? 'card-3d-lime' : 'card-3d'}
+              style={{
+                background: heroBg, borderRadius: '18px', padding: '20px 26px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: '16px', cursor: 'pointer',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <span style={{ fontSize: '30px' }}>{heroIcon}</span>
+                <div>
+                  <p style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: hasPending ? 'rgba(255,255,255,0.85)' : '#999', margin: 0 }}>
+                    {w.label}
+                  </p>
+                  <p style={{ fontSize: '14px', fontWeight: 600, color: hasPending ? '#fff' : '#666', margin: '4px 0 0 0' }}>
+                    {hasPending ? 'Contactos esperando respuesta de un operador' : 'Todo respondido — sin pendientes'}
+                  </p>
+                  {hasPending && (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      {pendingOrange > 0 && (
+                        <span style={{ background: '#FF8C00', color: '#fff', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
+                          🟠 {fmt(pendingOrange)} naranja
+                        </span>
+                      )}
+                      {pendingRed > 0 && (
+                        <span style={{ background: '#fff', color: '#E53935', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
+                          🔴 {fmt(pendingRed)} rojo
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <span style={{ fontSize: '52px', fontWeight: 900, color: hasPending ? '#fff' : '#000', lineHeight: 1 }}>
+                {fmt(sinResponder)}
+              </span>
+            </div>
+          </Link>
+        );
+      }
+
+      case 'conversaciones':
+        return (
+          <Column title={w.label} icon="💬">
+            <MetricCard label="Hoy"          value={fmt(s.convToday)}     highlight={s.convToday > 0} href="/conversations" />
+            <MetricCard label="Esta semana"  value={fmt(s.convWeek)}                                  href="/conversations" />
+            <MetricCard label="Este mes"     value={fmt(s.convMonth)}                                 href="/conversations" />
+            <MetricCard label="Mes anterior" value={fmt(s.convPrevMonth)}                             href="/conversations" />
+          </Column>
+        );
+
+      case 'contactos_nuevos':
+        return (
+          <Column title={w.label} icon="👤">
+            <MetricCard label="Hoy"          value={fmt(s.newToday)}     href="/conversations" />
+            <MetricCard label="Esta semana"  value={fmt(s.newWeek)}      href="/conversations" />
+            <MetricCard label="Este mes"     value={fmt(s.newMonth)}     href="/conversations" />
+            <MetricCard label="Mes anterior" value={fmt(s.newPrevMonth)} href="/conversations" />
+          </Column>
+        );
+
+      case 'embudo_conversion':
+        return (
+          <Column title={w.label} icon="📊">
+            <MetricCard label="Tasa de conversión" value={pct(s.conversionRate)}     highlight={s.conversionRate > 0}     href="/contacts" />
+            <MetricCard label="Cliente activo"     value={fmt(s.clienteActivoTotal)} highlight={s.clienteActivoTotal > 0} href="/conversations" />
+            <MetricCard label="Inactivo"           value={fmt(s.inactivoTotal)}                                           href="/conversations" />
+            <MetricCard label="Nuevo"              value={fmt(s.nuevoTotal)}                                              href="/conversations" />
+          </Column>
+        );
+
+      case 'operacion_finanzas':
+        // Fusión de las columnas "Operación & recargas" + "Finanzas".
+        return (
+          <Column title={w.label} icon="⚡">
+            <MetricCard label="Tiempo prom. 1ra resp." value={mins(s.avgFirstHumanResponseMin)}                       href="/conversations" />
+            <MetricCard label="Recargas hoy"           value={fmt(s.recargasHoy)}  highlight={s.recargasHoy > 0}      href="/comprobantes" />
+            <MetricCard label="Recargas mes"           value={fmt(s.recargasMes)}                                     href="/comprobantes" />
+            <MetricCard label="Chats activos hoy"      value={fmt(s.chatsActivosHoy)}                                 href="/conversations" />
+            <MetricCard label="Comprob. pendientes"    value={fmt(s.comprobantesPending)} highlight={s.comprobantesPending > 0} href="/comprobantes" />
+            <MetricCard label="Verif. mes"             value={money(s.montoVerifMes)}                                 href="/comprobantes" />
+            <MetricCard label="Mes anterior"           value={money(s.montoVerifMesAnterior)}                         href="/comprobantes" />
+            <MetricCard label="Ticket promedio"        value={money(s.ticketPromedio)}                                href="/comprobantes" />
+          </Column>
+        );
+
+      case 'estado_contactos':
+        return charts ? <DonutChart data={contactData} title={w.label} emptyLabel="Sin contactos" /> : <ChartSkeleton />;
+
+      case 'comprobantes_chart':
+        return charts ? <DonutChart data={comprobanteData} title={w.label} emptyLabel="Sin comprobantes" /> : <ChartSkeleton />;
+
+      case 'distribucion_provincia':
+        return charts ? <ArgentinaMap data={charts.provinceData ?? []} title={w.label} /> : <ChartSkeleton />;
+
+      case 'mes_anterior_actual':
+        return charts ? <BarChart data={twoMonths} title={w.label} /> : <ChartSkeleton />;
+
+      default:
+        return null;
+    }
+  }
+
+  const visible = [...layout].sort((a, b) => a.order - b.order).filter((w) => w.visible);
+  const heroWidgets   = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
+  const metricWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'metric');
+  const chartWidgets  = visible.filter((w) => WIDGET_GROUP[w.id] === 'chart');
 
   return (
     <>
-    {/* HERO — Sin responder: lo más crítico, siempre visible arriba */}
-    <Link href="/conversations" style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}>
-      <div
-        className={hasPending ? 'card-3d-lime' : 'card-3d'}
-        style={{
-          background: heroBg,
-          borderRadius: '18px',
-          padding: '20px 26px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '16px',
-          cursor: 'pointer',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <span style={{ fontSize: '30px' }}>{heroIcon}</span>
-          <div>
-            <p style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: hasPending ? 'rgba(255,255,255,0.85)' : '#999', margin: 0 }}>
-              Sin responder
-            </p>
-            <p style={{ fontSize: '14px', fontWeight: 600, color: hasPending ? '#fff' : '#666', margin: '4px 0 0 0' }}>
-              {hasPending ? 'Contactos esperando respuesta de un operador' : 'Todo respondido — sin pendientes'}
-            </p>
-            {hasPending && (
-              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                {pendingOrange > 0 && (
-                  <span style={{
-                    background: '#FF8C00', color: '#fff', borderRadius: '999px',
-                    fontSize: '12px', fontWeight: 800, padding: '3px 10px',
-                  }}>
-                    🟠 {fmt(pendingOrange)} naranja
-                  </span>
-                )}
-                {pendingRed > 0 && (
-                  <span style={{
-                    background: '#fff', color: '#E53935', borderRadius: '999px',
-                    fontSize: '12px', fontWeight: 800, padding: '3px 10px',
-                  }}>
-                    🔴 {fmt(pendingRed)} rojo
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-        <span style={{ fontSize: '52px', fontWeight: 900, color: hasPending ? '#fff' : '#000', lineHeight: 1 }}>
-          {fmt(sinResponder)}
-        </span>
+      {/* Toolbar */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+        <button
+          onClick={() => setCustomizing(true)}
+          style={{ background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '10px', padding: '9px 16px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          ⚙ Personalizar
+        </button>
       </div>
-    </Link>
 
-    <div className="dash-grid" style={{ gap: '16px' }}>
+      {/* HERO */}
+      {heroWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
 
-      {/* COLUMNA 1 — CONVERSACIONES — verde lima solo en HOY */}
-      <Column title="Conversaciones" icon="💬">
-        <MetricCard label="Hoy"          value={fmt(stats.convToday)}     highlight={stats.convToday > 0} href="/conversations" />
-        <MetricCard label="Esta semana"  value={fmt(stats.convWeek)}                                      href="/conversations" />
-        <MetricCard label="Este mes"     value={fmt(stats.convMonth)}                                     href="/conversations" />
-        <MetricCard label="Mes anterior" value={fmt(stats.convPrevMonth)}                                 href="/conversations" />
-      </Column>
+      {/* MÉTRICAS */}
+      {metricWidgets.length > 0 && (
+        <div className="dash-grid" style={{ gap: '16px' }}>
+          {metricWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
+        </div>
+      )}
 
-      {/* COLUMNA 2 — CONTACTOS NUEVOS — sin highlight */}
-      <Column title="Contactos nuevos" icon="👤">
-        <MetricCard label="Hoy"          value={fmt(stats.newToday)}     href="/conversations" />
-        <MetricCard label="Esta semana"  value={fmt(stats.newWeek)}      href="/conversations" />
-        <MetricCard label="Este mes"     value={fmt(stats.newMonth)}     href="/conversations" />
-        <MetricCard label="Mes anterior" value={fmt(stats.newPrevMonth)} href="/conversations" />
-      </Column>
+      {/* CHARTS */}
+      {chartWidgets.length > 0 && (
+        <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          {chartWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
+        </div>
+      )}
 
-      {/* COLUMNA 3 — EMBUDO & CONVERSIÓN */}
-      <Column title="Embudo & conversión" icon="📊">
-        <MetricCard label="Tasa de conversión" value={pct(stats.conversionRate)}     highlight={stats.conversionRate > 0}     href="/contacts" />
-        <MetricCard label="Cliente activo"     value={fmt(stats.clienteActivoTotal)} highlight={stats.clienteActivoTotal > 0} href="/conversations" />
-        <MetricCard label="Inactivo"           value={fmt(stats.inactivoTotal)}                                               href="/conversations" />
-        <MetricCard label="Nuevo"              value={fmt(stats.nuevoTotal)}                                                  href="/conversations" />
-      </Column>
-
-      {/* COLUMNA 4 — OPERACIÓN & RECARGAS */}
-      <Column title="Operación & recargas" icon="⚡">
-        <MetricCard label="Tiempo prom. 1ra resp." value={mins(stats.avgFirstHumanResponseMin)}                              href="/conversations" />
-        <MetricCard label="Recargas hoy"           value={fmt(stats.recargasHoy)}  highlight={stats.recargasHoy > 0}        href="/comprobantes" />
-        <MetricCard label="Recargas mes"           value={fmt(stats.recargasMes)}                                           href="/comprobantes" />
-        <MetricCard label="Chats activos hoy"      value={fmt(stats.chatsActivosHoy)}                                       href="/conversations" />
-      </Column>
-
-      {/* COLUMNA 5 — FINANZAS — verde solo en PENDIENTES */}
-      <Column title="Finanzas" icon="💰">
-        <MetricCard label="Pendientes"      value={fmt(stats.comprobantesPending)}  highlight={stats.comprobantesPending > 0} href="/comprobantes" />
-        <MetricCard label="Verif. mes"      value={money(stats.montoVerifMes)}                                                href="/comprobantes" />
-        <MetricCard label="Mes anterior"    value={money(stats.montoVerifMesAnterior)}                                        href="/comprobantes" />
-        <MetricCard label="Ticket promedio" value={money(stats.ticketPromedio)}                                              href="/comprobantes" />
-      </Column>
-
-    </div>
-    <DashboardCharts />
+      {customizing && (
+        <DashboardCustomizer
+          layout={layout}
+          onClose={() => setCustomizing(false)}
+          onSave={saveLayout}
+        />
+      )}
     </>
   );
 }

@@ -7,7 +7,7 @@ type EstadoItem    = { estado: string; label: string; count: number; color: stri
 type MonthItem     = { label: string; monto: number };
 type ProvinceItem  = { provincia: string; total: number; dominant: string };
 
-type ChartsData = {
+export type ChartsData = {
   contactsByStatus:     StatusItem[];
   comprobantesByEstado: EstadoItem[];
   revenueByMonth:       MonthItem[];
@@ -56,7 +56,7 @@ const CX = 80;
 const CY = 80;
 const C  = 2 * Math.PI * R; // circumference ≈ 364.4
 
-function DonutChart({
+export function DonutChart({
   data, title, emptyLabel = 'Sin datos',
 }: {
   data: { label: string; value: number; color: string }[];
@@ -123,7 +123,7 @@ function DonutChart({
 }
 
 // ── SVG Bar chart ──────────────────────────────────────────────────────────────
-function BarChart({ data, title }: { data: MonthItem[]; title: string }) {
+export function BarChart({ data, title }: { data: MonthItem[]; title: string }) {
   const max    = Math.max(...data.map((d) => d.monto), 1);
   const W      = 420;
   const H      = 140;
@@ -189,14 +189,14 @@ const ARG_PATH =
   'L 52,472 L 32,452 L 5,432 L 5,395 L 8,345 L 15,278 ' +
   'L 22,235 L 34,165 L 46,108 L 55,52 L 64,3 Z';
 
-function ArgentinaMap({ data }: { data: ProvinceItem[] }) {
+export function ArgentinaMap({ data, title = 'Distribución por provincia' }: { data: ProvinceItem[]; title?: string }) {
   const byProvincia = new Map(data.map((d) => [d.provincia, d]));
   const hasData     = data.length > 0;
 
   return (
     <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
       <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
-        Distribución por provincia
+        {title}
       </p>
 
       <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
