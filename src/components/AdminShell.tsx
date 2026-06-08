@@ -201,7 +201,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       }}>
 
         {/* Hamburguesa (mobile/tablet) + Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button
             className="app-hamburger"
             onClick={() => setMobileNavOpen((v) => !v)}
@@ -217,17 +217,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <svg width="200" height="50" viewBox="0 5 660 155"
-               xmlns="http://www.w3.org/2000/svg">
-            <rect x="18" y="12" width="120" height="120" rx="22" fill="#111" stroke="#FF5200" strokeWidth="6" />
-            <circle cx="78" cy="67" r="35" fill="none" stroke="#CCEE00" strokeWidth="4.5" />
-            <path d="M60 89 L46 108 L68 94" fill="#111" stroke="#CCEE00" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />
-            <path d="M86 38 L69 66 L80 66 L70 96 L93 62 L81 62 Z" fill="#CCEE00" />
-            <path d="M165 14 L145 76 L159 76 L138 142 L172 70 L157 70 Z" fill="#CCEE00" />
-            <text x="178" y="110" fontFamily="Arial Black, Impact, sans-serif" fontSize="86" fontWeight="900" fill="#FFFFFF" letterSpacing="-2">IRIS</text>
-            <line x1="140" y1="122" x2="255" y2="122" stroke="#009999" strokeWidth="3" />
-            <text x="178" y="148" fontFamily="Arial, sans-serif" fontSize="21" fontWeight="800" fill="#FF6600" letterSpacing="6">— PREMIUM —</text>
-          </svg>
+          <span className="app-logo" style={{
+            fontSize: '58px',
+            fontWeight: 900,
+            lineHeight: 1,
+            letterSpacing: '-2px',
+            color: '#aaff00',
+          }}>
+            IRIS
+          </span>
         </div>
 
         {/* Toggle Bot/Humano */}
