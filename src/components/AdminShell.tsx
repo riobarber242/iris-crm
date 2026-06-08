@@ -21,7 +21,7 @@ const navLabels: Record<string, string> = {
   settings:      'Configuración',
 };
 
-const BANNER_H = 64;
+const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -190,7 +190,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         top: 0,
         zIndex: 50,
         width: '100%',
-        minHeight: `${BANNER_H}px`,
+        height: `${BANNER_H}px`,
         background: '#0a0a0a',
         boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
         display: 'flex',
@@ -222,7 +222,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             fontWeight: 900,
             lineHeight: 1,
             letterSpacing: '-2px',
-            color: '#aaff00'
+            color: '#aaff00',
           }}>
             IRIS
           </span>
