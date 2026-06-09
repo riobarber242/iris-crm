@@ -13,6 +13,7 @@ import { classifyPending } from '@/lib/pending';
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
+  const [readFilter,     setReadFilter]     = useState<'todos' | 'no_leidos'>('todos');
   const [query,          setQuery]          = useState('');
   const [offline,        setOffline]        = useState(false);
   const fetchRef       = useRef<() => void>(() => {});
@@ -86,9 +87,24 @@ export default function ConversationsClient() {
     { key: 'bloqueado',      label: 'Bloqueado' },
   ];
 
+  // "No leído" = pendiente según classifyPending (naranja/rojo), misma regla
+  // que el badge de la lista. Solo frontend, sobre el array en memoria.
+  function isUnread(c: any): boolean {
+    const lastMessage = (c.messages ?? [])[0];
+    return !!classifyPending({
+      lastRole:          lastMessage?.role,
+      lastMsgAt:         lastMessage?.created_at,
+      lastReadAt:        c.last_read_at,
+      conversationState: c.conversation_state,
+      offline,
+    });
+  }
+
   const filtered = conversations.filter((c) => {
     if (activeFilter === 'bloqueado')      { if (c.blocked !== true) return false; }
     else if (activeFilter !== 'todos')     { if (c.status?.toLowerCase() !== activeFilter) return false; }
+
+    if (readFilter === 'no_leidos' && !isUnread(c)) return false;
 
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -143,13 +159,37 @@ export default function ConversationsClient() {
         ))}
       </div>
 
+      {/* Filtro rápido de lectura: Todos / No leídos (naranja IRIS cuando activo) */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
+        {([['todos', 'Todos'], ['no_leidos', 'No leídos']] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setReadFilter(key)}
+            style={{
+              background:   readFilter === key ? '#F97316' : '#F0F0F0',
+              color:        readFilter === key ? '#fff'    : '#888',
+              border:       'none',
+              borderRadius: '999px',
+              padding:      '6px 16px',
+              fontSize:     '13px',
+              fontWeight:   600,
+              cursor:       'pointer',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {filtered.length === 0 && (
         <div style={{ textAlign: 'center', padding: '40px 0', color: '#bbb', fontSize: '14px' }}>
           {query.trim()
             ? `Sin resultados para "${query}".`
-            : activeFilter !== 'todos'
-              ? `No hay conversaciones con estado "${activeFilter}".`
-              : 'No hay conversaciones.'}
+            : readFilter === 'no_leidos'
+              ? 'No hay conversaciones sin leer.'
+              : activeFilter !== 'todos'
+                ? `No hay conversaciones con estado "${activeFilter}".`
+                : 'No hay conversaciones.'}
         </div>
       )}
 
