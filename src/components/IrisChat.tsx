@@ -3,10 +3,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 // ── Chat flotante de Iris AI ──────────────────────────────────────────────
-// Burbuja en la esquina inferior derecha que abre un panel de chat.
-//  · Desktop: draggable (desde el header) y redimensionable (handle arriba-izq).
-//  · Mobile: pantalla completa, sin drag/resize, con minimizar.
-// La posición y el tamaño se persisten en localStorage.
+// Burbuja flotante (draggable con mouse y touch; tap para abrir) que abre un
+// panel de chat. En todos los dispositivos el panel es draggable (desde el
+// header) y redimensionable (handle arriba-izq), con botón maximizar/restaurar
+// (pantalla completa) y minimizar a burbuja. Posición y tamaño se persisten en
+// localStorage.
 // El chat reusa el backend con herramientas de /api/iris-ai (datos reales del
 // CRM del tenant). El audio se transcribe en /api/iris/transcribe (Groq Whisper)
 // y la transcripción se manda automáticamente como mensaje de texto.
@@ -24,6 +25,8 @@ const MIN_W = 320, MIN_H = 420, MAX_W = 600, MAX_H = 700;
 const DEFAULT_SIZE = { width: 384, height: 560 };
 const DEFAULT_POS = { right: 24, bottom: 24 };
 const MOBILE_BP = 768;
+const DRAG_THRESHOLD = 8; // px: menos = tap (abre el chat), más = drag (mueve)
+const MAX_Z = 2147483000; // z-index para pantalla completa (por encima de todo)
 
 const ORANGE = '#F97316';
 const DARK = '#0a0a0a';
@@ -42,8 +45,7 @@ function Bolt({ size = 24, fill = '#AAFF00' }: { size?: number; fill?: string })
 
 export default function IrisChat() {
   const [open, setOpen] = useState(false);
-  const [minimized, setMinimized] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const [maximized, setMaximized] = useState(false);
   const [pos, setPos] = useState(DEFAULT_POS);
   const [size, setSize] = useState(DEFAULT_SIZE);
 
@@ -60,15 +62,7 @@ export default function IrisChat() {
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
-  // ── Detección de mobile ──
-  useEffect(() => {
-    const f = () => setIsMobile(window.innerWidth < MOBILE_BP);
-    f();
-    window.addEventListener('resize', f);
-    return () => window.removeEventListener('resize', f);
-  }, []);
-
-  // ── Cargar posición/tamaño persistidos ──
+  // ── Cargar posición/tamaño persistidos (o tamaño inicial según viewport) ──
   useEffect(() => {
     try {
       const p = localStorage.getItem('iris-chat-pos');
@@ -76,14 +70,27 @@ export default function IrisChat() {
         const v = JSON.parse(p);
         if (typeof v?.right === 'number' && typeof v?.bottom === 'number') setPos(v);
       }
+    } catch {}
+
+    let loaded = false;
+    try {
       const s = localStorage.getItem('iris-chat-size');
       if (s) {
         const v = JSON.parse(s);
         if (typeof v?.width === 'number' && typeof v?.height === 'number') {
           setSize({ width: clamp(v.width, MIN_W, MAX_W), height: clamp(v.height, MIN_H, MAX_H) });
+          loaded = true;
         }
       }
     } catch {}
+
+    // Sin tamaño guardado: en pantallas chicas arrancamos a ~85vw × 65vh.
+    if (!loaded && window.innerWidth < MOBILE_BP) {
+      setSize({
+        width:  clamp(Math.round(window.innerWidth * 0.85), MIN_W, MAX_W),
+        height: clamp(Math.round(window.innerHeight * 0.65), MIN_H, MAX_H),
+      });
+    }
   }, []);
 
   useEffect(() => { try { localStorage.setItem('iris-chat-pos', JSON.stringify(pos)); } catch {} }, [pos]);
@@ -92,47 +99,63 @@ export default function IrisChat() {
   // ── Autoscroll ──
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, thinking, open, minimized]);
+  }, [messages, thinking, open, maximized]);
 
-  // ── Drag (header) ──
-  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isMobile || e.button !== 0) return;
-    e.preventDefault();
-    const startX = e.clientX, startY = e.clientY;
+  // ── Gesto de arrastre unificado (mouse + touch) ──
+  // Mueve el ancla abajo-derecha (pos). onTap se dispara si el movimiento total
+  // fue menor a DRAG_THRESHOLD (para distinguir tap de drag en la burbuja).
+  const startDrag = useCallback((sx: number, sy: number, opts: { elW: number; elH: number; onTap?: () => void }) => {
     const startRight = pos.right, startBottom = pos.bottom;
-    const w = size.width, h = size.height;
-    function move(ev: MouseEvent) {
-      const right = clamp(startRight - (ev.clientX - startX), 0, Math.max(0, window.innerWidth - w));
-      const bottom = clamp(startBottom - (ev.clientY - startY), 0, Math.max(0, window.innerHeight - h));
-      setPos({ right, bottom });
-    }
-    function up() {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-    }
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  }, [isMobile, pos, size]);
+    let moved = 0;
+    const apply = (cx: number, cy: number) => {
+      const dx = cx - sx, dy = cy - sy;
+      moved = Math.max(moved, Math.hypot(dx, dy));
+      setPos({
+        right:  clamp(startRight - dx, 0, Math.max(0, window.innerWidth - opts.elW)),
+        bottom: clamp(startBottom - dy, 0, Math.max(0, window.innerHeight - opts.elH)),
+      });
+    };
+    const mm = (ev: MouseEvent) => apply(ev.clientX, ev.clientY);
+    const tm = (ev: TouchEvent) => { const t = ev.touches[0]; if (t) { apply(t.clientX, t.clientY); ev.preventDefault(); } };
+    const end = () => {
+      document.removeEventListener('mousemove', mm);
+      document.removeEventListener('mouseup', end);
+      document.removeEventListener('touchmove', tm);
+      document.removeEventListener('touchend', end);
+      document.removeEventListener('touchcancel', end);
+      if (moved < DRAG_THRESHOLD) opts.onTap?.();
+    };
+    document.addEventListener('mousemove', mm);
+    document.addEventListener('mouseup', end);
+    document.addEventListener('touchmove', tm, { passive: false });
+    document.addEventListener('touchend', end);
+    document.addEventListener('touchcancel', end);
+  }, [pos]);
 
-  // ── Resize (handle arriba-izquierda; el panel está anclado abajo-derecha) ──
-  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isMobile || e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX, startY = e.clientY;
+  // ── Gesto de resize unificado (handle arriba-izq; panel anclado abajo-der) ──
+  const startResize = useCallback((sx: number, sy: number) => {
     const startW = size.width, startH = size.height;
-    function move(ev: MouseEvent) {
-      const width = clamp(startW - (ev.clientX - startX), MIN_W, MAX_W);
-      const height = clamp(startH - (ev.clientY - startY), MIN_H, MAX_H);
-      setSize({ width, height });
-    }
-    function up() {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-    }
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  }, [isMobile, size]);
+    const apply = (cx: number, cy: number) => {
+      setSize({
+        width:  clamp(startW - (cx - sx), MIN_W, MAX_W),
+        height: clamp(startH - (cy - sy), MIN_H, MAX_H),
+      });
+    };
+    const mm = (ev: MouseEvent) => apply(ev.clientX, ev.clientY);
+    const tm = (ev: TouchEvent) => { const t = ev.touches[0]; if (t) { apply(t.clientX, t.clientY); ev.preventDefault(); } };
+    const end = () => {
+      document.removeEventListener('mousemove', mm);
+      document.removeEventListener('mouseup', end);
+      document.removeEventListener('touchmove', tm);
+      document.removeEventListener('touchend', end);
+      document.removeEventListener('touchcancel', end);
+    };
+    document.addEventListener('mousemove', mm);
+    document.addEventListener('mouseup', end);
+    document.addEventListener('touchmove', tm, { passive: false });
+    document.addEventListener('touchend', end);
+    document.addEventListener('touchcancel', end);
+  }, [size]);
 
   // ── Llamada al backend de Iris (reusa /api/iris-ai con herramientas) ──
   async function callIris(text: string, prior: Msg[]): Promise<string> {
@@ -231,23 +254,26 @@ export default function IrisChat() {
 
   function openChat() {
     setOpen(true);
-    setMinimized(false);
+  }
+  function minimizeToBubble() {
+    setOpen(false);
+    setMaximized(false);
+  }
+  function closeChat() {
+    setOpen(false);
+    setMaximized(false);
   }
 
-  // ── Estilos del panel ──
-  const collapsed = minimized;
-  const panelStyle: React.CSSProperties = isMobile
+  // ── Estilos del panel: flotante o pantalla completa ──
+  const panelStyle: React.CSSProperties = maximized
     ? {
-        position: 'fixed', inset: 0, zIndex: 1200,
-        width: '100vw', height: '100dvh',
-        borderRadius: 0,
+        position: 'fixed', top: 0, left: 0, zIndex: MAX_Z,
+        width: '100vw', height: '100dvh', borderRadius: 0,
       }
     : {
         position: 'fixed', right: `${pos.right}px`, bottom: `${pos.bottom}px`, zIndex: 1200,
-        width: `${size.width}px`,
-        height: collapsed ? 'auto' : `${size.height}px`,
-        borderRadius: '18px',
-        boxShadow: '0 14px 48px rgba(0,0,0,0.35)',
+        width: `${size.width}px`, height: `${size.height}px`,
+        borderRadius: '18px', boxShadow: '0 14px 48px rgba(0,0,0,0.35)',
       };
 
   return (
@@ -265,15 +291,16 @@ export default function IrisChat() {
         .iris-rec { animation: iris-rec-pulse 1.1s ease-out infinite; }
       `}</style>
 
-      {/* Burbuja flotante */}
+      {/* Burbuja flotante — draggable (mouse + touch); tap para abrir */}
       {!open && (
         <button
-          onClick={openChat}
-          aria-label="Abrir Iris AI"
+          onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); startDrag(e.clientX, e.clientY, { elW: 60, elH: 60, onTap: openChat }); }}
+          onTouchStart={(e) => { const t = e.touches[0]; if (!t) return; startDrag(t.clientX, t.clientY, { elW: 60, elH: 60, onTap: openChat }); }}
+          aria-label="Abrir Iris AI (arrastrá para mover)"
           style={{
-            position: 'fixed', right: `${isMobile ? 20 : pos.right}px`, bottom: `${isMobile ? 20 : pos.bottom}px`, zIndex: 1200,
+            position: 'fixed', right: `${pos.right}px`, bottom: `${pos.bottom}px`, zIndex: 1200,
             width: '60px', height: '60px', borderRadius: '50%',
-            background: DARK, border: `2px solid ${ORANGE}`, cursor: 'pointer',
+            background: DARK, border: `2px solid ${ORANGE}`, cursor: 'grab', touchAction: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             boxShadow: '0 6px 22px rgba(0,0,0,0.4)',
           }}
@@ -285,21 +312,23 @@ export default function IrisChat() {
       {/* Panel */}
       {open && (
         <div style={{ ...panelStyle, background: '#fff', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Handle de resize (solo desktop, expandido) */}
-          {!isMobile && !collapsed && (
+          {/* Handle de resize (oculto en pantalla completa) */}
+          {!maximized && (
             <div
-              onMouseDown={onResizeMouseDown}
+              onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); startResize(e.clientX, e.clientY); }}
+              onTouchStart={(e) => { const t = e.touches[0]; if (!t) return; e.stopPropagation(); startResize(t.clientX, t.clientY); }}
               aria-label="Redimensionar"
-              style={{ position: 'absolute', top: 0, left: 0, width: '18px', height: '18px', cursor: 'nwse-resize', zIndex: 2 }}
+              style={{ position: 'absolute', top: 0, left: 0, width: '20px', height: '20px', cursor: 'nwse-resize', zIndex: 2, touchAction: 'none' }}
             />
           )}
 
-          {/* Header */}
+          {/* Header — draggable (mouse + touch), salvo en pantalla completa */}
           <header
-            onMouseDown={onHeaderMouseDown}
+            onMouseDown={(e) => { if (maximized || e.button !== 0) return; e.preventDefault(); startDrag(e.clientX, e.clientY, { elW: size.width, elH: size.height }); }}
+            onTouchStart={(e) => { if (maximized) return; const t = e.touches[0]; if (!t) return; startDrag(t.clientX, t.clientY, { elW: size.width, elH: size.height }); }}
             style={{
               background: DARK, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              flexShrink: 0, cursor: isMobile ? 'default' : 'move', userSelect: 'none',
+              flexShrink: 0, cursor: maximized ? 'default' : 'move', userSelect: 'none', touchAction: 'none',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -313,17 +342,29 @@ export default function IrisChat() {
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
               <button
-                onClick={() => setMinimized((v) => !v)}
+                onClick={() => setMaximized((v) => !v)}
                 onMouseDown={(e) => e.stopPropagation()}
-                aria-label={collapsed ? 'Maximizar' : 'Minimizar'}
-                title={collapsed ? 'Maximizar' : 'Minimizar'}
+                onTouchStart={(e) => e.stopPropagation()}
+                aria-label={maximized ? 'Restaurar' : 'Maximizar'}
+                title={maximized ? 'Restaurar' : 'Pantalla completa'}
                 style={hdrBtn}
               >
-                {collapsed ? '▢' : '—'}
+                {maximized ? '❐' : '⧉'}
               </button>
               <button
-                onClick={() => setOpen(false)}
+                onClick={minimizeToBubble}
                 onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                aria-label="Minimizar a burbuja"
+                title="Minimizar a burbuja"
+                style={hdrBtn}
+              >
+                —
+              </button>
+              <button
+                onClick={closeChat}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 aria-label="Cerrar"
                 title="Cerrar"
                 style={hdrBtn}
@@ -333,8 +374,8 @@ export default function IrisChat() {
             </div>
           </header>
 
-          {!collapsed && (
-            <>
+          {/* Cuerpo: mensajes + input (siempre visible mientras el panel está abierto) */}
+          <>
               {/* Mensajes */}
               <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', background: '#F5F5F5', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {messages.length === 0 && !thinking && (
@@ -443,8 +484,7 @@ export default function IrisChat() {
                   </svg>
                 </button>
               </div>
-            </>
-          )}
+          </>
         </div>
       )}
     </>
