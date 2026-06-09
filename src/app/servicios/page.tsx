@@ -7,10 +7,10 @@ import ServicesClient from '@/components/ServicesClient';
 export default function ServiciosPage() {
   return (
     <AdminShell>
-      {/* Fondo blanco para que resalten las cards celeste neón.
+      {/* Fondo gris muy claro (estilo Lemon) para que resalten las cards celeste neón.
           margin/padding negativos para cubrir todo el área de contenido del shell. */}
       <div style={{
-        background: '#FFFFFF',
+        background: '#F5F5F5',
         margin: '-24px',
         padding: '24px',
         minHeight: 'calc(100vh - 80px)',

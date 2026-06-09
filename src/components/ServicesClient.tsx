@@ -203,9 +203,9 @@ export default function ServicesClient() {
               {/* Encabezado: círculo con inicial + nombre + estado */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{
-                  width: '48px', height: '48px', borderRadius: '50%', background: '#FFE500',
+                  width: '48px', height: '48px', borderRadius: '50%', background: '#000000',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#1A1A1A', fontSize: '20px', fontWeight: 900, flexShrink: 0,
+                  color: '#FFFFFF', fontSize: '20px', fontWeight: 900, flexShrink: 0,
                 }}>
                   {initial}
                 </span>
@@ -286,7 +286,7 @@ export default function ServicesClient() {
                 <>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                     <span style={fieldLabel}>Vence</span>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#FFFFFF', opacity: s.expires_at ? 1 : 0.7 }}>{formatDate(s.expires_at)}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 800, color: s.expires_at ? '#CBFF00' : 'rgba(255,255,255,0.7)' }}>{formatDate(s.expires_at)}</span>
                   </div>
                   {s.notes && (
                     <p style={{ fontSize: '12px', color: '#FFFFFF', opacity: 0.85, margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
@@ -294,8 +294,8 @@ export default function ServicesClient() {
                   <div>
                     <HoverButton
                       onClick={() => startEdit(s)}
-                      base={{ background: 'rgba(255,255,255,0.18)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.4)', borderRadius: '8px', padding: '7px 16px', cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
-                      hover={{ background: 'rgba(255,229,0,0.25)', borderColor: '#FFE500' }}
+                      base={{ background: '#000000', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 16px', cursor: 'pointer', transition: 'background 0.15s' }}
+                      hover={{ background: '#1A1A1A' }}
                     >
                       Editar
                     </HoverButton>
