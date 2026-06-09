@@ -213,9 +213,11 @@ export default function DashboardClient() {
         const sinResponder = s.sinResponder;
         const hasPending   = sinResponder > 0;
         const heroBg   = pendingRed > 0 ? '#E53935' : pendingOrange > 0 ? '#FF8C00' : '#FFFFFF';
-        const heroIcon = pendingRed > 0 ? '🔴' : pendingOrange > 0 ? '🟠' : '✅';
+        const heroDot  = pendingRed > 0
+          ? 'linear-gradient(145deg, #ff7a7a, #c62828)'
+          : 'linear-gradient(145deg, #ffc164, #e67700)';
         return (
-          <Link href="/conversations" style={{ textDecoration: 'none', display: 'block', marginBottom: '16px' }}>
+          <Link href="/conversations" style={{ textDecoration: 'none', display: 'block' }}>
             <div
               className={hasPending ? 'card-3d-lime' : 'card-3d'}
               style={{
@@ -225,7 +227,11 @@ export default function DashboardClient() {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <span style={{ fontSize: '30px' }}>{heroIcon}</span>
+                {hasPending ? (
+                  <span style={{ width: '40px', height: '40px', borderRadius: '50%', background: heroDot, display: 'inline-block', flexShrink: 0 }} />
+                ) : (
+                  <span style={{ fontSize: '30px' }}>✅</span>
+                )}
                 <div>
                   <p style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: hasPending ? 'rgba(255,255,255,0.85)' : '#999', margin: 0 }}>
                     {w.label}
@@ -236,8 +242,7 @@ export default function DashboardClient() {
                   {hasPending && (
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                       {pendingOrange > 0 && (
-                        <span style={{ background: '#fff', color: '#FF8C00', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#FF8C00', display: 'inline-block', flexShrink: 0 }} />
+                        <span style={{ background: '#FF8C00', color: '#fff', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
                           {fmt(pendingOrange)} naranja
                         </span>
                       )}
@@ -328,8 +333,8 @@ export default function DashboardClient() {
 
   return (
     <>
-      {/* HERO + botón Personalizar inline a la derecha del widget SIN RESPONDER */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+      {/* HERO + botón Personalizar: cuadrado a la derecha, misma altura que el widget */}
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', marginBottom: '16px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           {heroWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
         </div>
@@ -337,7 +342,7 @@ export default function DashboardClient() {
           onClick={() => setCustomizing(true)}
           aria-label="Personalizar dashboard"
           title="Personalizar"
-          style={{ flexShrink: 0, width: '36px', height: '36px', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          style={{ flexShrink: 0, alignSelf: 'stretch', aspectRatio: '1 / 1', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '18px', fontSize: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           ⚙
         </button>
