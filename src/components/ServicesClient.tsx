@@ -17,6 +17,20 @@ type Status = {
   bg: string;
 };
 
+type Balance = { available: boolean; balance?: number };
+
+// Info estática de planes gratuitos por servicio (badge ℹ️ + tooltip + link).
+const FREE_PLAN_INFO: Record<string, { detail: string; url: string }> = {
+  'Vercel': {
+    detail: 'Plan gratuito — límite 100GB bandwidth/mes, 100hs build/mes',
+    url: 'https://vercel.com/pricing',
+  },
+  'Supabase': {
+    detail: 'Plan gratuito — límite 500MB DB, 2GB bandwidth, pausa tras 1 semana inactivo',
+    url: 'https://supabase.com/pricing',
+  },
+};
+
 // Estado derivado de expires_at vs hoy. Por vencer = menos de 30 días.
 function statusFor(expires_at: string | null): Status {
   if (!expires_at) return { label: 'Sin definir', color: '#888', bg: '#F0F0F0' };
@@ -36,6 +50,20 @@ function formatDate(d: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
+// Alerta de saldo Anthropic para la card correspondiente.
+type Alert = { color: string; bg: string; text: string; isAlert: boolean };
+function anthropicAlert(b: Balance | null): Alert | null {
+  if (!b) return null; // todavía cargando
+  if (!b.available) {
+    return { color: '#888', bg: '#F0F0F0', text: 'No se puede verificar saldo automáticamente', isAlert: false };
+  }
+  const v = b.balance ?? 0;
+  const money = `$${v.toFixed(2)}`;
+  if (v < 0.5) return { color: '#CC3333', bg: '#FFE5E5', text: `🔴 Créditos casi agotados: ${money}`, isAlert: true };
+  if (v < 2)   return { color: '#E07B00', bg: '#FFF1E0', text: `⚠️ Saldo bajo: ${money} — Recargá créditos`, isAlert: true };
+  return { color: '#1a8a1a', bg: '#E6F7E6', text: `Saldo: ${money}`, isAlert: false };
+}
+
 const btn = (bg: string, fg: string): React.CSSProperties => ({
   background: bg, color: fg, fontWeight: 700, fontSize: '12px', border: 'none',
   borderRadius: '8px', padding: '7px 14px', cursor: 'pointer',
@@ -51,6 +79,7 @@ export default function ServicesClient() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
+  const [balance,  setBalance]  = useState<Balance | null>(null);
 
   const [editId, setEditId] = useState<string | null>(null);
   const [draft,  setDraft]  = useState<{ expires_at: string; notes: string }>({ expires_at: '', notes: '' });
@@ -65,7 +94,14 @@ export default function ServicesClient() {
     finally { setLoading(false); }
   }
 
-  useEffect(() => { fetchServices(); }, []);
+  useEffect(() => {
+    fetchServices();
+    // Saldo Anthropic: se consulta al abrir el panel (client-side, sin cron).
+    fetch('/api/admin/services/anthropic-balance')
+      .then((r) => r.json())
+      .then((d) => setBalance(d))
+      .catch(() => setBalance({ available: false }));
+  }, []);
 
   function startEdit(s: Service) {
     setError('');
@@ -91,8 +127,29 @@ export default function ServicesClient() {
 
   if (loading) return <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando servicios…</p>;
 
+  // Contador de alertas activas: vencimientos (vencido/por vencer) +
+  // saldo Anthropic bajo/crítico + advertencias de plan gratuito.
+  const expiryAlerts = services.filter((s) => {
+    const l = statusFor(s.expires_at).label;
+    return l === 'Vencido' || l === 'Por vencer';
+  }).length;
+  const balAlert = anthropicAlert(balance);
+  const anthropicAlerts = balAlert?.isAlert ? 1 : 0;
+  const freePlanAlerts = services.filter((s) => FREE_PLAN_INFO[s.name]).length;
+  const totalAlerts = expiryAlerts + anthropicAlerts + freePlanAlerts;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {totalAlerts > 0 && (
+        <div style={{
+          background: '#FFF1E0', color: '#E07B00', borderRadius: '12px',
+          padding: '10px 16px', fontSize: '14px', fontWeight: 800,
+          display: 'inline-flex', alignItems: 'center', gap: '8px', alignSelf: 'flex-start',
+        }}>
+          ⚠️ {totalAlerts} {totalAlerts === 1 ? 'alerta activa' : 'alertas activas'}
+        </div>
+      )}
+
       {error && (
         <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
           {error}
@@ -103,6 +160,9 @@ export default function ServicesClient() {
         {services.map((s) => {
           const st = statusFor(s.expires_at);
           const editing = editId === s.id;
+          const freePlan = FREE_PLAN_INFO[s.name];
+          const isAnthropic = s.name === 'Anthropic API';
+          const alert = isAnthropic ? balAlert : null;
           return (
             <div key={s.id} style={{
               background: '#fff', borderRadius: '16px', padding: '18px',
@@ -120,6 +180,40 @@ export default function ServicesClient() {
                   {st.label}
                 </span>
               </div>
+
+              {/* Alerta de saldo Anthropic */}
+              {alert && (
+                <div style={{
+                  background: alert.bg, color: alert.color, borderRadius: '10px',
+                  padding: '8px 12px', fontSize: '12px', fontWeight: 700,
+                }}>
+                  {alert.text}
+                </div>
+              )}
+
+              {/* Badge informativo de plan gratuito (hover → tooltip) */}
+              {freePlan && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span
+                    title={freePlan.detail}
+                    style={{
+                      background: '#F0F0F0', color: '#666', borderRadius: '999px',
+                      padding: '5px 10px', fontSize: '11px', fontWeight: 700, cursor: 'help',
+                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                    }}
+                  >
+                    ℹ️ Plan gratuito
+                  </span>
+                  <a
+                    href={freePlan.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: '11px', fontWeight: 700, color: '#4A90D9', textDecoration: 'none' }}
+                  >
+                    Ver planes ↗
+                  </a>
+                </div>
+              )}
 
               {editing ? (
                 <>
