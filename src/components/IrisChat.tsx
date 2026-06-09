@@ -56,12 +56,19 @@ export default function IrisChat() {
   const [recording, setRecording] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesRef = useRef<Msg[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // Textarea estilo WhatsApp: crece de 1 línea hasta ~5 (120px), luego scroll.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'; }
+  }, [input]);
 
   // ── Cargar posición/tamaño persistidos (o tamaño inicial según viewport) ──
   useEffect(() => {
@@ -475,58 +482,57 @@ export default function IrisChat() {
                 )}
               </div>
 
-              {/* Input */}
-              <div style={{ borderTop: '1px solid #eee', padding: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, background: '#fff' }}>
+              {/* Input estilo WhatsApp: textarea que crece + botón dinámico */}
+              <div style={{ borderTop: '1px solid #eee', padding: '8px 12px', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0, background: '#fff' }}>
                 {recording ? (
-                  <div className="iris-wave" aria-label="Grabando audio">
+                  <div className="iris-wave" aria-label="Grabando audio" style={{ minHeight: '44px' }}>
                     {Array.from({ length: 18 }).map((_, i) => (
                       <span key={i} style={{ animationDelay: `${i * 0.06}s` }} />
                     ))}
                   </div>
                 ) : (
-                  <input
+                  <textarea
+                    ref={inputRef}
+                    rows={1}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
                     placeholder="Escribí tu pregunta…"
                     disabled={thinking}
-                    style={{ flex: 1, background: '#F5F5F5', border: '2px solid #eee', borderRadius: '12px', padding: '10px 12px', fontSize: '13px', color: '#111', outline: 'none' }}
+                    style={{ flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: '120px', background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '12px 14px', fontSize: '13px', lineHeight: '20px', color: '#111', outline: 'none', overflowY: 'auto', fontFamily: 'inherit' }}
                   />
                 )}
 
-                {/* Micrófono */}
-                <button
-                  onClick={toggleRecording}
-                  disabled={thinking && !recording}
-                  className={recording ? 'iris-rec' : ''}
-                  aria-label={recording ? 'Detener grabación' : 'Grabar audio'}
-                  title={recording ? 'Detener' : 'Grabar audio'}
-                  style={{
-                    width: '44px', height: '42px', flexShrink: 0, borderRadius: '12px', border: 'none',
-                    cursor: thinking && !recording ? 'not-allowed' : 'pointer',
-                    background: recording ? '#E53935' : '#F0F0F0',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
-                  }}
-                >
-                  {recording ? '⏹' : '🎤'}
-                </button>
-
-                {/* Enviar */}
-                <button
-                  onClick={handleSendText}
-                  disabled={thinking || recording || !input.trim()}
-                  aria-label="Enviar"
-                  style={{
-                    width: '44px', height: '42px', flexShrink: 0, borderRadius: '12px', border: 'none',
-                    cursor: thinking || recording || !input.trim() ? 'not-allowed' : 'pointer',
-                    background: thinking || recording || !input.trim() ? '#e6e6e6' : ORANGE,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking || recording || !input.trim() ? '#999' : '#fff'} stroke={thinking || recording || !input.trim() ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
-                  </svg>
-                </button>
+                {/* Botón dinámico: detener (grabando) / enviar (con texto) / micrófono (vacío) */}
+                {recording ? (
+                  <button
+                    onClick={toggleRecording}
+                    className="iris-rec"
+                    aria-label="Detener grabación"
+                    title="Detener"
+                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#E53935', color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >⏹</button>
+                ) : input.trim() ? (
+                  <button
+                    onClick={handleSendText}
+                    disabled={thinking}
+                    aria-label="Enviar"
+                    title="Enviar"
+                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: thinking ? '#e6e6e6' : ORANGE, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking ? '#999' : '#fff'} stroke={thinking ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={toggleRecording}
+                    disabled={thinking}
+                    aria-label="Grabar audio"
+                    title="Grabar audio"
+                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: '#F0F0F0', color: '#54656f', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >🎤</button>
+                )}
               </div>
           </>
         </div>
