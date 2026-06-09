@@ -214,8 +214,11 @@ export default function DashboardClient() {
         const hasPending   = sinResponder > 0;
         const heroBg   = pendingRed > 0 ? '#E53935' : pendingOrange > 0 ? '#FF8C00' : '#FFFFFF';
         const heroDot  = pendingRed > 0
-          ? 'linear-gradient(145deg, #ff7a7a, #c62828)'
-          : 'linear-gradient(145deg, #ffc164, #e67700)';
+          ? 'radial-gradient(circle at 35% 35%, #ff8a8a, #d32f2f)'
+          : 'radial-gradient(circle at 35% 35%, #ffdd44, #ff8800)';
+        const heroShadow = pendingRed > 0
+          ? '0 4px 12px rgba(220,40,40,0.6), inset 0 -3px 6px rgba(0,0,0,0.2)'
+          : '0 4px 12px rgba(255,120,0,0.6), inset 0 -3px 6px rgba(0,0,0,0.2)';
         return (
           <Link href="/conversations" style={{ textDecoration: 'none', display: 'block' }}>
             <div
@@ -228,7 +231,7 @@ export default function DashboardClient() {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 {hasPending ? (
-                  <span style={{ width: '40px', height: '40px', borderRadius: '50%', background: heroDot, display: 'inline-block', flexShrink: 0 }} />
+                  <span style={{ width: '40px', height: '40px', borderRadius: '50%', background: heroDot, boxShadow: heroShadow, display: 'inline-block', flexShrink: 0 }} />
                 ) : (
                   <span style={{ fontSize: '30px' }}>✅</span>
                 )}
@@ -242,7 +245,8 @@ export default function DashboardClient() {
                   {hasPending && (
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                       {pendingOrange > 0 && (
-                        <span style={{ background: '#FF8C00', color: '#fff', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
+                        <span style={{ background: '#FF8C00', color: '#fff', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'radial-gradient(circle at 35% 35%, #ffdd44, #ff8800)', boxShadow: '0 2px 6px rgba(255,120,0,0.6), inset 0 -2px 3px rgba(0,0,0,0.2)', display: 'inline-block', flexShrink: 0 }} />
                           {fmt(pendingOrange)} naranja
                         </span>
                       )}
