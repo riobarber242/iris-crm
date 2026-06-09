@@ -127,10 +127,17 @@ button, input, textarea, select {
   }
 }
 
+/* Logo: completo en desktop, solo ícono en mobile. */
+.logo-desktop { display: flex; }
+.logo-mobile  { display: none; }
+
 /* Celular. */
 @media (max-width: 768px) {
   .app-header { padding: 0 16px !important; min-width: 0 !important; overflow: hidden !important; }
   .app-main   { padding: 14px !important; }
+
+  .logo-desktop { display: none; }
+  .logo-mobile  { display: flex; }
 
   .chat-msg   { max-width: 88% !important; }
 

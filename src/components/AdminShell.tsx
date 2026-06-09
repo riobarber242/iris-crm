@@ -217,7 +217,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <svg width="220" height="66" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+          {/* Desktop: logo completo */}
+          <svg className="logo-desktop" width="220" height="66" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
             <rect x="20" y="18" width="148" height="148" rx="26" fill="#111" stroke="#FF5500" strokeWidth="7"/>
             <circle cx="94" cy="88" r="44" fill="none" stroke="#D4E800" strokeWidth="5"/>
             <path d="M72 118 L52 142 L80 124" fill="#111" stroke="#D4E800" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
@@ -227,6 +228,14 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <text x="222" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
             <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">PREMIUM</text>
             <text x="430" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
+          </svg>
+
+          {/* Mobile: solo ícono */}
+          <svg className="logo-mobile" width="52" height="52" viewBox="0 0 188 188" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+            <rect x="4" y="4" width="180" height="180" rx="32" fill="#111" stroke="#FF5500" strokeWidth="8"/>
+            <circle cx="94" cy="94" r="54" fill="none" stroke="#D4E800" strokeWidth="6"/>
+            <path d="M72 124 L50 150 L78 130" fill="#111" stroke="#D4E800" strokeWidth="6" strokeLinejoin="round" strokeLinecap="round"/>
+            <path d="M106 52 L76 96 L98 96 L84 138 L118 84 L94 84 Z" fill="#D4E800"/>
           </svg>
         </div>
 
