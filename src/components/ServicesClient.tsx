@@ -35,16 +35,16 @@ const FREE_PLAN_INFO: Record<string, { detail: string; url: string }> = {
 // Estado derivado de expires_at vs hoy. Por vencer = menos de 30 días.
 // Texto siempre blanco; el color semántico va en el fondo del badge (sobre card celeste neón).
 function statusFor(expires_at: string | null): Status {
-  const border = 'rgba(255,255,255,0.3)';
-  if (!expires_at) return { label: 'Sin definir', color: '#FFFFFF', bg: 'rgba(0,0,0,0.18)', border };
+  const border = 'transparent';
+  if (!expires_at) return { label: 'Sin definir', color: '#FFFFFF', bg: '#000000', border };
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const exp = new Date(`${expires_at}T00:00:00`);
   const days = Math.round((exp.getTime() - today.getTime()) / 86_400_000);
 
-  if (days < 0)  return { label: 'Vencido',    color: '#FFFFFF', bg: 'rgba(220,38,38,0.92)', border };
-  if (days < 30) return { label: 'Por vencer', color: '#FFFFFF', bg: '#F97316',              border };
-  return { label: 'Activo', color: '#FFFFFF', bg: 'rgba(22,163,74,0.92)', border };
+  if (days < 0)  return { label: 'Vencido',    color: '#FFFFFF', bg: '#FF3C3C',  border };
+  if (days < 30) return { label: 'Por vencer', color: '#000000', bg: '#FFA500',  border };
+  return { label: 'Activo', color: '#000000', bg: '#CBFF00', border };
 }
 
 function formatDate(d: string | null): string {
@@ -74,7 +74,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 const fieldLabel: React.CSSProperties = {
-  fontSize: '11px', fontWeight: 700, color: '#FFFFFF', opacity: 0.7,
+  fontSize: '13px', fontWeight: 700, color: '#FFFFFF', opacity: 0.7,
   textTransform: 'uppercase', letterSpacing: '0.05em',
 };
 
@@ -203,13 +203,13 @@ export default function ServicesClient() {
               {/* Encabezado: círculo con inicial + nombre + estado */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{
-                  width: '48px', height: '48px', borderRadius: '50%', background: '#000000',
+                  width: '48px', height: '48px', borderRadius: '50%', background: '#CBFF00',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#FFFFFF', fontSize: '20px', fontWeight: 900, flexShrink: 0,
+                  color: '#000000', fontSize: '20px', fontWeight: 900, flexShrink: 0,
                 }}>
                   {initial}
                 </span>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF', flex: 1, minWidth: 0 }}>{s.name}</span>
+                <span style={{ fontSize: '18px', fontWeight: 800, color: '#FFFFFF', flex: 1, minWidth: 0 }}>{s.name}</span>
                 <span style={{
                   background: st.bg, color: st.color, border: `1px solid ${st.border}`,
                   fontWeight: 800, fontSize: '11px', borderRadius: '999px', padding: '4px 10px',
@@ -286,10 +286,10 @@ export default function ServicesClient() {
                 <>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                     <span style={fieldLabel}>Vence</span>
-                    <span style={{ fontSize: '14px', fontWeight: 800, color: s.expires_at ? '#CBFF00' : 'rgba(255,255,255,0.7)' }}>{formatDate(s.expires_at)}</span>
+                    <span style={{ fontSize: '16px', fontWeight: 800, color: s.expires_at ? '#CBFF00' : 'rgba(255,255,255,0.7)' }}>{formatDate(s.expires_at)}</span>
                   </div>
                   {s.notes && (
-                    <p style={{ fontSize: '12px', color: '#FFFFFF', opacity: 0.85, margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
+                    <p style={{ fontSize: '13px', color: '#FFFFFF', opacity: 0.85, margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
                   )}
                   <div>
                     <HoverButton
