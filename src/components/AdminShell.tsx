@@ -224,10 +224,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <circle cx="94" cy="88" r="44" fill="none" stroke="#D4E800" strokeWidth="5"/>
             <path d="M72 118 L52 142 L80 124" fill="#111" stroke="#D4E800" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
             <path d="M114 48 L78 90 L102 90 L82 128 L124 76 L98 76 Z" fill="#D4E800"/>
-            {/* Punto de la "i" — círculo encima del rayo, mismo lima */}
-            <circle cx="208" cy="14" r="8" fill="#D4E800"/>
-            {/* Rayo "i" — más angosto y con el tope acortado para dejar lugar al punto */}
-            <path d="M223 29 L192 108 L215 108 L181 180 L231 94 L206 94 Z" fill="#D4E800"/>
+            {/* "I" tipográfica en lima, igual estilo que "RIS", alineada justo antes */}
+            <text x="210" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#D4E800" letterSpacing="-4">I</text>
             <text x="252" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">RIS</text>
             <text x="222" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
             <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">PREMIUM</text>
