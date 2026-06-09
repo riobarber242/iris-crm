@@ -217,15 +217,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <span className="app-logo" style={{
-            fontSize: '58px',
-            fontWeight: 900,
-            lineHeight: 1,
-            letterSpacing: '-2px',
-            color: '#aaff00',
-          }}>
-            IRIS
-          </span>
+          <svg width="260" height="80" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+            <rect x="20" y="18" width="148" height="148" rx="26" fill="#111" stroke="#FF5500" strokeWidth="7"/>
+            <circle cx="94" cy="88" r="44" fill="none" stroke="#D4E800" strokeWidth="5"/>
+            <path d="M72 118 L52 142 L80 124" fill="#111" stroke="#D4E800" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
+            <path d="M114 48 L78 90 L102 90 L82 128 L124 76 L98 76 Z" fill="#D4E800"/>
+            <path d="M228 12 L188 100 L218 100 L174 180 L238 84 L206 84 Z" fill="#D4E800"/>
+            <text x="252" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">RIS</text>
+            <text x="222" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
+            <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">PREMIUM</text>
+            <text x="430" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
+          </svg>
         </div>
 
         {/* Toggle Bot/Humano */}
