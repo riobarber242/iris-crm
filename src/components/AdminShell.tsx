@@ -18,6 +18,7 @@ const navLabels: Record<string, string> = {
   campanas:      'Campañas',
   agentes:       'Operadores',
   tenants:       'Agentes',
+  servicios:     'Servicios',
   configuracion: 'Mi Bot',
   settings:      'Configuración',
 };
@@ -34,7 +35,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   //    opcionalmente, Top Clientes y Campañas según sus flags.
   let items: string[];
   if (agent?.role === 'admin') {
-    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'configuracion', 'settings'];
+    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'servicios', 'configuracion', 'settings'];
   } else if (agent?.role === 'operator') {
     items = ['conversations', 'contacts', 'comprobantes'];
     if (agent.can_see_top_clients) items.push('leads');

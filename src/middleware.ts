@@ -14,8 +14,8 @@ const PUBLIC_PREFIXES = [
   '/api/health',          // healthcheck para monitoreo externo — sin cookie
 ];
 
-// Solo admin: administración de tenants (datos globales del sistema).
-const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants'];
+// Solo admin: administración de tenants y servicios (datos globales del sistema).
+const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin/services'];
 
 // Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
 //  - Dashboard y sus métricas.
