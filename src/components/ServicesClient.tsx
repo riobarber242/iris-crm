@@ -15,6 +15,7 @@ type Status = {
   label: string;
   color: string;
   bg: string;
+  border: string;
 };
 
 type Balance = { available: boolean; balance?: number };
@@ -32,16 +33,17 @@ const FREE_PLAN_INFO: Record<string, { detail: string; url: string }> = {
 };
 
 // Estado derivado de expires_at vs hoy. Por vencer = menos de 30 días.
+// Paleta dark fintech: badges translúcidos sobre card navy.
 function statusFor(expires_at: string | null): Status {
-  if (!expires_at) return { label: 'Sin definir', color: '#888', bg: '#F0F0F0' };
+  if (!expires_at) return { label: 'Sin definir', color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.12)' };
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const exp = new Date(`${expires_at}T00:00:00`);
   const days = Math.round((exp.getTime() - today.getTime()) / 86_400_000);
 
-  if (days < 0)  return { label: 'Vencido',   color: '#CC3333', bg: '#FFE5E5' };
-  if (days < 30) return { label: 'Por vencer', color: '#E07B00', bg: '#FFF1E0' };
-  return { label: 'Activo', color: '#1a8a1a', bg: '#E6F7E6' };
+  if (days < 0)  return { label: 'Vencido',    color: '#FF3C3C', bg: 'rgba(255,60,60,0.15)',  border: 'rgba(255,60,60,0.3)' };
+  if (days < 30) return { label: 'Por vencer', color: '#FFA500', bg: 'rgba(255,165,0,0.15)',  border: 'rgba(255,165,0,0.3)' };
+  return { label: 'Activo', color: '#00FF80', bg: 'rgba(0,255,128,0.15)', border: 'rgba(0,255,128,0.3)' };
 }
 
 function formatDate(d: string | null): string {
@@ -50,30 +52,54 @@ function formatDate(d: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
-// Alerta de saldo Anthropic para la card correspondiente.
+// Alerta de saldo Anthropic para la card correspondiente (paleta dark).
 type Alert = { color: string; bg: string; text: string; isAlert: boolean };
 function anthropicAlert(b: Balance | null): Alert | null {
   if (!b) return null; // todavía cargando
   if (!b.available) {
-    return { color: '#888', bg: '#F0F0F0', text: 'No se puede verificar saldo automáticamente', isAlert: false };
+    return { color: 'rgba(255,255,255,0.5)', bg: 'rgba(255,255,255,0.08)', text: 'No se puede verificar saldo automáticamente', isAlert: false };
   }
   const v = b.balance ?? 0;
   const money = `$${v.toFixed(2)}`;
-  if (v < 0.5) return { color: '#CC3333', bg: '#FFE5E5', text: `🔴 Créditos casi agotados: ${money}`, isAlert: true };
-  if (v < 2)   return { color: '#E07B00', bg: '#FFF1E0', text: `⚠️ Saldo bajo: ${money} — Recargá créditos`, isAlert: true };
-  return { color: '#1a8a1a', bg: '#E6F7E6', text: `Saldo: ${money}`, isAlert: false };
+  if (v < 0.5) return { color: '#FF3C3C', bg: 'rgba(255,60,60,0.15)', text: `🔴 Créditos casi agotados: ${money}`, isAlert: true };
+  if (v < 2)   return { color: '#FFA500', bg: 'rgba(255,165,0,0.15)', text: `⚠️ Saldo bajo: ${money} — Recargá créditos`, isAlert: true };
+  return { color: '#00FF80', bg: 'rgba(0,255,128,0.15)', text: `Saldo: ${money}`, isAlert: false };
 }
 
-const btn = (bg: string, fg: string): React.CSSProperties => ({
-  background: bg, color: fg, fontWeight: 700, fontSize: '12px', border: 'none',
-  borderRadius: '8px', padding: '7px 14px', cursor: 'pointer',
-});
-
 const inputStyle: React.CSSProperties = {
-  background: '#F5F5F5', border: '2px solid #eee', borderRadius: '10px',
-  padding: '8px 10px', fontSize: '13px', color: '#1a1a1a', outline: 'none', width: '100%',
+  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px',
+  padding: '8px 10px', fontSize: '13px', color: '#FFFFFF', outline: 'none', width: '100%',
   boxSizing: 'border-box',
 };
+
+const fieldLabel: React.CSSProperties = {
+  fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)',
+  textTransform: 'uppercase', letterSpacing: '0.05em',
+};
+
+// Botón con hover (los estilos inline no soportan :hover).
+function HoverButton({
+  children, onClick, disabled, base, hover,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  base: React.CSSProperties;
+  hover: React.CSSProperties;
+}) {
+  const [h, setH] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      onMouseEnter={() => setH(true)}
+      onMouseLeave={() => setH(false)}
+      style={{ ...base, ...(h && !disabled ? hover : null) }}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function ServicesClient() {
   const [services, setServices] = useState<Service[]>([]);
@@ -125,7 +151,7 @@ export default function ServicesClient() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando servicios…</p>;
+  if (loading) return <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Cargando servicios…</p>;
 
   // Contador de alertas activas: vencimientos (vencido/por vencer) +
   // saldo Anthropic bajo/crítico + advertencias de plan gratuito.
@@ -142,8 +168,8 @@ export default function ServicesClient() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {totalAlerts > 0 && (
         <div style={{
-          background: '#FFF1E0', color: '#E07B00', borderRadius: '12px',
-          padding: '10px 16px', fontSize: '14px', fontWeight: 800,
+          background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.3)',
+          borderRadius: '12px', padding: '10px 16px', fontSize: '14px', fontWeight: 800,
           display: 'inline-flex', alignItems: 'center', gap: '8px', alignSelf: 'flex-start',
         }}>
           ⚠️ {totalAlerts} {totalAlerts === 1 ? 'alerta activa' : 'alertas activas'}
@@ -151,7 +177,7 @@ export default function ServicesClient() {
       )}
 
       {error && (
-        <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
+        <div style={{ background: 'rgba(255,60,60,0.15)', color: '#FF3C3C', border: '1px solid rgba(255,60,60,0.3)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
           {error}
         </div>
       )}
@@ -163,19 +189,30 @@ export default function ServicesClient() {
           const freePlan = FREE_PLAN_INFO[s.name];
           const isAnthropic = s.name === 'Anthropic API';
           const alert = isAnthropic ? balAlert : null;
+          const initial = (s.name.trim()[0] ?? '?').toUpperCase();
           return (
             <div key={s.id} style={{
-              background: '#fff', borderRadius: '16px', padding: '18px',
-              boxShadow: '0 1px 8px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '12px',
+              background: '#1A2B4A',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: '16px',
+              padding: '20px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+              display: 'flex', flexDirection: 'column', gap: '14px',
             }}>
-              {/* Encabezado: ícono + nombre + estado */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '26px', lineHeight: 1 }}>{s.icon ?? '🔧'}</span>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#111', flex: 1 }}>{s.name}</span>
+              {/* Encabezado: círculo con inicial + nombre + estado */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{
-                  background: st.bg, color: st.color, fontWeight: 800, fontSize: '11px',
-                  borderRadius: '999px', padding: '4px 10px', whiteSpace: 'nowrap',
-                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                  width: '48px', height: '48px', borderRadius: '50%', background: '#D4E800',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#FFFFFF', fontSize: '20px', fontWeight: 900, flexShrink: 0,
+                }}>
+                  {initial}
+                </span>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF', flex: 1, minWidth: 0 }}>{s.name}</span>
+                <span style={{
+                  background: st.bg, color: st.color, border: `1px solid ${st.border}`,
+                  fontWeight: 800, fontSize: '11px', borderRadius: '999px', padding: '4px 10px',
+                  whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>
                   {st.label}
                 </span>
@@ -197,7 +234,7 @@ export default function ServicesClient() {
                   <span
                     title={freePlan.detail}
                     style={{
-                      background: '#F0F0F0', color: '#666', borderRadius: '999px',
+                      background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', borderRadius: '999px',
                       padding: '5px 10px', fontSize: '11px', fontWeight: 700, cursor: 'help',
                       display: 'inline-flex', alignItems: 'center', gap: '5px',
                     }}
@@ -208,7 +245,7 @@ export default function ServicesClient() {
                     href={freePlan.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: '11px', fontWeight: 700, color: '#4A90D9', textDecoration: 'none' }}
+                    style={{ fontSize: '11px', fontWeight: 700, color: '#7FB2E8', textDecoration: 'none' }}
                   >
                     Ver planes ↗
                   </a>
@@ -218,29 +255,49 @@ export default function ServicesClient() {
               {editing ? (
                 <>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vencimiento</label>
+                    <label style={fieldLabel}>Vencimiento</label>
                     <input type="date" style={inputStyle} value={draft.expires_at} onChange={e => setDraft({ ...draft, expires_at: e.target.value })} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Notas</label>
+                    <label style={fieldLabel}>Notas</label>
                     <textarea rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} placeholder="Plan, costo, recordatorios…" />
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => saveEdit(s.id)} disabled={saving} style={{ ...btn('#C8FF00', '#000'), opacity: saving ? 0.6 : 1 }}>{saving ? 'Guardando…' : 'Guardar'}</button>
-                    <button onClick={() => setEditId(null)} disabled={saving} style={btn('#F0F0F0', '#666')}>Cancelar</button>
+                    <HoverButton
+                      onClick={() => saveEdit(s.id)}
+                      disabled={saving}
+                      base={{ background: '#D4E800', color: '#0F1923', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 14px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
+                      hover={{ background: '#E2F800' }}
+                    >
+                      {saving ? 'Guardando…' : 'Guardar'}
+                    </HoverButton>
+                    <HoverButton
+                      onClick={() => setEditId(null)}
+                      disabled={saving}
+                      base={{ background: 'rgba(255,255,255,0.08)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '7px 14px', cursor: 'pointer' }}
+                      hover={{ background: 'rgba(255,255,255,0.14)' }}
+                    >
+                      Cancelar
+                    </HoverButton>
                   </div>
                 </>
               ) : (
                 <>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vence</span>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: s.expires_at ? '#111' : '#ccc' }}>{formatDate(s.expires_at)}</span>
+                    <span style={fieldLabel}>Vence</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: s.expires_at ? st.color : 'rgba(255,255,255,0.4)' }}>{formatDate(s.expires_at)}</span>
                   </div>
                   {s.notes && (
-                    <p style={{ fontSize: '12px', color: '#666', margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
+                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
                   )}
                   <div>
-                    <button onClick={() => startEdit(s)} style={btn('#F0F0F0', '#333')}>Editar</button>
+                    <HoverButton
+                      onClick={() => startEdit(s)}
+                      base={{ background: 'rgba(255,255,255,0.08)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '7px 16px', cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
+                      hover={{ background: 'rgba(212,232,0,0.15)', borderColor: '#D4E800' }}
+                    >
+                      Editar
+                    </HoverButton>
                   </div>
                 </>
               )}
@@ -250,7 +307,7 @@ export default function ServicesClient() {
       </div>
 
       {services.length === 0 && (
-        <p style={{ textAlign: 'center', color: '#bbb', fontSize: '14px', padding: '20px 0' }}>
+        <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '14px', padding: '20px 0' }}>
           No hay servicios todavía. Corré <code>supabase-services.sql</code> en Supabase.
         </p>
       )}
