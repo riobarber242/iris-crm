@@ -54,6 +54,7 @@ export default function IrisChat() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [thinking, setThinking] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [pendingAudio, setPendingAudio] = useState<{ blob: Blob; url: string; mime: string } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -222,7 +223,9 @@ export default function IrisChat() {
     setRecording(false);
   }
 
-  async function handleRecordingStop() {
+  // Al parar la grabación NO se envía: se guarda para previsualizar y que el
+  // usuario confirme (Enviar) o descarte (Cancelar).
+  function handleRecordingStop() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
 
@@ -231,15 +234,28 @@ export default function IrisChat() {
     chunksRef.current = [];
     if (blob.size === 0) return;
 
-    const audioUrl = URL.createObjectURL(blob);
+    setPendingAudio({ blob, url: URL.createObjectURL(blob), mime });
+  }
+
+  function cancelPendingAudio() {
+    if (pendingAudio) { try { URL.revokeObjectURL(pendingAudio.url); } catch {} }
+    setPendingAudio(null);
+  }
+
+  // Confirmación del usuario: recién acá se transcribe y se manda a Iris.
+  async function sendPendingAudio() {
+    const pa = pendingAudio;
+    if (!pa) return;
+    setPendingAudio(null);
+
     const msgId = uid();
     const prior = messagesRef.current;
-    setMessages((m) => [...m, { id: msgId, role: 'user', audioUrl, transcribing: true }]);
+    setMessages((m) => [...m, { id: msgId, role: 'user', audioUrl: pa.url, transcribing: true }]);
 
     try {
-      const ext = mime.includes('ogg') ? 'ogg' : 'webm';
+      const ext = pa.mime.includes('ogg') ? 'ogg' : 'webm';
       const fd = new FormData();
-      fd.append('audio', blob, `audio.${ext}`);
+      fd.append('audio', pa.blob, `audio.${ext}`);
       const res = await fetch('/api/iris/transcribe', { method: 'POST', body: fd });
       const d = await res.json().catch(() => ({}));
       const text = res.ok ? String(d.text ?? '').trim() : '';
@@ -485,53 +501,79 @@ export default function IrisChat() {
               {/* Input estilo WhatsApp: textarea que crece + botón dinámico */}
               <div style={{ borderTop: '1px solid #eee', padding: '8px 12px', display: 'flex', gap: '8px', alignItems: 'flex-end', flexShrink: 0, background: '#fff' }}>
                 {recording ? (
-                  <div className="iris-wave" aria-label="Grabando audio" style={{ minHeight: '44px' }}>
-                    {Array.from({ length: 18 }).map((_, i) => (
-                      <span key={i} style={{ animationDelay: `${i * 0.06}s` }} />
-                    ))}
-                  </div>
+                  /* Grabando: waveform + detener */
+                  <>
+                    <div className="iris-wave" aria-label="Grabando audio" style={{ minHeight: '44px' }}>
+                      {Array.from({ length: 18 }).map((_, i) => (
+                        <span key={i} style={{ animationDelay: `${i * 0.06}s` }} />
+                      ))}
+                    </div>
+                    <button
+                      onClick={toggleRecording}
+                      className="iris-rec"
+                      aria-label="Detener grabación"
+                      title="Detener"
+                      style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#E53935', color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >⏹</button>
+                  </>
+                ) : pendingAudio ? (
+                  /* Audio grabado: preview con reproductor + cancelar + enviar */
+                  <>
+                    <button
+                      onClick={cancelPendingAudio}
+                      aria-label="Descartar audio"
+                      title="Descartar"
+                      style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#F0F0F0', color: '#E53935', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >🗑️</button>
+                    <audio controls src={pendingAudio.url} style={{ flex: 1, minWidth: 0, height: '40px' }} />
+                    <button
+                      onClick={sendPendingAudio}
+                      disabled={thinking}
+                      aria-label="Enviar audio"
+                      title="Enviar"
+                      style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: thinking ? '#e6e6e6' : ORANGE, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking ? '#999' : '#fff'} stroke={thinking ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  </>
                 ) : (
-                  <textarea
-                    ref={inputRef}
-                    rows={1}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-                    placeholder="Escribí tu pregunta…"
-                    disabled={thinking}
-                    style={{ flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: '120px', background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '12px 14px', fontSize: '13px', lineHeight: '20px', color: '#111', outline: 'none', overflowY: 'auto', fontFamily: 'inherit' }}
-                  />
-                )}
-
-                {/* Botón dinámico: detener (grabando) / enviar (con texto) / micrófono (vacío) */}
-                {recording ? (
-                  <button
-                    onClick={toggleRecording}
-                    className="iris-rec"
-                    aria-label="Detener grabación"
-                    title="Detener"
-                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#E53935', color: '#fff', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  >⏹</button>
-                ) : input.trim() ? (
-                  <button
-                    onClick={handleSendText}
-                    disabled={thinking}
-                    aria-label="Enviar"
-                    title="Enviar"
-                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: thinking ? '#e6e6e6' : ORANGE, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking ? '#999' : '#fff'} stroke={thinking ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                ) : (
-                  <button
-                    onClick={toggleRecording}
-                    disabled={thinking}
-                    aria-label="Grabar audio"
-                    title="Grabar audio"
-                    style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: '#F0F0F0', color: '#54656f', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  >🎤</button>
+                  /* Normal: textarea + (enviar con texto / micrófono vacío) */
+                  <>
+                    <textarea
+                      ref={inputRef}
+                      rows={1}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                      onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+                      placeholder="Escribí tu pregunta…"
+                      disabled={thinking}
+                      style={{ flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: '120px', background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '12px 14px', fontSize: '13px', lineHeight: '20px', color: '#111', outline: 'none', overflowY: 'auto', fontFamily: 'inherit' }}
+                    />
+                    {input.trim() ? (
+                      <button
+                        onClick={handleSendText}
+                        disabled={thinking}
+                        aria-label="Enviar"
+                        title="Enviar"
+                        style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: thinking ? '#e6e6e6' : ORANGE, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking ? '#999' : '#fff'} stroke={thinking ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={toggleRecording}
+                        disabled={thinking}
+                        aria-label="Grabar audio"
+                        title="Grabar audio"
+                        style={{ width: '44px', height: '44px', flexShrink: 0, borderRadius: '50%', border: 'none', cursor: thinking ? 'not-allowed' : 'pointer', background: '#F0F0F0', color: '#54656f', fontSize: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      >🎤</button>
+                    )}
+                  </>
                 )}
               </div>
           </>

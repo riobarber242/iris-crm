@@ -47,6 +47,13 @@ function growTextarea(el: HTMLTextAreaElement | null) {
   el.style.height = Math.min(el.scrollHeight, TA_MAX_H) + 'px';
 }
 
+// Fila del menú "+" (acciones colapsadas).
+const actionItem: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+  background: 'none', border: 'none', borderRadius: '10px', padding: '10px 12px',
+  textAlign: 'left', cursor: 'pointer', fontSize: '14px', color: '#333',
+};
+
 // Clasifica el contenido de un mensaje para renderizarlo. Cubre los mensajes
 // viejos de imagen guardados como texto "image"/"document" o como URL pelada.
 function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'file'; url?: string } {
@@ -109,6 +116,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [cooldown, setCooldown] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
+  const [showActions, setShowActions] = useState(false); // menú "+" (rápidas/emoji/adjuntar)
   const [loadError, setLoadError] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -165,16 +173,17 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!showQR && !showEmoji) return;
+    if (!showQR && !showEmoji && !showActions) return;
     function handleClick(e: MouseEvent) {
       if (qrPanelRef.current && !qrPanelRef.current.contains(e.target as Node)) {
         setShowQR(false);
         setShowEmoji(false);
+        setShowActions(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showQR, showEmoji]);
+  }, [showQR, showEmoji, showActions]);
 
   function insertEmoji(emoji: string) {
     setShowEmoji(false);
@@ -700,20 +709,39 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           </div>
         )}
 
+        {/* Menú "+" — acciones colapsadas (rápidas / emoji / adjuntar) */}
+        {showActions && (
+          <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, background: '#fff', borderRadius: '14px', boxShadow: '0 4px 24px rgba(0,0,0,0.16)', padding: '6px', zIndex: 50, display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '200px' }}>
+            <button
+              type="button"
+              onClick={() => { setShowActions(false); setShowEmoji(false); setShowQR(true); }}
+              style={actionItem}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            ><span style={{ fontSize: '18px' }}>⚡</span> Respuestas rápidas</button>
+            <button
+              type="button"
+              onClick={() => { setShowActions(false); setShowQR(false); setShowEmoji(true); }}
+              style={actionItem}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            ><span style={{ fontSize: '18px' }}>😊</span> Emoji</button>
+            <button
+              type="button"
+              onClick={() => { setShowActions(false); clearAudio(); imageInputRef.current?.click(); }}
+              style={actionItem}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            ><span style={{ fontSize: '18px' }}>📎</span> Adjuntar imagen</button>
+          </div>
+        )}
+
         {/* Image preview */}
         {imagePreview && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#F5F5F5', borderRadius: '14px', padding: '10px 14px', marginBottom: '10px' }}>
             <img src={imagePreview} alt="preview" style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }} />
             <p style={{ fontSize: '13px', color: '#555', margin: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageFile?.name}</p>
             <button type="button" onClick={clearImage} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '20px', lineHeight: 1, padding: '4px' }}>×</button>
-          </div>
-        )}
-
-        {/* Audio preview */}
-        {audioPreviewUrl && !isRecording && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#F5F5F5', borderRadius: '14px', padding: '10px 14px', marginBottom: '10px' }}>
-            <audio controls src={audioPreviewUrl} style={{ flex: 1, height: '36px' }} />
-            <button type="button" onClick={clearAudio} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '20px', lineHeight: 1, padding: '4px' }}>×</button>
           </div>
         )}
 
@@ -731,97 +759,68 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
         <form onSubmit={handleSend} className="chat-input-row" style={{ display: 'flex', alignItems: 'flex-end', gap: '6px', background: '#fff', borderTop: '1px solid #eee', padding: '8px 12px' }}>
 
-          {/* Acciones a la izquierda (ocultas mientras se graba) */}
-          {!isRecording && (
-            <>
-              {/* Respuestas rápidas */}
-              <button
-                type="button"
-                onClick={() => { setShowEmoji(false); setShowQR((v) => !v); }}
-                title="Respuestas rápidas"
-                className="wa-icon-btn"
-                style={{ background: showQR ? '#E8FFB0' : 'transparent' }}
-              >⚡</button>
-
-              {/* Emojis */}
-              <button
-                type="button"
-                onClick={() => { setShowQR(false); setShowEmoji((v) => !v); }}
-                title="Emojis"
-                className="wa-icon-btn"
-                style={{ background: showEmoji ? '#E8FFB0' : 'transparent' }}
-              >😊</button>
-
-              {/* Adjuntar imagen (misma funcionalidad, nueva posición) */}
-              <button
-                type="button"
-                onClick={() => { clearAudio(); imageInputRef.current?.click(); }}
-                title="Adjuntar imagen"
-                className="wa-icon-btn"
-                style={{ background: imageFile ? '#E8FFB0' : 'transparent' }}
-              >📎</button>
-            </>
-          )}
-
-          {/* Textarea que crece (oculto mientras se graba o hay audio listo) */}
-          {!isRecording && !audioBlob && (
-            <textarea
-              ref={textInputRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}
-              style={{
-                flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: `${TA_MAX_H}px`,
-                background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '11px 16px',
-                fontSize: '14px', lineHeight: '20px', color: '#1a1a1a', outline: 'none',
-                overflowY: 'auto', fontFamily: 'inherit',
-              }}
-            />
-          )}
-
-          {/* Mientras se graba: indicador con timer ocupando el espacio del textarea */}
-          {isRecording && (
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', height: '44px', padding: '0 10px', color: '#E53935', fontWeight: 700, fontSize: '14px' }}>
-              <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#E53935', animation: 'pulse 1s infinite', flexShrink: 0 }} />
-              Grabando… {formatSeconds(recordingSeconds)}
-            </div>
-          )}
-          {audioBlob && !isRecording && <div style={{ flex: 1 }} />}
-
-          {/* Botón dinámico a la derecha: detener / enviar / micrófono */}
           {isRecording ? (
-            <button
-              type="button"
-              onClick={stopRecording}
-              title="Detener grabación"
-              aria-label="Detener grabación"
-              className="wa-send-btn"
-              style={{ background: '#E53935' }}
-            >⏹</button>
-          ) : canSend ? (
-            <button
-              type="submit"
-              title="Enviar"
-              aria-label="Enviar"
-              className="wa-send-btn"
-              style={{ background: '#C8FF00', color: '#000' }}
-            >
-              {loading ? '…' : cooldown ? '✓' : (
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
-                </svg>
-              )}
-            </button>
+            /* Grabando: indicador con timer + botón detener */
+            <>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', height: '44px', padding: '0 10px', color: '#E53935', fontWeight: 700, fontSize: '14px' }}>
+                <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: '#E53935', animation: 'pulse 1s infinite', flexShrink: 0 }} />
+                Grabando… {formatSeconds(recordingSeconds)}
+              </div>
+              <button type="button" onClick={stopRecording} title="Detener grabación" aria-label="Detener grabación" className="wa-send-btn" style={{ background: '#E53935' }}>⏹</button>
+            </>
+          ) : audioBlob ? (
+            /* Audio grabado: preview con reproductor + cancelar + enviar */
+            <>
+              <button type="button" onClick={clearAudio} title="Descartar audio" aria-label="Descartar audio" className="wa-icon-btn" style={{ color: '#E53935', fontSize: '18px' }}>🗑️</button>
+              <audio controls src={audioPreviewUrl ?? undefined} style={{ flex: 1, minWidth: 0, height: '40px' }} />
+              <button type="submit" disabled={!canSend} title="Enviar audio" aria-label="Enviar audio" className="wa-send-btn" style={{ background: canSend ? '#C8FF00' : '#e0e0e0', color: '#000' }}>
+                {loading ? '…' : cooldown ? '✓' : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={startRecording}
-              title="Grabar audio"
-              aria-label="Grabar audio"
-              className="wa-icon-btn"
-            >🎤</button>
+            /* Estado normal: botón "+", textarea y micrófono/enviar */
+            <>
+              <button
+                type="button"
+                onClick={() => { setShowQR(false); setShowEmoji(false); setShowActions((v) => !v); }}
+                title="Más acciones"
+                aria-label="Más acciones"
+                className="wa-icon-btn"
+                style={{ background: showActions ? '#E8FFB0' : 'transparent', fontSize: '26px' }}
+              >+</button>
+
+              <textarea
+                ref={textInputRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+                placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}
+                style={{
+                  flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: `${TA_MAX_H}px`,
+                  background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '11px 16px',
+                  fontSize: '14px', lineHeight: '20px', color: '#1a1a1a', outline: 'none',
+                  overflowY: 'auto', fontFamily: 'inherit',
+                }}
+              />
+
+              {canSend ? (
+                <button type="submit" title="Enviar" aria-label="Enviar" className="wa-send-btn" style={{ background: '#C8FF00', color: '#000' }}>
+                  {loading ? '…' : cooldown ? '✓' : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              ) : (
+                <button type="button" onClick={startRecording} title="Grabar audio" aria-label="Grabar audio" className="wa-icon-btn">🎤</button>
+              )}
+            </>
           )}
         </form>
       </div>
