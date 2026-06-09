@@ -129,8 +129,7 @@ button, input, textarea, select {
 
 /* Celular. */
 @media (max-width: 768px) {
-  .app-header { padding: 0 16px !important; }
-  .app-logo   { font-size: 40px !important; letter-spacing: -1px !important; }
+  .app-header { padding: 0 16px !important; min-width: 0 !important; overflow: hidden !important; }
   .app-main   { padding: 14px !important; }
 
   .chat-msg   { max-width: 88% !important; }

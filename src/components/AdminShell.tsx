@@ -201,7 +201,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       }}>
 
         {/* Hamburguesa (mobile/tablet) + Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, overflow: 'visible' }}>
           <button
             className="app-hamburger"
             onClick={() => setMobileNavOpen((v) => !v)}
@@ -217,7 +217,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
             <span style={{ width: '20px', height: '2px', background: '#aaff00', display: 'block' }} />
           </button>
-          <svg width="260" height="80" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+          <svg width="220" height="66" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
             <rect x="20" y="18" width="148" height="148" rx="26" fill="#111" stroke="#FF5500" strokeWidth="7"/>
             <circle cx="94" cy="88" r="44" fill="none" stroke="#D4E800" strokeWidth="5"/>
             <path d="M72 118 L52 142 L80 124" fill="#111" stroke="#D4E800" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
