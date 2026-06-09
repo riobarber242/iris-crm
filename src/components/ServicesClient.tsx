@@ -33,17 +33,18 @@ const FREE_PLAN_INFO: Record<string, { detail: string; url: string }> = {
 };
 
 // Estado derivado de expires_at vs hoy. Por vencer = menos de 30 días.
-// Paleta dark fintech: badges translúcidos sobre card navy.
+// Texto siempre blanco; el color semántico va en el fondo del badge (sobre card celeste neón).
 function statusFor(expires_at: string | null): Status {
-  if (!expires_at) return { label: 'Sin definir', color: 'rgba(255,255,255,0.4)', bg: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.12)' };
+  const border = 'rgba(255,255,255,0.3)';
+  if (!expires_at) return { label: 'Sin definir', color: '#FFFFFF', bg: 'rgba(0,0,0,0.18)', border };
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const exp = new Date(`${expires_at}T00:00:00`);
   const days = Math.round((exp.getTime() - today.getTime()) / 86_400_000);
 
-  if (days < 0)  return { label: 'Vencido',    color: '#FF3C3C', bg: 'rgba(255,60,60,0.15)',  border: 'rgba(255,60,60,0.3)' };
-  if (days < 30) return { label: 'Por vencer', color: '#FFA500', bg: 'rgba(255,165,0,0.15)',  border: 'rgba(255,165,0,0.3)' };
-  return { label: 'Activo', color: '#00FF80', bg: 'rgba(0,255,128,0.15)', border: 'rgba(0,255,128,0.3)' };
+  if (days < 0)  return { label: 'Vencido',    color: '#FFFFFF', bg: 'rgba(220,38,38,0.92)', border };
+  if (days < 30) return { label: 'Por vencer', color: '#FFFFFF', bg: '#F97316',              border };
+  return { label: 'Activo', color: '#FFFFFF', bg: 'rgba(22,163,74,0.92)', border };
 }
 
 function formatDate(d: string | null): string {
@@ -52,28 +53,28 @@ function formatDate(d: string | null): string {
   return `${day}/${m}/${y}`;
 }
 
-// Alerta de saldo Anthropic para la card correspondiente (paleta dark).
-type Alert = { color: string; bg: string; text: string; isAlert: boolean };
+// Alerta de saldo Anthropic para la card correspondiente (texto blanco, fondo semántico).
+type Alert = { bg: string; text: string; isAlert: boolean };
 function anthropicAlert(b: Balance | null): Alert | null {
   if (!b) return null; // todavía cargando
   if (!b.available) {
-    return { color: 'rgba(255,255,255,0.5)', bg: 'rgba(255,255,255,0.08)', text: 'No se puede verificar saldo automáticamente', isAlert: false };
+    return { bg: 'rgba(0,0,0,0.18)', text: 'No se puede verificar saldo automáticamente', isAlert: false };
   }
   const v = b.balance ?? 0;
   const money = `$${v.toFixed(2)}`;
-  if (v < 0.5) return { color: '#FF3C3C', bg: 'rgba(255,60,60,0.15)', text: `🔴 Créditos casi agotados: ${money}`, isAlert: true };
-  if (v < 2)   return { color: '#FFA500', bg: 'rgba(255,165,0,0.15)', text: `⚠️ Saldo bajo: ${money} — Recargá créditos`, isAlert: true };
-  return { color: '#00FF80', bg: 'rgba(0,255,128,0.15)', text: `Saldo: ${money}`, isAlert: false };
+  if (v < 0.5) return { bg: 'rgba(220,38,38,0.92)', text: `🔴 Créditos casi agotados: ${money}`, isAlert: true };
+  if (v < 2)   return { bg: '#F97316',              text: `⚠️ Saldo bajo: ${money} — Recargá créditos`, isAlert: true };
+  return { bg: 'rgba(22,163,74,0.92)', text: `Saldo: ${money}`, isAlert: false };
 }
 
 const inputStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px',
+  background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.4)', borderRadius: '10px',
   padding: '8px 10px', fontSize: '13px', color: '#FFFFFF', outline: 'none', width: '100%',
   boxSizing: 'border-box',
 };
 
 const fieldLabel: React.CSSProperties = {
-  fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)',
+  fontSize: '11px', fontWeight: 700, color: '#FFFFFF', opacity: 0.7,
   textTransform: 'uppercase', letterSpacing: '0.05em',
 };
 
@@ -151,7 +152,7 @@ export default function ServicesClient() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '14px' }}>Cargando servicios…</p>;
+  if (loading) return <p style={{ textAlign: 'center', color: '#1A1A2E', opacity: 0.6, fontSize: '14px' }}>Cargando servicios…</p>;
 
   // Contador de alertas activas: vencimientos (vencido/por vencer) +
   // saldo Anthropic bajo/crítico + advertencias de plan gratuito.
@@ -168,7 +169,7 @@ export default function ServicesClient() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {totalAlerts > 0 && (
         <div style={{
-          background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.3)',
+          background: '#F97316', color: '#FFFFFF',
           borderRadius: '12px', padding: '10px 16px', fontSize: '14px', fontWeight: 800,
           display: 'inline-flex', alignItems: 'center', gap: '8px', alignSelf: 'flex-start',
         }}>
@@ -177,7 +178,7 @@ export default function ServicesClient() {
       )}
 
       {error && (
-        <div style={{ background: 'rgba(255,60,60,0.15)', color: '#FF3C3C', border: '1px solid rgba(255,60,60,0.3)', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
+        <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
           {error}
         </div>
       )}
@@ -192,8 +193,8 @@ export default function ServicesClient() {
           const initial = (s.name.trim()[0] ?? '?').toUpperCase();
           return (
             <div key={s.id} style={{
-              background: '#1A2B4A',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: '#00CFFF',
+              border: '1px solid rgba(255,255,255,0.2)',
               borderRadius: '16px',
               padding: '20px',
               boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
@@ -202,9 +203,9 @@ export default function ServicesClient() {
               {/* Encabezado: círculo con inicial + nombre + estado */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{
-                  width: '48px', height: '48px', borderRadius: '50%', background: '#D4E800',
+                  width: '48px', height: '48px', borderRadius: '50%', background: '#FFE500',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#FFFFFF', fontSize: '20px', fontWeight: 900, flexShrink: 0,
+                  color: '#1A1A1A', fontSize: '20px', fontWeight: 900, flexShrink: 0,
                 }}>
                   {initial}
                 </span>
@@ -221,7 +222,7 @@ export default function ServicesClient() {
               {/* Alerta de saldo Anthropic */}
               {alert && (
                 <div style={{
-                  background: alert.bg, color: alert.color, borderRadius: '10px',
+                  background: alert.bg, color: '#FFFFFF', borderRadius: '10px',
                   padding: '8px 12px', fontSize: '12px', fontWeight: 700,
                 }}>
                   {alert.text}
@@ -234,7 +235,7 @@ export default function ServicesClient() {
                   <span
                     title={freePlan.detail}
                     style={{
-                      background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)', borderRadius: '999px',
+                      background: 'rgba(255,255,255,0.2)', color: '#FFFFFF', borderRadius: '999px',
                       padding: '5px 10px', fontSize: '11px', fontWeight: 700, cursor: 'help',
                       display: 'inline-flex', alignItems: 'center', gap: '5px',
                     }}
@@ -245,7 +246,7 @@ export default function ServicesClient() {
                     href={freePlan.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ fontSize: '11px', fontWeight: 700, color: '#7FB2E8', textDecoration: 'none' }}
+                    style={{ fontSize: '11px', fontWeight: 700, color: '#FFFFFF', textDecoration: 'underline' }}
                   >
                     Ver planes ↗
                   </a>
@@ -266,16 +267,16 @@ export default function ServicesClient() {
                     <HoverButton
                       onClick={() => saveEdit(s.id)}
                       disabled={saving}
-                      base={{ background: '#D4E800', color: '#0F1923', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 14px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
-                      hover={{ background: '#E2F800' }}
+                      base={{ background: '#FFE500', color: '#1A1A1A', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 14px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
+                      hover={{ background: '#FFF04D' }}
                     >
                       {saving ? 'Guardando…' : 'Guardar'}
                     </HoverButton>
                     <HoverButton
                       onClick={() => setEditId(null)}
                       disabled={saving}
-                      base={{ background: 'rgba(255,255,255,0.08)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '7px 14px', cursor: 'pointer' }}
-                      hover={{ background: 'rgba(255,255,255,0.14)' }}
+                      base={{ background: 'rgba(255,255,255,0.18)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.4)', borderRadius: '8px', padding: '7px 14px', cursor: 'pointer' }}
+                      hover={{ background: 'rgba(255,255,255,0.3)' }}
                     >
                       Cancelar
                     </HoverButton>
@@ -285,16 +286,16 @@ export default function ServicesClient() {
                 <>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                     <span style={fieldLabel}>Vence</span>
-                    <span style={{ fontSize: '14px', fontWeight: 700, color: s.expires_at ? st.color : 'rgba(255,255,255,0.4)' }}>{formatDate(s.expires_at)}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: '#FFFFFF', opacity: s.expires_at ? 1 : 0.7 }}>{formatDate(s.expires_at)}</span>
                   </div>
                   {s.notes && (
-                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
+                    <p style={{ fontSize: '12px', color: '#FFFFFF', opacity: 0.85, margin: 0, whiteSpace: 'pre-wrap' }}>{s.notes}</p>
                   )}
                   <div>
                     <HoverButton
                       onClick={() => startEdit(s)}
-                      base={{ background: 'rgba(255,255,255,0.08)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', padding: '7px 16px', cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
-                      hover={{ background: 'rgba(212,232,0,0.15)', borderColor: '#D4E800' }}
+                      base={{ background: 'rgba(255,255,255,0.18)', color: '#FFFFFF', fontWeight: 700, fontSize: '12px', border: '1px solid rgba(255,255,255,0.4)', borderRadius: '8px', padding: '7px 16px', cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
+                      hover={{ background: 'rgba(255,229,0,0.25)', borderColor: '#FFE500' }}
                     >
                       Editar
                     </HoverButton>
@@ -307,7 +308,7 @@ export default function ServicesClient() {
       </div>
 
       {services.length === 0 && (
-        <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: '14px', padding: '20px 0' }}>
+        <p style={{ textAlign: 'center', color: '#1A1A2E', opacity: 0.55, fontSize: '14px', padding: '20px 0' }}>
           No hay servicios todavía. Corré <code>supabase-services.sql</code> en Supabase.
         </p>
       )}
