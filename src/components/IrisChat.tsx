@@ -25,7 +25,8 @@ const MIN_W = 320, MIN_H = 420, MAX_W = 600, MAX_H = 700;
 const DEFAULT_SIZE = { width: 384, height: 560 };
 const DEFAULT_POS = { right: 24, bottom: 24 };
 const MOBILE_BP = 768;
-const DRAG_THRESHOLD = 8; // px: menos = tap (abre el chat), más = drag (mueve)
+const DRAG_THRESHOLD = 8;        // px (mouse): menos = tap (abre el chat), más = drag
+const TOUCH_DRAG_THRESHOLD = 12; // px (touch): umbral más alto para no confundir tap con drag
 const MAX_Z = 2147483000; // z-index para pantalla completa (por encima de todo)
 
 const ORANGE = '#F97316';
@@ -104,7 +105,7 @@ export default function IrisChat() {
   // ── Gesto de arrastre unificado (mouse + touch) ──
   // Mueve el ancla abajo-derecha (pos). onTap se dispara si el movimiento total
   // fue menor a DRAG_THRESHOLD (para distinguir tap de drag en la burbuja).
-  const startDrag = useCallback((sx: number, sy: number, opts: { elW: number; elH: number; onTap?: () => void }) => {
+  const startDrag = useCallback((sx: number, sy: number, opts: { elW: number; elH: number; onTap?: () => void; threshold?: number }) => {
     const startRight = pos.right, startBottom = pos.bottom;
     let moved = 0;
     const apply = (cx: number, cy: number) => {
@@ -123,7 +124,7 @@ export default function IrisChat() {
       document.removeEventListener('touchmove', tm);
       document.removeEventListener('touchend', end);
       document.removeEventListener('touchcancel', end);
-      if (moved < DRAG_THRESHOLD) opts.onTap?.();
+      if (moved < (opts.threshold ?? DRAG_THRESHOLD)) opts.onTap?.();
     };
     document.addEventListener('mousemove', mm);
     document.addEventListener('mouseup', end);
@@ -252,7 +253,33 @@ export default function IrisChat() {
     }
   }
 
+  // Posición por defecto según viewport (mobile deja un poco más de margen lateral).
+  function defaultPos() {
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+    return vw < MOBILE_BP ? { right: 16, bottom: 24 } : { right: 24, bottom: 24 };
+  }
+
+  // Posición segura al abrir: el header siempre queda dentro del viewport.
+  // En mobile, además se centra horizontalmente y se pega a top: 8px.
+  function safeOpenPos() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w = size.width, h = size.height;
+    if (vw < MOBILE_BP) {
+      return {
+        right:  clamp(Math.round((vw - w) / 2), 0, Math.max(0, vw - w)),
+        bottom: clamp(vh - h - 8, 0, Math.max(0, vh - h)),
+      };
+    }
+    // Desktop: respeta la posición guardada pero garantiza top >= 8px y que no
+    // se salga por los lados. top = vh - bottom - h  →  bottom <= vh - h - 8.
+    return {
+      right:  clamp(pos.right, 0, Math.max(0, vw - w)),
+      bottom: clamp(pos.bottom, 0, Math.max(0, vh - h - 8)),
+    };
+  }
+
   function openChat() {
+    setPos(safeOpenPos());
     setOpen(true);
   }
   function minimizeToBubble() {
@@ -262,6 +289,13 @@ export default function IrisChat() {
   function closeChat() {
     setOpen(false);
     setMaximized(false);
+  }
+
+  // Reposicionar: vuelve al lugar seguro por defecto y borra lo guardado.
+  function resetPosition() {
+    try { localStorage.removeItem('iris-chat-pos'); } catch {}
+    setMaximized(false);
+    setPos(defaultPos());
   }
 
   // ── Estilos del panel: flotante o pantalla completa ──
@@ -295,7 +329,7 @@ export default function IrisChat() {
       {!open && (
         <button
           onMouseDown={(e) => { if (e.button !== 0) return; e.preventDefault(); startDrag(e.clientX, e.clientY, { elW: 60, elH: 60, onTap: openChat }); }}
-          onTouchStart={(e) => { const t = e.touches[0]; if (!t) return; startDrag(t.clientX, t.clientY, { elW: 60, elH: 60, onTap: openChat }); }}
+          onTouchStart={(e) => { const t = e.touches[0]; if (!t) return; startDrag(t.clientX, t.clientY, { elW: 60, elH: 60, onTap: openChat, threshold: TOUCH_DRAG_THRESHOLD }); }}
           aria-label="Abrir Iris AI (arrastrá para mover)"
           style={{
             position: 'fixed', right: `${pos.right}px`, bottom: `${pos.bottom}px`, zIndex: 1200,
@@ -341,6 +375,16 @@ export default function IrisChat() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={resetPosition}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                aria-label="Reposicionar"
+                title="Volver a la posición por defecto"
+                style={hdrBtn}
+              >
+                ⊕
+              </button>
               <button
                 onClick={() => setMaximized((v) => !v)}
                 onMouseDown={(e) => e.stopPropagation()}
