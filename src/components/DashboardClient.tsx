@@ -236,13 +236,15 @@ export default function DashboardClient() {
                   {hasPending && (
                     <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                       {pendingOrange > 0 && (
-                        <span style={{ background: '#FF8C00', color: '#fff', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
-                          🟠 {fmt(pendingOrange)} naranja
+                        <span style={{ background: '#fff', color: '#FF8C00', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#FF8C00', display: 'inline-block', flexShrink: 0 }} />
+                          {fmt(pendingOrange)} naranja
                         </span>
                       )}
                       {pendingRed > 0 && (
-                        <span style={{ background: '#fff', color: '#E53935', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px' }}>
-                          🔴 {fmt(pendingRed)} rojo
+                        <span style={{ background: '#fff', color: '#E53935', borderRadius: '999px', fontSize: '12px', fontWeight: 800, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#E53935', display: 'inline-block', flexShrink: 0 }} />
+                          {fmt(pendingRed)} rojo
                         </span>
                       )}
                     </div>
@@ -326,18 +328,20 @@ export default function DashboardClient() {
 
   return (
     <>
-      {/* Toolbar */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+      {/* HERO + botón Personalizar inline a la derecha del widget SIN RESPONDER */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {heroWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
+        </div>
         <button
           onClick={() => setCustomizing(true)}
-          style={{ background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '10px', padding: '9px 16px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+          aria-label="Personalizar dashboard"
+          title="Personalizar"
+          style={{ flexShrink: 0, width: '36px', height: '36px', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '10px', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
-          ⚙ Personalizar
+          ⚙
         </button>
       </div>
-
-      {/* HERO */}
-      {heroWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
 
       {/* MÉTRICAS */}
       {metricWidgets.length > 0 && (
