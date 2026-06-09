@@ -33,6 +33,7 @@ const STAFF_PREFIXES = [
   '/settings',
   '/configuracion',
   '/api/settings/system-prompt',
+  '/api/agent/config',
 ];
 
 // Campañas: admin + agent siempre; operator solo con can_see_campaigns.
