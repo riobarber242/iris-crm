@@ -7,7 +7,7 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
-import IrisAI from './IrisAI';
+import IrisChat from './IrisChat';
 
 const navLabels: Record<string, string> = {
   dashboard:     'Dashboard',
@@ -432,8 +432,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       </div>
 
-      {/* Asistente Iris AI — botón flotante presente en toda la plataforma */}
-      <IrisAI />
+      {/* Asistente Iris AI — chat flotante presente en toda la plataforma */}
+      <IrisChat />
     </div>
   );
 }

@@ -1,0 +1,458 @@
+'use client';
+
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+
+// ── Chat flotante de Iris AI ──────────────────────────────────────────────
+// Burbuja en la esquina inferior derecha que abre un panel de chat.
+//  · Desktop: draggable (desde el header) y redimensionable (handle arriba-izq).
+//  · Mobile: pantalla completa, sin drag/resize, con minimizar.
+// La posición y el tamaño se persisten en localStorage.
+// El chat reusa el backend con herramientas de /api/iris-ai (datos reales del
+// CRM del tenant). El audio se transcribe en /api/iris/transcribe (Groq Whisper)
+// y la transcripción se manda automáticamente como mensaje de texto.
+
+type Msg = {
+  id: string;
+  role: 'user' | 'assistant';
+  content?: string;
+  audioUrl?: string;
+  transcript?: string;
+  transcribing?: boolean;
+};
+
+const MIN_W = 320, MIN_H = 420, MAX_W = 600, MAX_H = 700;
+const DEFAULT_SIZE = { width: 384, height: 560 };
+const DEFAULT_POS = { right: 24, bottom: 24 };
+const MOBILE_BP = 768;
+
+const ORANGE = '#F97316';
+const DARK = '#0a0a0a';
+
+let _seq = 0;
+const uid = () => `${Date.now()}-${_seq++}`;
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+function Bolt({ size = 24, fill = '#AAFF00' }: { size?: number; fill?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M13 2 L4 14 H11 L10 22 L20 9 H13 Z" fill={fill} stroke={fill} strokeWidth="0.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export default function IrisChat() {
+  const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [pos, setPos] = useState(DEFAULT_POS);
+  const [size, setSize] = useState(DEFAULT_SIZE);
+
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [thinking, setThinking] = useState(false);
+  const [recording, setRecording] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Msg[]>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // ── Detección de mobile ──
+  useEffect(() => {
+    const f = () => setIsMobile(window.innerWidth < MOBILE_BP);
+    f();
+    window.addEventListener('resize', f);
+    return () => window.removeEventListener('resize', f);
+  }, []);
+
+  // ── Cargar posición/tamaño persistidos ──
+  useEffect(() => {
+    try {
+      const p = localStorage.getItem('iris-chat-pos');
+      if (p) {
+        const v = JSON.parse(p);
+        if (typeof v?.right === 'number' && typeof v?.bottom === 'number') setPos(v);
+      }
+      const s = localStorage.getItem('iris-chat-size');
+      if (s) {
+        const v = JSON.parse(s);
+        if (typeof v?.width === 'number' && typeof v?.height === 'number') {
+          setSize({ width: clamp(v.width, MIN_W, MAX_W), height: clamp(v.height, MIN_H, MAX_H) });
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => { try { localStorage.setItem('iris-chat-pos', JSON.stringify(pos)); } catch {} }, [pos]);
+  useEffect(() => { try { localStorage.setItem('iris-chat-size', JSON.stringify(size)); } catch {} }, [size]);
+
+  // ── Autoscroll ──
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, thinking, open, minimized]);
+
+  // ── Drag (header) ──
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isMobile || e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startRight = pos.right, startBottom = pos.bottom;
+    const w = size.width, h = size.height;
+    function move(ev: MouseEvent) {
+      const right = clamp(startRight - (ev.clientX - startX), 0, Math.max(0, window.innerWidth - w));
+      const bottom = clamp(startBottom - (ev.clientY - startY), 0, Math.max(0, window.innerHeight - h));
+      setPos({ right, bottom });
+    }
+    function up() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }, [isMobile, pos, size]);
+
+  // ── Resize (handle arriba-izquierda; el panel está anclado abajo-derecha) ──
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isMobile || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = size.width, startH = size.height;
+    function move(ev: MouseEvent) {
+      const width = clamp(startW - (ev.clientX - startX), MIN_W, MAX_W);
+      const height = clamp(startH - (ev.clientY - startY), MIN_H, MAX_H);
+      setSize({ width, height });
+    }
+    function up() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }, [isMobile, size]);
+
+  // ── Llamada al backend de Iris (reusa /api/iris-ai con herramientas) ──
+  async function callIris(text: string, prior: Msg[]): Promise<string> {
+    const history = prior
+      .map((m) => ({ role: m.role, content: m.content ?? m.transcript ?? '' }))
+      .filter((m) => m.content)
+      .slice(-20);
+    const res = await fetch('/api/iris-ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, history }),
+    });
+    const d = await res.json().catch(() => ({}));
+    return res.ok ? (d.reply ?? '…') : (d.error ?? 'Error consultando a Iris AI.');
+  }
+
+  async function handleSendText() {
+    const text = input.trim();
+    if (!text || thinking) return;
+    const prior = messagesRef.current;
+    setMessages((m) => [...m, { id: uid(), role: 'user', content: text }]);
+    setInput('');
+    setThinking(true);
+    try {
+      const reply = await callIris(text, prior);
+      setMessages((m) => [...m, { id: uid(), role: 'assistant', content: reply }]);
+    } catch {
+      setMessages((m) => [...m, { id: uid(), role: 'assistant', content: 'Error de red. Probá de nuevo.' }]);
+    } finally {
+      setThinking(false);
+    }
+  }
+
+  // ── Grabación de audio ──
+  async function toggleRecording() {
+    if (recording) { stopRecording(); return; }
+    if (thinking) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = handleRecordingStop;
+      mediaRecorderRef.current = mr;
+      mr.start();
+      setRecording(true);
+    } catch {
+      setMessages((m) => [...m, { id: uid(), role: 'assistant', content: 'No pude acceder al micrófono. Revisá los permisos del navegador.' }]);
+    }
+  }
+
+  function stopRecording() {
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== 'inactive') mr.stop();
+    setRecording(false);
+  }
+
+  async function handleRecordingStop() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    const mime = mediaRecorderRef.current?.mimeType || 'audio/webm';
+    const blob = new Blob(chunksRef.current, { type: mime });
+    chunksRef.current = [];
+    if (blob.size === 0) return;
+
+    const audioUrl = URL.createObjectURL(blob);
+    const msgId = uid();
+    const prior = messagesRef.current;
+    setMessages((m) => [...m, { id: msgId, role: 'user', audioUrl, transcribing: true }]);
+
+    try {
+      const ext = mime.includes('ogg') ? 'ogg' : 'webm';
+      const fd = new FormData();
+      fd.append('audio', blob, `audio.${ext}`);
+      const res = await fetch('/api/iris/transcribe', { method: 'POST', body: fd });
+      const d = await res.json().catch(() => ({}));
+      const text = res.ok ? String(d.text ?? '').trim() : '';
+
+      setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, transcribing: false, transcript: text || '(sin transcripción)' } : x)));
+
+      if (text) {
+        setThinking(true);
+        try {
+          const reply = await callIris(text, [...prior, { id: msgId, role: 'user', transcript: text }]);
+          setMessages((m) => [...m, { id: uid(), role: 'assistant', content: reply }]);
+        } finally {
+          setThinking(false);
+        }
+      }
+    } catch {
+      setMessages((m) => m.map((x) => (x.id === msgId ? { ...x, transcribing: false, transcript: 'Error al transcribir.' } : x)));
+    }
+  }
+
+  function openChat() {
+    setOpen(true);
+    setMinimized(false);
+  }
+
+  // ── Estilos del panel ──
+  const collapsed = minimized;
+  const panelStyle: React.CSSProperties = isMobile
+    ? {
+        position: 'fixed', inset: 0, zIndex: 1200,
+        width: '100vw', height: '100dvh',
+        borderRadius: 0,
+      }
+    : {
+        position: 'fixed', right: `${pos.right}px`, bottom: `${pos.bottom}px`, zIndex: 1200,
+        width: `${size.width}px`,
+        height: collapsed ? 'auto' : `${size.height}px`,
+        borderRadius: '18px',
+        boxShadow: '0 14px 48px rgba(0,0,0,0.35)',
+      };
+
+  return (
+    <>
+      <style>{`
+        @keyframes iris-bolt-flash { 0%{color:#AAFF00} 25%{color:#00E5FF} 50%{color:#FF6B00} 75%{color:#CCFF00} 100%{color:#AAFF00} }
+        @keyframes iris-bolt-pop { 0%,100%{transform:scale(1)} 50%{transform:scale(1.14)} }
+        @keyframes iris-dot { 0%,80%,100%{opacity:.25} 40%{opacity:1} }
+        @keyframes iris-wave { 0%,100%{transform:scaleY(.3)} 50%{transform:scaleY(1)} }
+        @keyframes iris-rec-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(229,57,53,.55)} 50%{box-shadow:0 0 0 8px rgba(229,57,53,0)} }
+        .iris-thinking svg path { animation: iris-bolt-flash .9s linear infinite; fill: currentColor; stroke: currentColor; }
+        .iris-thinking { animation: iris-bolt-pop .9s ease-in-out infinite; }
+        .iris-wave { display:flex; align-items:center; gap:2px; height:24px; flex:1; }
+        .iris-wave span { width:3px; height:100%; background:${ORANGE}; border-radius:2px; transform-origin:center; animation: iris-wave .9s ease-in-out infinite; }
+        .iris-rec { animation: iris-rec-pulse 1.1s ease-out infinite; }
+      `}</style>
+
+      {/* Burbuja flotante */}
+      {!open && (
+        <button
+          onClick={openChat}
+          aria-label="Abrir Iris AI"
+          style={{
+            position: 'fixed', right: `${isMobile ? 20 : pos.right}px`, bottom: `${isMobile ? 20 : pos.bottom}px`, zIndex: 1200,
+            width: '60px', height: '60px', borderRadius: '50%',
+            background: DARK, border: `2px solid ${ORANGE}`, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 6px 22px rgba(0,0,0,0.4)',
+          }}
+        >
+          <Bolt size={28} />
+        </button>
+      )}
+
+      {/* Panel */}
+      {open && (
+        <div style={{ ...panelStyle, background: '#fff', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Handle de resize (solo desktop, expandido) */}
+          {!isMobile && !collapsed && (
+            <div
+              onMouseDown={onResizeMouseDown}
+              aria-label="Redimensionar"
+              style={{ position: 'absolute', top: 0, left: 0, width: '18px', height: '18px', cursor: 'nwse-resize', zIndex: 2 }}
+            />
+          )}
+
+          {/* Header */}
+          <header
+            onMouseDown={onHeaderMouseDown}
+            style={{
+              background: DARK, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              flexShrink: 0, cursor: isMobile ? 'default' : 'move', userSelect: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span className={thinking ? 'iris-thinking' : ''} style={{ display: 'flex' }}><Bolt size={22} /></span>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#fff' }}>Iris AI</h2>
+                <p style={{ margin: 0, fontSize: '11px', color: '#aaa' }}>
+                  {recording ? 'Grabando…' : thinking ? 'Pensando…' : 'Asistente del CRM IRIS'}
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                onClick={() => setMinimized((v) => !v)}
+                onMouseDown={(e) => e.stopPropagation()}
+                aria-label={collapsed ? 'Maximizar' : 'Minimizar'}
+                title={collapsed ? 'Maximizar' : 'Minimizar'}
+                style={hdrBtn}
+              >
+                {collapsed ? '▢' : '—'}
+              </button>
+              <button
+                onClick={() => setOpen(false)}
+                onMouseDown={(e) => e.stopPropagation()}
+                aria-label="Cerrar"
+                title="Cerrar"
+                style={hdrBtn}
+              >
+                ✕
+              </button>
+            </div>
+          </header>
+
+          {!collapsed && (
+            <>
+              {/* Mensajes */}
+              <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', background: '#F5F5F5', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {messages.length === 0 && !thinking && (
+                  <div style={{ color: '#999', fontSize: '13px', textAlign: 'center', marginTop: '24px', lineHeight: 1.5 }}>
+                    Preguntame sobre tu plataforma Iris.<br />
+                    Ej: <i>“¿cuántos contactos tengo?”</i>, <i>“top clientes”</i>,<br /><i>“cómo personalizo el dashboard”</i>.
+                  </div>
+                )}
+
+                {messages.map((m) => {
+                  const isUser = m.role === 'user';
+                  return (
+                    <div key={m.id} style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                      <div
+                        style={{
+                          background: isUser ? ORANGE : '#ECECEC',
+                          color: isUser ? '#fff' : '#111',
+                          borderRadius: '14px', padding: '9px 13px', fontSize: '13px', lineHeight: 1.45,
+                          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                        }}
+                      >
+                        {m.audioUrl ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span aria-hidden="true">🎤</span>
+                              <audio controls src={m.audioUrl} style={{ height: '32px', maxWidth: '190px' }} />
+                            </div>
+                            {m.transcribing ? (
+                              <span style={{ display: 'flex', gap: '4px', padding: '2px 0' }}>
+                                {[0, 1, 2].map((i) => (
+                                  <span key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.85)', animation: `iris-dot 1.2s ${i * 0.2}s infinite ease-in-out` }} />
+                                ))}
+                              </span>
+                            ) : m.transcript ? (
+                              <span style={{ fontStyle: 'italic', fontSize: '12px', color: isUser ? 'rgba(255,255,255,0.85)' : '#777' }}>{m.transcript}</span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          m.content
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {thinking && (
+                  <div style={{ alignSelf: 'flex-start', background: '#ECECEC', borderRadius: '14px', padding: '11px 14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', gap: '4px' }}>
+                    {[0, 1, 2].map((i) => (
+                      <span key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#888', animation: `iris-dot 1.2s ${i * 0.2}s infinite ease-in-out` }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Input */}
+              <div style={{ borderTop: '1px solid #eee', padding: '12px', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, background: '#fff' }}>
+                {recording ? (
+                  <div className="iris-wave" aria-label="Grabando audio">
+                    {Array.from({ length: 18 }).map((_, i) => (
+                      <span key={i} style={{ animationDelay: `${i * 0.06}s` }} />
+                    ))}
+                  </div>
+                ) : (
+                  <input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                    placeholder="Escribí tu pregunta…"
+                    disabled={thinking}
+                    style={{ flex: 1, background: '#F5F5F5', border: '2px solid #eee', borderRadius: '12px', padding: '10px 12px', fontSize: '13px', color: '#111', outline: 'none' }}
+                  />
+                )}
+
+                {/* Micrófono */}
+                <button
+                  onClick={toggleRecording}
+                  disabled={thinking && !recording}
+                  className={recording ? 'iris-rec' : ''}
+                  aria-label={recording ? 'Detener grabación' : 'Grabar audio'}
+                  title={recording ? 'Detener' : 'Grabar audio'}
+                  style={{
+                    width: '44px', height: '42px', flexShrink: 0, borderRadius: '12px', border: 'none',
+                    cursor: thinking && !recording ? 'not-allowed' : 'pointer',
+                    background: recording ? '#E53935' : '#F0F0F0',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px',
+                  }}
+                >
+                  {recording ? '⏹' : '🎤'}
+                </button>
+
+                {/* Enviar */}
+                <button
+                  onClick={handleSendText}
+                  disabled={thinking || recording || !input.trim()}
+                  aria-label="Enviar"
+                  style={{
+                    width: '44px', height: '42px', flexShrink: 0, borderRadius: '12px', border: 'none',
+                    cursor: thinking || recording || !input.trim() ? 'not-allowed' : 'pointer',
+                    background: thinking || recording || !input.trim() ? '#e6e6e6' : ORANGE,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill={thinking || recording || !input.trim() ? '#999' : '#fff'} stroke={thinking || recording || !input.trim() ? '#999' : '#fff'} strokeWidth="1.2" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+const hdrBtn: React.CSSProperties = {
+  background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '8px',
+  width: '30px', height: '30px', fontSize: '14px', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
