@@ -144,7 +144,27 @@ export default function DashboardClient() {
     // Layout de personalización (mergeado con defaults en el server).
     fetch('/api/settings/dashboard-layout')
       .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d?.layout)) setLayout(mergeLayout(d.layout)); })
+      .then((d) => {
+        const merged = Array.isArray(d?.layout) ? mergeLayout(d.layout) : DEFAULT_LAYOUT.map((w) => ({ ...w }));
+        // Reset único: si quedaron widgets ocultos por una config vieja, los
+        // volvemos visibles (orden canónico) y lo persistimos. Guardado con un
+        // flag en localStorage para no pisar futuras personalizaciones.
+        const anyHidden = merged.some((w) => !w.visible);
+        let alreadyReset = false;
+        try { alreadyReset = !!localStorage.getItem('dash-layout-reset-v1'); } catch {}
+        if (anyHidden && !alreadyReset) {
+          const reset = DEFAULT_LAYOUT.map((w) => ({ ...w }));
+          setLayout(reset);
+          try { localStorage.setItem('dash-layout-reset-v1', '1'); } catch {}
+          fetch('/api/settings/dashboard-layout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ layout: reset }),
+          }).catch(() => {});
+        } else {
+          setLayout(merged);
+        }
+      })
       .catch(() => {});
 
     // Polling every 15 s — guaranteed refresh regardless of Realtime status
@@ -331,9 +351,8 @@ export default function DashboardClient() {
   }
 
   const visible = [...layout].sort((a, b) => a.order - b.order).filter((w) => w.visible);
-  const heroWidgets   = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
-  const metricWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'metric');
-  const chartWidgets  = visible.filter((w) => WIDGET_GROUP[w.id] === 'chart');
+  const heroWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
+  const gridWidgets = visible.filter((w) => WIDGET_GROUP[w.id] !== 'hero');
 
   return (
     <>
@@ -352,17 +371,22 @@ export default function DashboardClient() {
         </button>
       </div>
 
-      {/* MÉTRICAS */}
-      {metricWidgets.length > 0 && (
-        <div className="dash-grid" style={{ gap: '16px' }}>
-          {metricWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
-        </div>
-      )}
-
-      {/* CHARTS */}
-      {chartWidgets.length > 0 && (
-        <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          {chartWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
+      {/* GRILLA: los 8 widgets restantes — 4 columnas desktop / 2 tablet / 1 mobile */}
+      {gridWidgets.length > 0 && (
+        <div className="dash-grid-4">
+          {gridWidgets.map((w) => {
+            const isChart = WIDGET_GROUP[w.id] === 'chart';
+            return (
+              <div
+                key={w.id}
+                style={isChart
+                  ? { background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', minWidth: 0 }
+                  : { minWidth: 0 }}
+              >
+                {renderWidget(w)}
+              </div>
+            );
+          })}
         </div>
       )}
 
