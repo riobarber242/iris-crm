@@ -15,6 +15,7 @@ type Stats = {
   avgFirstHumanResponseMin: number | null; recargasHoy: number; recargasMes: number; chatsActivosHoy: number;
   comprobantesPending: number;
   montoVerifMes: number; montoVerifMesAnterior: number; ticketPromedio: number;
+  recargasMesAnterior: number; ticketPromedioMesAnterior: number;
   sinResponder: number;
   pendingOrange: number;
   pendingRed: number;
@@ -318,18 +319,25 @@ export default function DashboardClient() {
           </Column>
         );
 
-      case 'operacion_finanzas':
-        // Fusión de las columnas "Operación & recargas" + "Finanzas".
+      case 'finanzas':
+        return (
+          <Column title={w.label} icon="💰">
+            <MetricCard label="Recargas hoy"            value={fmt(s.recargasHoy)}         highlight={s.recargasHoy > 0}          href="/comprobantes" />
+            <MetricCard label="Recargas mes"            value={fmt(s.recargasMes)}                                                href="/comprobantes" />
+            <MetricCard label="Recargas mes anterior"   value={fmt(s.recargasMesAnterior)}                                        href="/comprobantes" />
+            <MetricCard label="Comprobantes pendientes" value={fmt(s.comprobantesPending)} highlight={s.comprobantesPending > 0}   href="/comprobantes" />
+          </Column>
+        );
+
+      case 'operacion':
+        // "Ticket promedio" y "Comprobantes del mes" usan SOLO comprobantes
+        // estado='verificado' (la API ya excluye pendientes/rechazados).
         return (
           <Column title={w.label} icon="⚡">
-            <MetricCard label="Tiempo prom. 1ra resp." value={mins(s.avgFirstHumanResponseMin)}                       href="/conversations" />
-            <MetricCard label="Recargas hoy"           value={fmt(s.recargasHoy)}  highlight={s.recargasHoy > 0}      href="/comprobantes" />
-            <MetricCard label="Recargas mes"           value={fmt(s.recargasMes)}                                     href="/comprobantes" />
-            <MetricCard label="Chats activos hoy"      value={fmt(s.chatsActivosHoy)}                                 href="/conversations" />
-            <MetricCard label="Comprob. pendientes"    value={fmt(s.comprobantesPending)} highlight={s.comprobantesPending > 0} href="/comprobantes" />
-            <MetricCard label="Verif. mes"             value={money(s.montoVerifMes)}                                 href="/comprobantes" />
-            <MetricCard label="Mes anterior"           value={money(s.montoVerifMesAnterior)}                         href="/comprobantes" />
-            <MetricCard label="Ticket promedio"        value={money(s.ticketPromedio)}                                href="/comprobantes" />
+            <MetricCard label="Tiempo 1ra respuesta"        value={mins(s.avgFirstHumanResponseMin)}                  href="/conversations" />
+            <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/comprobantes" />
+            <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/comprobantes" />
+            <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/comprobantes" />
           </Column>
         );
 
@@ -351,8 +359,9 @@ export default function DashboardClient() {
   }
 
   const visible = [...layout].sort((a, b) => a.order - b.order).filter((w) => w.visible);
-  const heroWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
-  const gridWidgets = visible.filter((w) => WIDGET_GROUP[w.id] !== 'hero');
+  const heroWidgets   = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
+  const metricWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'metric');
+  const chartWidgets  = visible.filter((w) => WIDGET_GROUP[w.id] === 'chart');
 
   return (
     <>
@@ -371,22 +380,17 @@ export default function DashboardClient() {
         </button>
       </div>
 
-      {/* GRILLA: los 8 widgets restantes — 4 columnas desktop / 2 tablet / 1 mobile */}
-      {gridWidgets.length > 0 && (
-        <div className="dash-grid-4">
-          {gridWidgets.map((w) => {
-            const isChart = WIDGET_GROUP[w.id] === 'chart';
-            return (
-              <div
-                key={w.id}
-                style={isChart
-                  ? { background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', minWidth: 0 }
-                  : { minWidth: 0 }}
-              >
-                {renderWidget(w)}
-              </div>
-            );
-          })}
+      {/* MÉTRICAS: 5 columnas desktop (≥1280) / 3 tablet / 1 mobile */}
+      {metricWidgets.length > 0 && (
+        <div className="dash-grid" style={{ gap: '16px' }}>
+          {metricWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
+        </div>
+      )}
+
+      {/* CHARTS */}
+      {chartWidgets.length > 0 && (
+        <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          {chartWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
         </div>
       )}
 

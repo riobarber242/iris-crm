@@ -8,7 +8,8 @@ export type WidgetId =
   | 'conversaciones'
   | 'contactos_nuevos'
   | 'embudo_conversion'
-  | 'operacion_finanzas'
+  | 'finanzas'
+  | 'operacion'
   | 'estado_contactos'
   | 'comprobantes_chart'
   | 'distribucion_provincia'
@@ -30,7 +31,8 @@ export const WIDGET_GROUP: Record<WidgetId, WidgetGroup> = {
   conversaciones:         'metric',
   contactos_nuevos:       'metric',
   embudo_conversion:      'metric',
-  operacion_finanzas:     'metric',
+  finanzas:               'metric',
+  operacion:              'metric',
   estado_contactos:       'chart',
   comprobantes_chart:     'chart',
   distribucion_provincia: 'chart',
@@ -42,7 +44,8 @@ export const DEFAULT_LABELS: Record<WidgetId, string> = {
   conversaciones:         'Conversaciones',
   contactos_nuevos:       'Contactos Nuevos',
   embudo_conversion:      'Embudo & Conversión',
-  operacion_finanzas:     'Operación & Finanzas',
+  finanzas:               'Finanzas',
+  operacion:              'Operación',
   estado_contactos:       'Estado de Contactos',
   comprobantes_chart:     'Comprobantes',
   distribucion_provincia: 'Distribución por Provincia',
@@ -55,7 +58,8 @@ export const WIDGET_ORDER: WidgetId[] = [
   'conversaciones',
   'contactos_nuevos',
   'embudo_conversion',
-  'operacion_finanzas',
+  'finanzas',
+  'operacion',
   'estado_contactos',
   'comprobantes_chart',
   'distribucion_provincia',
@@ -76,7 +80,7 @@ const KNOWN_IDS = new Set<string>(WIDGET_ORDER);
  *  - respeta label/visible/order de lo guardado,
  *  - agrega widgets nuevos (que no existían en una config vieja) al final,
  *  - descarta ids desconocidos,
- *  - siempre devuelve los 9 widgets, ordenados y con `order` normalizado a 0..n.
+ *  - siempre devuelve los 10 widgets, ordenados y con `order` normalizado a 0..n.
  */
 export function mergeLayout(saved: unknown): WidgetConfig[] {
   if (!Array.isArray(saved)) {
@@ -110,7 +114,7 @@ export function mergeLayout(saved: unknown): WidgetConfig[] {
   return merged.map((w, i) => ({ ...w, order: i }));
 }
 
-/** Sanitiza lo que llega del cliente antes de persistir. Devuelve los 9 widgets. */
+/** Sanitiza lo que llega del cliente antes de persistir. Devuelve los 10 widgets. */
 export function sanitizeLayout(input: unknown): WidgetConfig[] {
   return mergeLayout(input);
 }

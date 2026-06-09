@@ -139,6 +139,11 @@ export async function GET() {
   const montoVerifMes  = sumMonto(montoMesRes.data ?? []);
   const ticketPromedio = recargasMes > 0 ? montoVerifMes / recargasMes : 0;
 
+  // Mes anterior: cantidad y ticket promedio (solo comprobantes verificados).
+  const recargasMesAnterior        = (montoPrevRes.data ?? []).length;
+  const montoVerifMesAnterior      = sumMonto(montoPrevRes.data ?? []);
+  const ticketPromedioMesAnterior  = recargasMesAnterior > 0 ? montoVerifMesAnterior / recargasMesAnterior : 0;
+
   // ── Phase 2: "Chats activos hoy" sobre contactos en gestión ───────────────────
   const opIds = (opContactsRes.data ?? []).map((c: any) => c.id as string);
 
@@ -206,8 +211,10 @@ export async function GET() {
     // Finanzas
     comprobantesPending:   comprobantesPending.count ?? 0,
     montoVerifMes,
-    montoVerifMesAnterior: sumMonto(montoPrevRes.data ?? []),
+    montoVerifMesAnterior,
     ticketPromedio,
+    recargasMesAnterior,
+    ticketPromedioMesAnterior,
 
     // Hero
     sinResponder,

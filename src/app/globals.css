@@ -101,20 +101,6 @@ button, input, textarea, select {
 @media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
 
-/* Grilla unificada de widgets del dashboard: 1 (mobile) / 2 (tablet) / 4 (desktop). */
-.dash-grid-4 {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: 1fr;
-  align-items: stretch;
-}
-@media (min-width: 640px)  { .dash-grid-4 { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1024px) { .dash-grid-4 { grid-template-columns: repeat(4, 1fr); } }
-.dash-grid-4 > * { min-width: 0; }
-/* Charts dentro de la grilla: fluidos, sin minWidth fijo que rompa la celda. */
-.dash-grid-4 .dash-chart { min-width: 0 !important; width: 100% !important; flex: 1 1 auto !important; }
-.dash-grid-4 .dash-chart svg { max-width: 100% !important; height: auto !important; }
-
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 /* Hamburguesa oculta en desktop; overlay del drawer oculto por defecto. */
 .app-hamburger { display: none; }
