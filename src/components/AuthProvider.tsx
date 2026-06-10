@@ -42,9 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    // El borrado real de la cookie es server-side (es httpOnly, JS no la puede
+    // tocar). Esperamos a que el POST limpie la cookie antes de redirigir.
+    try { await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' }); } catch {}
     setAgent(null);
-    window.location.href = '/login';
+    // replace() evita que el back/bfcache (mobile Safari) restaure la vista autenticada.
+    window.location.replace('/login');
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);

@@ -19,8 +19,16 @@ type Message = {
   created_at?: string;
   status?: string;
   agent_name?: string | null;
+  agent_role?: string | null;
   whatsapp_message_id?: string | null;
   reaction?: string | null;
+};
+
+// Etiqueta de rol para la firma de mensajes manuales (ej: "jessica · operador").
+const ROLE_LABEL: Record<string, string> = {
+  operator: 'operador',
+  agent:    'agente',
+  admin:    'admin',
 };
 
 // Categorías del emoji picker en español (la librería no tiene locale 'es').
@@ -381,7 +389,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setSendError(null);
     setLoading(true);
     setCooldown(true);
-    const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name };
+    const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
     setMessages((m) => [...m, temp]);
     try {
       const res = await fetchWithTimeout('/api/messages', {
@@ -415,7 +423,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setImageFile(null); setImagePreview(null); setInput('');
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'image', url: preview ?? '', caption });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     form.append('file', imageFile);
@@ -443,7 +451,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setAudioBlob(null); setAudioPreviewUrl(null);
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'audio', url: preview ?? '' });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('mpeg') ? 'mp3' : 'webm';
@@ -510,8 +518,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           .map((m, i) => {
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
-          // Mensajes humanos: nombre real del agente; fallback "Operador" para los viejos sin atribución
-          const roleLabel = isBot ? 'Iris 🤖' : isHuman ? (m.agent_name || 'Operador') : 'Cliente';
+          // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.
+          const roleLabel = isBot ? 'Iris 🤖' : 'Cliente';
+          // Firma del operador/agente debajo del mensaje manual (ej: "jessica · operador").
+          const humanSignature = isHuman
+            ? `${m.agent_name || 'Operador'}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
+            : '';
           const media = parseMedia(m.content);
           // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
           const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
@@ -542,9 +554,11 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 wordBreak: 'break-word',
               }}
             >
-              <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
-                {roleLabel}
-              </p>
+              {!isHuman && (
+                <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
+                  {roleLabel}
+                </p>
+              )}
 
               {media?._type === 'image' ? (
                 <div>
@@ -603,6 +617,13 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   </button>
                 )}
               </p>
+
+              {/* Firma de quién envió el mensaje manual (operador/agente/admin) */}
+              {isHuman && (
+                <p style={{ margin: '3px 0 0 0', fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
+                  {humanSignature}
+                </p>
+              )}
 
               {/* Reacción aplicada */}
               {m.reaction && (

@@ -5,23 +5,20 @@ import { getSessionAgent } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
 
-// Un agente solo puede acceder a un contacto asignado a él; el admin, a todos.
-// Devuelve null si tiene acceso, o una NextResponse de error si no.
+// Acceso por TENANT: admin, agente y operador acceden a cualquier contacto de
+// su tenant (la asignación no restringe). Devuelve null si tiene acceso, o una
+// NextResponse de error si no.
 async function guardContactAccess(
   session: SessionPayload,
   contactId: string,
 ): Promise<NextResponse | null> {
-  // Scope por tenant para TODOS los roles (incluye admin → no cruza tenants).
   const { data } = await supabaseAdmin
     .from('contacts')
-    .select('assigned_agent_id')
+    .select('id')
     .eq('id', contactId)
     .eq('tenant_id', session.tenant_id)
     .maybeSingle();
   if (!data) return new NextResponse('Sin acceso a este contacto', { status: 403 });
-  if (session.role !== 'admin' && data.assigned_agent_id !== session.sub) {
-    return new NextResponse('Sin acceso a este contacto', { status: 403 });
-  }
   return null;
 }
 
@@ -49,7 +46,27 @@ export async function GET(request: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  // Firma del operador: adjuntar el rol de quien envió cada mensaje manual
+  // (role 'human') para mostrar "nombre · rol" en el chat. Se resuelve acá con
+  // supabaseAdmin para no exponer /api/agents a los operadores.
+  const agentIds = [
+    ...new Set((data ?? [])
+      .filter((m: any) => m.role === 'human' && m.agent_id)
+      .map((m: any) => m.agent_id as string)),
+  ];
+  let roleById: Record<string, string> = {};
+  if (agentIds.length) {
+    const { data: ags } = await supabaseAdmin
+      .from('agents')
+      .select('id, role')
+      .in('id', agentIds);
+    roleById = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.role]));
+  }
+  const enriched = (data ?? []).map((m: any) =>
+    m.agent_id ? { ...m, agent_role: roleById[m.agent_id] ?? null } : m,
+  );
+
+  return NextResponse.json(enriched);
 }
 
 export async function POST(request: Request) {

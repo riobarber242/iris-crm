@@ -10,7 +10,7 @@ import ContactHeader from '@/components/ContactHeader';
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, assigned_agent_id, messages(content, created_at, role)')
+    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, assigned_agent_id, tenant_id, messages(content, created_at, role)')
     .eq('id', id)
     .single();
 
@@ -38,8 +38,9 @@ export default async function ConversationPage({ params }: any) {
   const session = await getSessionAgent();
   const contact = await fetchContact(id);
 
-  // Un agente solo puede abrir un chat asignado a él; el admin, cualquiera.
-  if (!contact || (session?.role !== 'admin' && contact.assigned_agent_id !== session?.sub)) {
+  // Acceso por TENANT: admin, agente y operador pueden abrir cualquier
+  // conversación de su tenant (la asignación es solo una etiqueta, no restringe).
+  if (!session || !contact || contact.tenant_id !== session.tenant_id) {
     return (
       <AdminShell>
         <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>

@@ -7,7 +7,8 @@ export async function GET(request: Request) {
   const status = url.searchParams.get('status');
   const search = url.searchParams.get('search');
 
-  // Los agentes solo ven los chats asignados a ellos; el admin ve todo.
+  // Todos los roles internos (admin, agente, operador) ven TODAS las
+  // conversaciones de su tenant. La asignación es informativa, no filtra.
   const session = await getSessionAgent();
   if (!session) {
     return new NextResponse('No autenticado', { status: 401 });
@@ -19,9 +20,6 @@ export async function GET(request: Request) {
     .eq('tenant_id', session.tenant_id)
     .order('created_at', { ascending: false })
     .order('created_at', { foreignTable: 'messages', ascending: false });
-  if (session.role !== 'admin') {
-    query = query.eq('assigned_agent_id', session.sub);
-  }
   if (status) {
     query = query.eq('status', status);
   }
@@ -59,17 +57,9 @@ export async function PATCH(request: Request) {
     return new NextResponse('Falta contactId', { status: 400 });
   }
 
-  // Un agente solo puede tocar contactos asignados a él.
-  if (session.role !== 'admin') {
-    const { data: owned } = await supabaseAdmin
-      .from('contacts')
-      .select('assigned_agent_id')
-      .eq('id', contactId)
-      .single();
-    if (!owned || owned.assigned_agent_id !== session.sub) {
-      return new NextResponse('Sin acceso a este contacto', { status: 403 });
-    }
-  }
+  // Acceso por tenant: todos los roles internos pueden editar cualquier
+  // contacto de su tenant. El UPDATE final filtra por tenant_id, así que no
+  // se puede tocar un contacto de otro tenant.
 
   // La asignación de operador es exclusiva del admin.
   if (body.assigned_agent_id !== undefined) {
