@@ -29,8 +29,6 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { agent, logout } = useAuth();
-  // DEBUG (Fix 1): confirmar el rol exacto que llega en la sesión.
-  useEffect(() => { console.log('[AdminShell] agent?.role =', agent?.role); }, [agent?.role]);
   // Menú por rol:
   //  - admin: todo + Operadores + Tenants.
   //  - agent: todo + Operadores, pero SIN Tenants (administración global).
