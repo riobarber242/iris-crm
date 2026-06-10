@@ -8,6 +8,7 @@ import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 import IrisChat from './IrisChat';
+import ActivityGuard from './ActivityGuard';
 
 const navLabels: Record<string, string> = {
   dashboard:     'Dashboard',
@@ -183,7 +184,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     }
   }
 
-  return (
+  const shell = (
     <div style={{ minHeight: '100vh', background: '#F5F5F5', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── BANNER FULL-WIDTH ── */}
@@ -439,4 +440,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
       <IrisChat />
     </div>
   );
+
+  // El control de inactividad sólo aplica a operadores (admin/agente quedan exentos).
+  if (agent?.role === 'operator') {
+    return <ActivityGuard>{shell}</ActivityGuard>;
+  }
+  return shell;
 }

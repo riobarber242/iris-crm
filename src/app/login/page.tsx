@@ -1,14 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
+  const [notice,   setNotice]   = useState('');
   const [loading,  setLoading]  = useState(false);
   const router = useRouter();
+
+  // Mensaje de sesión cerrada por inactividad (?reason=inactividad).
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason');
+    if (reason === 'inactividad') setNotice('Sesión cerrada por inactividad');
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -59,6 +66,15 @@ export default function LoginPage() {
           </span>
           <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>Iniciá sesión para continuar</p>
         </div>
+
+        {notice && (
+          <div style={{
+            background: '#FFF3E0', color: '#E65100', borderRadius: '10px',
+            padding: '10px 14px', fontSize: '13px', fontWeight: 600, textAlign: 'center',
+          }}>
+            {notice}
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <label style={{ fontSize: '12px', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Usuario</label>
