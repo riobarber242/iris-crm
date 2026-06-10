@@ -15,6 +15,13 @@ function getPhoneNumberId(): string {
   return id;
 }
 
+// WhatsApp Business Account ID (WABA) — necesario para crear plantillas.
+function getBusinessAccountId(): string {
+  const id = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ?? process.env.WHATSAPP_WABA_ID;
+  if (!id) throw new Error('[WhatsApp] WHATSAPP_BUSINESS_ACCOUNT_ID no configurado en Vercel env vars');
+  return id;
+}
+
 // Resuelve las credenciales de WhatsApp a usar para enviar.
 //  · Si `tenantId` tiene en la tabla tenants AMBOS (whatsapp_access_token y
 //    whatsapp_phone_id) → usa ese par (envía desde el número del tenant).
@@ -157,6 +164,46 @@ export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?:
     );
   } catch (err: any) {
     logApiError('sendWhatsAppAudio', err);
+    throw err;
+  }
+}
+
+// Crea (registra) una plantilla de mensaje en Meta. Queda en revisión hasta que
+// Meta la aprueba. El `example` se genera con un valor de muestra por cada
+// placeholder {{n}} del cuerpo (requerido por Meta para plantillas con variables).
+export async function createMessageTemplate(def: {
+  name: string;
+  language: string;
+  category: string;
+  bodyText: string;
+}): Promise<any> {
+  const token   = getToken();
+  const wabaId  = getBusinessAccountId();
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
+
+  // Cantidad de placeholders distintos {{n}} en el cuerpo.
+  const placeholders = new Set((def.bodyText.match(/\{\{(\d+)\}\}/g) ?? []));
+  const sample = ['Juan', 'valor2', 'valor3', 'valor4'].slice(0, placeholders.size);
+
+  const body: any = {
+    name:     def.name,
+    language: def.language,
+    category: def.category,
+    components: [
+      {
+        type: 'BODY',
+        text: def.bodyText,
+        ...(placeholders.size > 0 ? { example: { body_text: [sample] } } : {}),
+      },
+    ],
+  };
+
+  try {
+    const res = await axios.post(`${BASE_URL}/${wabaId}/message_templates`, body, { headers });
+    console.log(`[createMessageTemplate] ✓ "${def.name}" enviada a revisión:`, JSON.stringify(res.data));
+    return res.data;
+  } catch (err: any) {
+    logApiError('createMessageTemplate', err);
     throw err;
   }
 }

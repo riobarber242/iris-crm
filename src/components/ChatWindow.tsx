@@ -8,6 +8,13 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { useAuth } from '@/components/AuthProvider';
 import { searchEmojisEs } from '@/lib/emoji-es';
+import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
+
+// Detecta el error de "ventana de 24h" de Meta (texto o código 131047) para
+// ofrecer el envío por plantilla.
+function is24hWindowError(msg: string | null): boolean {
+  return !!msg && /24\s*hours?|24\s*hs|131047|re-?engagement/i.test(msg);
+}
 
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
@@ -146,6 +153,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [showActions, setShowActions] = useState(false); // menú "+" (rápidas/emoji/adjuntar)
   const [loadError, setLoadError] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [showTemplates,   setShowTemplates]   = useState(false);
+  const [templateSending, setTemplateSending] = useState(false);
 
   // Image state
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -453,6 +462,36 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     if (parseMedia(failed.content)) return;
     setMessages((m) => m.filter((x) => x !== failed));
     await sendText(failed.content);
+  }
+
+  // Envía una plantilla aprobada (fallback cuando se cayó la ventana de 24h).
+  async function sendTemplate(name: string) {
+    if (templateSending) return;
+    setTemplateSending(true);
+    try {
+      const res = await fetch('/api/messages/template', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contactId, templateName: name }),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setMessages((m) => (saved?.id && m.some((x) => x.id === saved.id)) ? m : [...m, saved]);
+        if (saved?.error) {
+          setSendError(saved.error); // la plantilla también falló (ej: no aprobada)
+        } else {
+          setSendError(null);
+          setShowTemplates(false);
+        }
+      } else {
+        const reason = await res.text().catch(() => '');
+        setSendError(reason || 'No se pudo enviar la plantilla.');
+      }
+    } catch {
+      setSendError('No se pudo enviar la plantilla. Revisá tu conexión.');
+    } finally {
+      setTemplateSending(false);
+    }
   }
 
   async function handleSendImage() {
@@ -811,8 +850,17 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
         {/* Error de envío visible (A3) */}
         {sendError && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px', fontSize: '13px' }}>
-            <span style={{ flex: 1 }}>⚠ {sendError}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', marginBottom: '10px', fontSize: '13px', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, minWidth: '160px' }}>⚠ {sendError}</span>
+            {is24hWindowError(sendError) && (
+              <button
+                type="button"
+                onClick={() => setShowTemplates(true)}
+                style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                Usar plantilla
+              </button>
+            )}
             <button type="button" onClick={() => setSendError(null)} aria-label="Cerrar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontSize: '18px', lineHeight: 1, padding: '2px' }}>×</button>
           </div>
         )}
@@ -912,6 +960,56 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               cursor: 'pointer', lineHeight: 1,
             }}
           >×</button>
+        </div>
+      )}
+
+      {/* Selector de plantillas (fallback ventana 24h) */}
+      {showTemplates && (
+        <div
+          onClick={() => !templateSending && setShowTemplates(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            style={{ background: '#fff', borderRadius: '18px', padding: '20px', width: '100%', maxWidth: '440px', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <h3 style={{ fontSize: '17px', fontWeight: 800, color: '#000', margin: 0 }}>Enviar por plantilla</h3>
+              <button type="button" onClick={() => !templateSending && setShowTemplates(false)} aria-label="Cerrar" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '22px', lineHeight: 1, padding: '2px' }}>×</button>
+            </div>
+            <p style={{ fontSize: '12px', color: '#888', margin: '0 0 14px 0' }}>
+              Pasaron más de 24&nbsp;h desde el último mensaje del cliente. Enviá una plantilla aprobada para reabrir la conversación.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.name}
+                  type="button"
+                  onClick={() => sendTemplate(t.name)}
+                  disabled={templateSending}
+                  style={{
+                    textAlign: 'left', background: '#F7F7F7', border: '1px solid #eee', borderRadius: '12px',
+                    padding: '12px 14px', cursor: templateSending ? 'not-allowed' : 'pointer', opacity: templateSending ? 0.6 : 1,
+                  }}
+                >
+                  <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: 800, color: '#1a1a1a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    ⚡ {t.name}
+                    <span style={{ fontWeight: 600, color: '#aaa', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{t.language}</span>
+                  </p>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#555', lineHeight: 1.45 }}>
+                    {previewTemplate(t)}
+                  </p>
+                </button>
+              ))}
+            </div>
+
+            {templateSending && (
+              <p style={{ fontSize: '12px', color: '#888', textAlign: 'center', margin: '12px 0 0 0' }}>Enviando plantilla…</p>
+            )}
+          </div>
         </div>
       )}
 
