@@ -685,14 +685,26 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                  title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
                 {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
                 {(isBot || isHuman) && <Ticks status={m.status} />}
-                {isHuman && m.status === 'failed' && !media && (
-                  <button
-                    type="button"
-                    onClick={() => retrySend(m)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E53935', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
-                  >
-                    Reintentar
-                  </button>
+                {/* Acciones de mensaje fallido: reintentar texto libre o usar plantilla. */}
+                {isHuman && m.status === 'failed' && (
+                  <>
+                    {!media && (
+                      <button
+                        type="button"
+                        onClick={() => retrySend(m)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E53935', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+                      >
+                        Reintentar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowTemplates(true)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1a7a3a', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+                    >
+                      Usar plantilla
+                    </button>
+                  </>
                 )}
               </p>
 
