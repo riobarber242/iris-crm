@@ -28,14 +28,20 @@ const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { agent, logout } = useAuth();
+  const { agent, logout, loading } = useAuth();
+  // El rol recién está confirmado cuando terminó la carga Y hay agente. Hasta
+  // entonces NO renderizamos ningún item de navegación (evita el flash de
+  // hidratación que mostraba el menú completo antes de conocer el rol).
+  const roleReady = !loading && !!agent?.role;
+
   // Menú por rol:
   //  - admin: todo + Operadores + Tenants.
-  //  - agent: todo + Operadores, pero SIN Tenants (administración global).
-  //  - operator: base reducida (conversaciones, contactos, comprobantes) y,
-  //    opcionalmente, Top Clientes y Campañas según sus flags.
-  let items: string[];
-  if (agent?.role === 'admin') {
+  //  - agent: todo, pero SIN Operadores ni Tenants (administración global).
+  //  - operator: base reducida (conversaciones, contactos, comprobantes).
+  let items: string[] = [];
+  if (!roleReady) {
+    items = []; // rol no confirmado → sidebar sin opciones (skeleton)
+  } else if (agent?.role === 'admin') {
     items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'servicios', 'configuracion', 'settings'];
   } else if (agent?.role === 'operator') {
     // Operador: solo Conversaciones, Contactos, Comprobantes.
@@ -323,8 +329,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </div>
          </div>
 
-          {/* Agente logueado + salir */}
-          {agent && (
+          {/* Agente logueado + salir. Solo cuando el rol está confirmado, para
+              que nombre/rol/botón no flasheen con datos incorrectos en la carga. */}
+          {roleReady && agent && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingLeft: '16px', marginLeft: '4px', borderLeft: '2px solid rgba(255,255,255,0.18)' }}>
               <span className="app-agent-name" style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
                 <span style={{ fontSize: '14px', fontWeight: 800, color: '#fff' }}>{agent.name}</span>
@@ -368,7 +375,21 @@ export function AdminShell({ children }: { children: ReactNode }) {
           zIndex: 100,
         }}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {items.map((item) => {
+            {!roleReady ? (
+              // Skeleton neutro: no revela ninguna opción hasta confirmar el rol.
+              Array.from({ length: 5 }).map((_, i) => (
+                <div
+                  key={i}
+                  aria-hidden="true"
+                  style={{
+                    height: '40px',
+                    borderRadius: '10px',
+                    background: '#f0f0f0',
+                    opacity: 0.7,
+                  }}
+                />
+              ))
+            ) : items.map((item) => {
               const path = item === 'dashboard' ? '/dashboard'
                          : item === 'tenants'   ? '/admin/tenants'
                          : `/${item}`;
