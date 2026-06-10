@@ -13,7 +13,38 @@ export type WhatsAppTemplateDef = {
   phoneId?:  string;                // número dedicado opcional para enviar
 };
 
+// NOTA: para las plantillas YA aprobadas en Meta (reactivacion_*), `bodyText` es
+// solo el texto de preview del modal — el envío usa la versión aprobada en Meta
+// (sendWhatsAppTemplate manda name+language+vars). Todas resuelven {{1}} = nombre.
 export const TEMPLATES: WhatsAppTemplateDef[] = [
+  {
+    name:      'reactivacion_inactivos',
+    language:  'es_AR',
+    category:  'MARKETING',
+    bodyText:  'Hola {{1}}! 👋 Hace un tiempo que no jugás con nosotros. ¡Volvé cuando quieras, estamos para ayudarte! 🙌',
+    variables: ['nombre'],
+  },
+  {
+    name:      'reactivacion_15',
+    language:  'es_AR',
+    category:  'MARKETING',
+    bodyText:  'Hola {{1}}! 👋 Pasaron unos días desde tu última recarga. ¿Te damos una mano para volver a jugar? 🎰',
+    variables: ['nombre'],
+  },
+  {
+    name:      'reactivacion_25',
+    language:  'es_AR',
+    category:  'MARKETING',
+    bodyText:  'Hola {{1}}! 👋 Hace un tiempo no te vemos. Tenemos todo listo para que vuelvas a jugar. 🙌',
+    variables: ['nombre'],
+  },
+  {
+    name:      'reactivacion_30',
+    language:  'es_AR',
+    category:  'MARKETING',
+    bodyText:  'Hola {{1}}! 👋 Hace rato que no jugás. ¡Te esperamos para seguir disfrutando! 🎰',
+    variables: ['nombre'],
+  },
   {
     name:      'bienvenida_reactivacion',
     language:  'es_AR',
