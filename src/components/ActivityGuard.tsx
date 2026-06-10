@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 // Sistema de actividad para operadores: tras 20 min de inactividad aparece un
 // popup con countdown de 60 s. Si no responde, cierra la sesión y redirige a
 // /login. Sólo se monta para el rol operator (ver AdminShell).
-const INACTIVITY_MS     = 1 * 60 * 1000; // TODO: volver a 20 * 60 * 1000 (20 min) tras probar
+const INACTIVITY_MS     = 10 * 1000; // TODO: volver a 20 * 60 * 1000 (20 min) tras probar
 const COUNTDOWN_SECONDS = 60;
 const IRIS = '#F97316';
 
@@ -55,6 +55,7 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
   }, [clearCountdown, startInactivityTimer]);
 
   useEffect(() => {
+    console.log('[ActivityGuard] montado — timer de inactividad iniciado');
     startInactivityTimer();
 
     const onActivity = () => {

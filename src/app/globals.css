@@ -157,6 +157,8 @@ button, input, textarea, select {
 @media (max-width: 480px) {
   .app-agent-name { display: none !important; }
   .app-header-right { gap: 10px !important; }
+  /* Ocultar toggles del bot en celular para que el botón Salir siempre entre. */
+  .app-header-toggles { display: none !important; }
 
   .chat-input-row { gap: 6px !important; }
 }

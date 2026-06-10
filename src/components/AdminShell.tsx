@@ -29,6 +29,8 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { agent, logout } = useAuth();
+  // DEBUG (Fix 1): confirmar el rol exacto que llega en la sesión.
+  useEffect(() => { console.log('[AdminShell] agent?.role =', agent?.role); }, [agent?.role]);
   // Menú por rol:
   //  - admin: todo + Operadores + Tenants.
   //  - agent: todo + Operadores, pero SIN Tenants (administración global).
@@ -38,12 +40,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (agent?.role === 'admin') {
     items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'servicios', 'configuracion', 'settings'];
   } else if (agent?.role === 'operator') {
+    // Operador: solo Conversaciones, Contactos, Comprobantes.
     items = ['conversations', 'contacts', 'comprobantes'];
-    if (agent.can_see_top_clients) items.push('leads');
-    if (agent.can_see_campaigns)   items.push('campanas');
   } else {
-    // agent
-    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'configuracion', 'settings'];
+    // Agente: todo menos Operadores y Tenants (administración global).
+    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'configuracion', 'settings'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -246,6 +247,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
         {/* Toggle Bot/Humano */}
         <div className="app-header-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
 
+         {/* Toggles globales del bot. En celular se ocultan para dejar lugar al
+             botón Salir (sobre todo en operadores, que usan el panel en mobile). */}
+         <div className="app-header-toggles" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+
           {/* Toggle OFFLINE — naranja/rojo cuando está activo */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
             <button
@@ -318,6 +323,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               {botEnabled ? 'BOT' : 'HUM'}
             </span>
           </div>
+         </div>
 
           {/* Agente logueado + salir */}
           {agent && (
