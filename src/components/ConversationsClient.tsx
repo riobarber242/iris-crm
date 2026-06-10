@@ -16,9 +16,26 @@ export default function ConversationsClient() {
   const [readFilter,     setReadFilter]     = useState<'todos' | 'no_leidos'>('todos');
   const [query,          setQuery]          = useState('');
   const [offline,        setOffline]        = useState(false);
+  const [filtersOpen,    setFiltersOpen]    = useState(false);
   const fetchRef       = useRef<() => void>(() => {});
   const sbRef          = useRef<any>(null);
   const channelRef     = useRef<any>(null);
+  const filtersRef     = useRef<HTMLDivElement>(null);
+
+  // Número de filtros activos (estado distinto de "todos" + lectura distinta de "todos").
+  const activeFilterCount = (activeFilter !== 'todos' ? 1 : 0) + (readFilter !== 'todos' ? 1 : 0);
+
+  // Click fuera del panel de filtros → cerrar.
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
+        setFiltersOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [filtersOpen]);
 
   async function fetchConversations() {
     try {
@@ -120,65 +137,139 @@ export default function ConversationsClient() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-      {/* Search */}
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Buscar por usuario casino, nombre o teléfono..."
-        style={{
-          width: '100%',
-          padding: '12px 16px',
-          fontSize: '14px',
-          border: '2px solid #e0e0e0',
-          borderRadius: '12px',
-          outline: 'none',
-          background: '#fff',
-          boxSizing: 'border-box',
-        }}
-      />
+      {/* Barra: búsqueda + botón Filtros colapsable */}
+      <div ref={filtersRef} style={{ position: 'relative', display: 'flex', gap: '8px', alignItems: 'stretch' }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar por usuario casino, nombre o teléfono..."
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: '12px 16px',
+            fontSize: '14px',
+            border: '2px solid #e0e0e0',
+            borderRadius: '12px',
+            outline: 'none',
+            background: '#fff',
+            boxSizing: 'border-box',
+          }}
+        />
 
-      {/* Filter bar */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-        {FILTERS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setActiveFilter(key)}
-            style={{
-              background:   activeFilter === key ? '#C8FF00' : '#F0F0F0',
-              color:        activeFilter === key ? '#000'    : '#888',
-              border:       'none',
+        <button
+          onClick={() => setFiltersOpen((o) => !o)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            flexShrink: 0,
+            padding: '0 16px',
+            fontSize: '14px',
+            fontWeight: 700,
+            cursor: 'pointer',
+            borderRadius: '12px',
+            border: activeFilterCount > 0 ? '2px solid #F97316' : '2px solid #e0e0e0',
+            background: activeFilterCount > 0 ? '#F97316' : '#fff',
+            color: activeFilterCount > 0 ? '#fff' : '#555',
+            transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+          }}
+        >
+          {/* Ícono de embudo */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          Filtros
+          {activeFilterCount > 0 && (
+            <span style={{
+              background: '#fff',
+              color: '#F97316',
               borderRadius: '999px',
-              padding:      '6px 16px',
-              fontSize:     '13px',
-              fontWeight:   600,
-              cursor:       'pointer',
+              fontSize: '11px',
+              fontWeight: 800,
+              minWidth: '18px',
+              height: '18px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0 5px',
+            }}>
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
+
+        {/* Panel desplegable: full width en mobile, 320px alineado a la derecha en desktop */}
+        {filtersOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 'calc(100% + 8px)',
+              right: 0,
+              left: 0,
+              maxWidth: '320px',
+              marginLeft: 'auto',
+              background: '#fff',
+              border: '2px solid #e0e0e0',
+              borderRadius: '14px',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.12)',
+              padding: '14px',
+              zIndex: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px',
             }}
           >
-            {label}
-          </button>
-        ))}
-      </div>
+            {/* Estado */}
+            <div>
+              <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Estado</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {FILTERS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => { setActiveFilter(key); setFiltersOpen(false); }}
+                    style={{
+                      background:   activeFilter === key ? '#C8FF00' : '#F0F0F0',
+                      color:        activeFilter === key ? '#000'    : '#888',
+                      border:       'none',
+                      borderRadius: '999px',
+                      padding:      '6px 16px',
+                      fontSize:     '13px',
+                      fontWeight:   600,
+                      cursor:       'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-      {/* Filtro rápido de lectura: Todos / No leídos (naranja IRIS cuando activo) */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
-        {([['todos', 'Todos'], ['no_leidos', 'No leídos']] as const).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setReadFilter(key)}
-            style={{
-              background:   readFilter === key ? '#F97316' : '#F0F0F0',
-              color:        readFilter === key ? '#fff'    : '#888',
-              border:       'none',
-              borderRadius: '999px',
-              padding:      '6px 16px',
-              fontSize:     '13px',
-              fontWeight:   600,
-              cursor:       'pointer',
-            }}
-          >
-            {label}
-          </button>
-        ))}
+            {/* Lectura */}
+            <div>
+              <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Lectura</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {([['todos', 'Todos'], ['no_leidos', 'No leídos']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => { setReadFilter(key); setFiltersOpen(false); }}
+                    style={{
+                      background:   readFilter === key ? '#F97316' : '#F0F0F0',
+                      color:        readFilter === key ? '#fff'    : '#888',
+                      border:       'none',
+                      borderRadius: '999px',
+                      padding:      '6px 16px',
+                      fontSize:     '13px',
+                      fontWeight:   600,
+                      cursor:       'pointer',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 && (
