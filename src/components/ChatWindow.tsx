@@ -105,10 +105,29 @@ function formatSeconds(s: number) {
 // Evita el doble mensaje cuando el evento realtime de Supabase ya appendeó la
 // misma fila antes de que volviera la respuesta del POST (race condition).
 function reconcileSent(list: Message[], temp: Message, saved: Message | null): Message[] {
-  const replaced = list.map((msg) => (msg === temp ? (saved ?? { ...msg, status: 'failed' }) : msg));
-  if (!saved?.id) return replaced;
+  // Falló el POST: marcamos el optimista como fallido (sin tocar nada más).
+  if (!saved) {
+    return list.map((msg) => (msg === temp ? { ...msg, status: 'failed' } : msg));
+  }
+
+  // Reemplazamos el optimista por el guardado. Si el evento realtime ya
+  // appendeó la misma fila (por id), le aplicamos el estado final acá también
+  // para que el dedup posterior deje una sola burbuja.
+  let replacedTemp = false;
+  let out = list.map((msg) => {
+    if (msg === temp) { replacedTemp = true; return saved; }
+    if (saved.id && msg.id === saved.id) return saved;
+    return msg;
+  });
+
+  // Si el realtime ya había reemplazado al temp, garantizamos que saved esté.
+  if (!replacedTemp && saved.id && !out.some((m) => m.id === saved.id)) {
+    out = [...out, saved];
+  }
+
+  if (!saved.id) return out;
   const seen = new Set<string>();
-  return replaced.filter((msg) => {
+  return out.filter((msg) => {
     if (!msg.id) return true;            // optimistas sin id se conservan
     if (seen.has(msg.id)) return false;  // descarta duplicados por id
     seen.add(msg.id);
@@ -229,8 +248,18 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
     function onInsert(payload: any) {
       setMessages((m) => {
-        if (payload.new.id && m.some((msg) => msg.id === payload.new.id)) return m;
-        return [...m, payload.new];
+        const incoming = payload.new;
+        // Ya está por id → no duplicar.
+        if (incoming.id && m.some((msg) => msg.id === incoming.id)) return m;
+        // Coincide con un optimista propio (sin id, mismo rol y contenido) →
+        // reemplazarlo en lugar de agregar otra burbuja (evita el flash doble).
+        const idx = m.findIndex((msg) => !msg.id && msg.role === incoming.role && msg.content === incoming.content);
+        if (idx !== -1) {
+          const copy = [...m];
+          copy[idx] = incoming;
+          return copy;
+        }
+        return [...m, incoming];
       });
       setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
     }
@@ -397,8 +426,18 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId, content }),
       });
-      const saved = res.ok ? await res.json() : null;
-      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar el mensaje. Reintentá.');
+      let saved: Message | null = null;
+      if (res.ok) {
+        saved = await res.json();
+        // El backend incluye `error` (motivo real de WhatsApp) si el envío falló.
+        if (!saved || saved.status === 'failed') {
+          setSendError((saved as any)?.error || 'No se pudo enviar el mensaje. Reintentá.');
+        }
+      } else {
+        // Error de la API (403/404/500…): mostrar el cuerpo real si lo hay.
+        const reason = await res.text().catch(() => '');
+        setSendError(reason || 'No se pudo enviar el mensaje. Reintentá.');
+      }
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar el mensaje. Revisá tu conexión y reintentá.');
@@ -433,7 +472,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetchWithTimeout('/api/messages/image', { method: 'POST', body: form }, 30000);
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
-      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
+      if (!saved || saved.status === 'failed') setSendError((saved as any)?.error || 'No se pudo enviar la imagen. Volvé a adjuntarla y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar la imagen. Revisá tu conexión y reintentá.');
@@ -461,7 +500,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     try {
       const res = await fetchWithTimeout('/api/messages/audio', { method: 'POST', body: form }, 30000);
       const saved = (res.ok || res.status === 207) ? await res.json() : null;
-      if (!saved || saved.status === 'failed') setSendError('No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
+      if (!saved || saved.status === 'failed') setSendError((saved as any)?.error || 'No se pudo enviar el audio. Volvé a grabarlo y reintentá.');
       setMessages((m) => reconcileSent(m, temp, saved));
     } catch {
       setSendError('No se pudo enviar el audio. Revisá tu conexión y reintentá.');

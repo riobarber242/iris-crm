@@ -116,6 +116,9 @@ export async function POST(request: Request) {
       return new NextResponse('Error guardando mensaje', { status: 500 });
     }
 
+    // Motivo real del fallo de WhatsApp (ventana de 24h, número inválido, etc.)
+    // para mostrarlo en el chat en vez de un error genérico.
+    let failureReason: string | null = null;
     try {
       const wamid = await sendWhatsAppText(contact.phone, content, session.tenant_id);
       if (inserted?.id) {
@@ -123,7 +126,11 @@ export async function POST(request: Request) {
           .update({ status: 'sent', whatsapp_message_id: wamid })
           .eq('id', inserted.id);
       }
-    } catch (err) {
+    } catch (err: any) {
+      failureReason =
+        err?.response?.data?.error?.message ||
+        err?.message ||
+        'WhatsApp rechazó el envío';
       console.error('Error sending manual message:', err);
       if (inserted?.id) {
         await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', inserted.id);
@@ -136,7 +143,7 @@ export async function POST(request: Request) {
       return new NextResponse(error.message, { status: 500 });
     }
 
-    return NextResponse.json(data);
+    return NextResponse.json(failureReason ? { ...data, error: failureReason } : data);
   } catch (err: any) {
     console.error('[messages POST] Error inesperado:', err);
     return NextResponse.json({ error: 'Error interno enviando el mensaje' }, { status: 500 });
