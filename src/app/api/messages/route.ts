@@ -47,25 +47,30 @@ export async function GET(request: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  // Firma del operador: rol de quien envió cada mensaje manual (role 'human')
-  // para mostrar "nombre · rol" en el chat. Preferimos el snapshot guardado
-  // (agent_role); para mensajes viejos sin snapshot lo resolvemos en vivo con
-  // supabaseAdmin (sin exponer /api/agents a los operadores).
+  // Firma del operador: rol + avatar de quien envió cada mensaje manual
+  // (role 'human') para mostrar "nombre · rol" con su foto en el chat.
+  // Rol: preferimos el snapshot guardado (agent_role); para mensajes viejos
+  // sin snapshot lo resolvemos en vivo. Avatar: siempre en vivo (la foto
+  // actual del usuario), con supabaseAdmin para no exponer /api/agents.
   const agentIds = [
     ...new Set((data ?? [])
-      .filter((m: any) => m.role === 'human' && m.agent_id && !m.agent_role)
+      .filter((m: any) => m.role === 'human' && m.agent_id)
       .map((m: any) => m.agent_id as string)),
   ];
   let roleById: Record<string, string> = {};
+  let avatarById: Record<string, string | null> = {};
   if (agentIds.length) {
     const { data: ags } = await supabaseAdmin
       .from('agents')
-      .select('id, role')
+      .select('id, role, avatar_url')
       .in('id', agentIds);
-    roleById = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.role]));
+    roleById   = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.role]));
+    avatarById = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.avatar_url ?? null]));
   }
   const enriched = (data ?? []).map((m: any) =>
-    m.agent_id ? { ...m, agent_role: m.agent_role ?? roleById[m.agent_id] ?? null } : m,
+    m.agent_id
+      ? { ...m, agent_role: m.agent_role ?? roleById[m.agent_id] ?? null, agent_avatar: avatarById[m.agent_id] ?? null }
+      : m,
   );
 
   return NextResponse.json(enriched);

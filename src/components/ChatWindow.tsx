@@ -7,6 +7,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { useAuth } from '@/components/AuthProvider';
+import { Avatar } from '@/components/ProfileCard';
 import { searchEmojisEs } from '@/lib/emoji-es';
 import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
 
@@ -27,6 +28,7 @@ type Message = {
   status?: string;
   agent_name?: string | null;
   agent_role?: string | null;
+  agent_avatar?: string | null;
   whatsapp_message_id?: string | null;
   reaction?: string | null;
 };
@@ -427,7 +429,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setSendError(null);
     setLoading(true);
     setCooldown(true);
-    const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
+    const temp: Message = { role: 'human', content, status: 'sending', agent_name: agent?.name, agent_role: agent?.role, agent_avatar: agent?.avatar_url };
     setMessages((m) => [...m, temp]);
     try {
       const res = await fetchWithTimeout('/api/messages', {
@@ -501,7 +503,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setImageFile(null); setImagePreview(null); setInput('');
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'image', url: preview ?? '', caption });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role, agent_avatar: agent?.avatar_url };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     form.append('file', imageFile);
@@ -529,7 +531,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     setAudioBlob(null); setAudioPreviewUrl(null);
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'audio', url: preview ?? '' });
-    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role };
+    const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role, agent_avatar: agent?.avatar_url };
     setMessages((m) => [...m, temp]);
     const form = new FormData();
     const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : blob.type.includes('mpeg') ? 'mp3' : 'webm';
@@ -710,12 +712,16 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 )}
               </p>
 
-              {/* Firma de quién envió el mensaje manual (operador/agente/admin).
-                  Solo si hay autor guardado; los mensajes viejos sin autor no la muestran. */}
+              {/* Firma de quién envió el mensaje manual (operador/agente/admin),
+                  con su avatar (foto o iniciales). Solo si hay autor guardado;
+                  los mensajes viejos sin autor no la muestran. */}
               {isHuman && humanSignature && (
-                <p style={{ margin: '3px 0 0 0', fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
-                  {humanSignature}
-                </p>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '5px', margin: '4px 0 0 0' }}>
+                  <Avatar url={m.agent_avatar} name={m.agent_name ?? ''} size={16} />
+                  <span style={{ fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
+                    {humanSignature}
+                  </span>
+                </span>
               )}
 
               {/* Reacción aplicada */}

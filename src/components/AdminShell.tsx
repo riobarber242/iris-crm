@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
 import IrisChat from './IrisChat';
 import ActivityGuard from './ActivityGuard';
+import ProfileCard from './ProfileCard';
 
 const navLabels: Record<string, string> = {
   dashboard:     'Dashboard',
@@ -423,6 +424,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
+
+          {/* Perfil del usuario logueado (todos los roles), al pie del sidebar.
+              En mobile el sidebar es el drawer hamburguesa → aparece ahí. */}
+          {roleReady && <ProfileCard />}
         </aside>
 
         {/* ── CONTENT ── */}

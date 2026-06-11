@@ -9,6 +9,9 @@ export type Agent = {
   // Permisos opcionales del operator (admin/agent siempre tienen acceso).
   can_see_top_clients?: boolean;
   can_see_campaigns?:   boolean;
+  // Perfil de usuario (foto + teléfono).
+  avatar_url?: string | null;
+  phone?:      string | null;
 };
 
 type AuthCtx = {
