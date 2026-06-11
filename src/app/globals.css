@@ -186,6 +186,36 @@ button, input, textarea, select {
 
   /* Top Clientes: cards de resumen apiladas a ancho completo. */
   .leads-cards { grid-template-columns: 1fr !important; }
+
+  /* Top Clientes: ranking compacto — # / Usuario / Monto (+ botón de chat).
+     Teléfono, Estado y Recargas se ocultan; siguen visibles en desktop. */
+  .leads-table { min-width: 0 !important; }
+  .leads-row   { grid-template-columns: 40px minmax(0, 1fr) auto 32px !important; gap: 8px !important; }
+  .leads-col-tel, .leads-col-estado, .leads-col-recargas { display: none !important; }
+
+  /* Operadores: cada fila se convierte en card vertical con todo apilado
+     (usuario, nombre, email, rol, horario, estado y acciones abajo). */
+  .agents-table { min-width: 0 !important; }
+  .agents-head  { display: none !important; }
+  .agents-row   {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+  }
+  .agents-row .ag-horario::before {
+    content: 'Horario: ';
+    color: #aaa;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .agents-row .ag-actions {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid #f0f0f0;
+  }
 }
 
 /* Celular chico: aliviar el header y el input del chat. */

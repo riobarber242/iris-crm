@@ -332,17 +332,17 @@ export default function LeadsClient() {
                 : `Ningún cliente supera $${minAmount.toLocaleString('es-AR')} en este período.`}
           </p>
         ) : (
-          /* En mobile la tabla scrollea horizontal (minWidth interno); en
-             desktop no cambia nada porque el contenedor ya es más ancho. */
+          /* En mobile (≤640px) se ocultan Teléfono/Estado/Recargas vía CSS y
+             quedan # / Usuario / Monto. Desktop renderiza la tabla completa. */
           <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '640px' }}>
+          <div className="leads-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '640px' }}>
             {/* Header */}
-            <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <div className="leads-row" style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <span>#</span>
               <span>Usuario</span>
-              <span>Teléfono</span>
-              <span>Estado</span>
-              <span style={{ textAlign: 'center' }}>Recargas</span>
+              <span className="leads-col-tel">Teléfono</span>
+              <span className="leads-col-estado">Estado</span>
+              <span className="leads-col-recargas" style={{ textAlign: 'center' }}>Recargas</span>
               <span>Monto total</span>
               <span />
             </div>
@@ -352,7 +352,7 @@ export default function LeadsClient() {
               const medal  = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : null;
               const isTop1 = i === 0;
               return (
-                <div key={c.contact_id} style={{
+                <div key={c.contact_id} className="leads-row" style={{
                   display: 'grid', gridTemplateColumns: GRID, gap: '12px', alignItems: 'center',
                   background: isTop1 ? '#fff6da' : '#fff',
                   borderRadius: '14px', padding: '12px 14px',
@@ -370,11 +370,11 @@ export default function LeadsClient() {
                   <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.casino_username ? `🎰 ${c.casino_username}` : c.phone}
                   </p>
-                  <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>{c.phone}</p>
-                  <span style={{ ...st, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '3px 10px', display: 'inline-block', textAlign: 'center' }}>
+                  <p className="leads-col-tel" style={{ margin: 0, fontSize: '13px', color: '#888' }}>{c.phone}</p>
+                  <span className="leads-col-estado" style={{ ...st, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '3px 10px', display: 'inline-block', textAlign: 'center' }}>
                     {c.status}
                   </span>
-                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', textAlign: 'center' }}>
+                  <p className="leads-col-recargas" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', textAlign: 'center' }}>
                     {c.total} ✓
                   </p>
                   <p style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#000' }}>

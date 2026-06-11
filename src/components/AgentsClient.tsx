@@ -163,8 +163,8 @@ export default function AgentsClient() {
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando agentes…</p>
       ) : (
         <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '860px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        <div className="agents-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '860px' }}>
+          <div className="agents-head" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             <span>Usuario</span><span>Nombre</span><span>Email</span><span>Rol</span><span>Horario</span><span>Estado</span><span>Acciones</span>
           </div>
 
@@ -173,7 +173,7 @@ export default function AgentsClient() {
             // El system prompt solo lo edita un admin, o el propio operador sobre su perfil.
             const canEditPrompt = me?.role === 'admin' || me?.id === a.id;
             return (
-              <div key={a.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
+              <div key={a.id} className="agents-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
                 {/* usuario */}
                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{a.username}</span>
 
@@ -204,11 +204,11 @@ export default function AgentsClient() {
 
                 {/* horario */}
                 {editing
-                  ? <span style={{ display: 'flex', gap: '4px' }}>
+                  ? <span className="ag-horario" style={{ display: 'flex', gap: '4px' }}>
                       <input style={{ ...inputStyle, width: '70px' }} type="time" value={draft.schedule_start ?? ''} onChange={e => setDraft({ ...draft, schedule_start: e.target.value })} />
                       <input style={{ ...inputStyle, width: '70px' }} type="time" value={draft.schedule_end ?? ''} onChange={e => setDraft({ ...draft, schedule_end: e.target.value })} />
                     </span>
-                  : <span style={{ fontSize: '12px', color: '#666' }}>{a.schedule_start ? `${hhmm(a.schedule_start)}–${hhmm(a.schedule_end)}` : '—'}</span>}
+                  : <span className="ag-horario" style={{ fontSize: '12px', color: '#666' }}>{a.schedule_start ? `${hhmm(a.schedule_start)}–${hhmm(a.schedule_end)}` : '—'}</span>}
 
                 {/* estado */}
                 <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.active ? '#1a8a1a' : '#bbb' }}>
@@ -216,7 +216,7 @@ export default function AgentsClient() {
                 </span>
 
                 {/* acciones */}
-                <span style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <span className="ag-actions" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                   {editing ? (
                     <>
                       <button onClick={() => saveEdit(a.id)} style={btn('#C8FF00', '#000')}>Guardar</button>
