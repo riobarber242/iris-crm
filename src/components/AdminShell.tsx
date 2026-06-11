@@ -28,11 +28,13 @@ const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { agent, logout, loading } = useAuth();
-  // El rol recién está confirmado cuando terminó la carga Y hay agente. Hasta
-  // entonces NO renderizamos ningún item de navegación (evita el flash de
-  // hidratación que mostraba el menú completo antes de conocer el rol).
-  const roleReady = !loading && !!agent?.role;
+  const { agent, logout } = useAuth();
+  // El rol está confirmado en cuanto conocemos el agente (del backend o del
+  // último rol recordado en AuthProvider). NO lo atamos a `loading`: así un
+  // /api/auth/me lento o que falla una vez no deja al operador con el sidebar
+  // vacío. El flash del menú equivocado igual se evita: con agent=null se
+  // muestra el skeleton, nunca el menú completo.
+  const roleReady = !!agent?.role;
 
   // Menú por rol:
   //  - admin: todo + Operadores + Tenants.
