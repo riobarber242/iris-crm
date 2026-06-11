@@ -47,12 +47,13 @@ export async function GET(request: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  // Firma del operador: adjuntar el rol de quien envió cada mensaje manual
-  // (role 'human') para mostrar "nombre · rol" en el chat. Se resuelve acá con
-  // supabaseAdmin para no exponer /api/agents a los operadores.
+  // Firma del operador: rol de quien envió cada mensaje manual (role 'human')
+  // para mostrar "nombre · rol" en el chat. Preferimos el snapshot guardado
+  // (agent_role); para mensajes viejos sin snapshot lo resolvemos en vivo con
+  // supabaseAdmin (sin exponer /api/agents a los operadores).
   const agentIds = [
     ...new Set((data ?? [])
-      .filter((m: any) => m.role === 'human' && m.agent_id)
+      .filter((m: any) => m.role === 'human' && m.agent_id && !m.agent_role)
       .map((m: any) => m.agent_id as string)),
   ];
   let roleById: Record<string, string> = {};
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
     roleById = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.role]));
   }
   const enriched = (data ?? []).map((m: any) =>
-    m.agent_id ? { ...m, agent_role: roleById[m.agent_id] ?? null } : m,
+    m.agent_id ? { ...m, agent_role: m.agent_role ?? roleById[m.agent_id] ?? null } : m,
   );
 
   return NextResponse.json(enriched);
@@ -103,14 +104,26 @@ export async function POST(request: Request) {
       return new NextResponse('No se encontró el contacto', { status: 404 });
     }
 
-    const { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert({
+    // Autor del mensaje (de la sesión, no del cliente): id + nombre + rol, como
+    // snapshot permanente. agent_role es el snapshot del rol al momento de enviar.
+    const messageRow: Record<string, any> = {
       contact_id: contactId,
       role: 'human',
       content,
       agent_id:   session?.sub  ?? null,
       agent_name: session?.name ?? null,
+      agent_role: session?.role ?? null,
       tenant_id:  session.tenant_id,
-    }).select('*').single();
+    };
+    let { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert(messageRow).select('*').single();
+
+    // Degradación elegante: si la columna agent_role aún no existe (migración
+    // supabase-message-author-role.sql sin correr), reintentar sin ella para no
+    // romper el envío. El rol igual se muestra (resuelto en vivo) y se registra.
+    if (insertError && /agent_role|column|schema cache/i.test(insertError.message ?? '')) {
+      const { agent_role: _omit, ...withoutRole } = messageRow;
+      ({ data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert(withoutRole).select('*').single());
+    }
 
     if (insertError || !inserted) {
       console.error('Insert message error', insertError);

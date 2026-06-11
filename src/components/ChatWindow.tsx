@@ -599,8 +599,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.
           const roleLabel = isBot ? 'Iris 🤖' : 'Cliente';
           // Firma del operador/agente debajo del mensaje manual (ej: "jessica · operador").
-          const humanSignature = isHuman
-            ? `${m.agent_name || 'Operador'}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
+          // Si el mensaje no tiene autor guardado (mensajes viejos), no se muestra
+          // firma (nada de "null" ni un genérico raro).
+          const humanSignature = isHuman && m.agent_name
+            ? `${m.agent_name}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
             : '';
           const media = parseMedia(m.content);
           // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
@@ -708,8 +710,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 )}
               </p>
 
-              {/* Firma de quién envió el mensaje manual (operador/agente/admin) */}
-              {isHuman && (
+              {/* Firma de quién envió el mensaje manual (operador/agente/admin).
+                  Solo si hay autor guardado; los mensajes viejos sin autor no la muestran. */}
+              {isHuman && humanSignature && (
                 <p style={{ margin: '3px 0 0 0', fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
                   {humanSignature}
                 </p>
