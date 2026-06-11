@@ -44,7 +44,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     // El borrado real de la cookie es server-side (es httpOnly, JS no la puede
     // tocar). Esperamos a que el POST limpie la cookie antes de redirigir.
-    try { await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' }); } catch {}
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'manual' }),
+      });
+    } catch {}
     setAgent(null);
     // replace() evita que el back/bfcache (mobile Safari) restaure la vista autenticada.
     window.location.replace('/login');

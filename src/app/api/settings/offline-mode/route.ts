@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 // Modo OFFLINE: cuando está activo, el bot responde a TODOS los mensajes con un
 // aviso de "no estamos operando" y no hace onboarding ni handoff. Default: false.
@@ -36,6 +37,15 @@ export async function POST(request: Request) {
     console.error('[offline-mode POST] Insert error:', error.message);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
+
+  // Registro de actividad: activar/desactivar modo offline.
+  await logActivity({
+    session,
+    action:     ACTIVITY.CONFIG_CHANGED,
+    objectType: 'config',
+    objectId:   'offline_mode',
+    details:    { key: 'offline_mode', offline: !!offline },
+  });
 
   return NextResponse.json({ ok: true, offline });
 }

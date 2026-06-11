@@ -3,6 +3,9 @@ import { supabaseAdmin } from '@/lib/db';
 import { verifyPassword } from '@/lib/auth';
 import { signSession, COOKIE_NAME, MAX_AGE_SEC } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
+
+const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 export async function POST(request: Request) {
   const limited = checkRateLimit(request, 'login', 10);
@@ -40,6 +43,15 @@ export async function POST(request: Request) {
     tenant_id: agent.tenant_id ?? '00000000-0000-0000-0000-000000000001',
     can_see_top_clients: !!agent.can_see_top_clients,
     can_see_campaigns:   !!agent.can_see_campaigns,
+  });
+
+  // Registro de actividad: inicio de sesión.
+  await logActivity({
+    tenantId:   agent.tenant_id ?? PRINCIPAL_TENANT_ID,
+    actor:      { id: agent.id, name: agent.name, role: agent.role },
+    action:     ACTIVITY.SESSION_LOGIN,
+    objectType: 'session',
+    objectId:   agent.id,
   });
 
   const res = NextResponse.json({ id: agent.id, name: agent.name, role: agent.role });

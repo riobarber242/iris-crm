@@ -23,7 +23,13 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
   // Cierre de sesión: custom auth del proyecto (no usa next-auth). Avisa al
   // backend y redirige a /login con el motivo para mostrar el mensaje.
   const doLogout = useCallback(async () => {
-    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'inactividad' }),
+      });
+    } catch {}
     window.location.href = '/login?reason=inactividad';
   }, []);
 

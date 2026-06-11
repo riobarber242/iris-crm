@@ -4,6 +4,7 @@ import { getSessionAgent } from '@/lib/current-agent';
 import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 export async function GET(request: Request) {
   const session = await getSessionAgent();
@@ -68,8 +69,23 @@ export async function PATCH(request: Request) {
     if (!isNaN(parsed) && parsed >= 0) updatePayload.monto = parsed;
   }
 
-  const { data, error } = await supabaseAdmin
+  // Atribución permanente: quién resolvió (verificó/rechazó) este comprobante.
+  updatePayload.resolved_by      = session.sub;
+  updatePayload.resolved_by_name = session.name;
+  updatePayload.resolved_at      = new Date().toISOString();
+
+  let { data, error } = await supabaseAdmin
     .from('comprobantes').update(updatePayload).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
+
+  // Degradación elegante: si las columnas resolved_* aún no existen (migración
+  // supabase-activity-log.sql sin correr), reintentamos sin ellas para no romper
+  // la verificación/rechazo. El log igual queda registrado abajo.
+  if (error && /resolved_by|resolved_at|column|schema cache/i.test(error.message)) {
+    const fallback: Record<string, any> = { estado };
+    if (updatePayload.monto !== undefined) fallback.monto = updatePayload.monto;
+    ({ data, error } = await supabaseAdmin
+      .from('comprobantes').update(fallback).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single());
+  }
   if (error) return new NextResponse(error.message, { status: 500 });
 
   // ── Reconciliar status del contacto con la regla de 3 estados ──
@@ -77,6 +93,16 @@ export async function PATCH(request: Request) {
   await reconcileContactStatus(comprobante.contact_id);
 
   const efectiveMonto = updatePayload.monto ?? comprobante.monto;
+
+  // Registro de actividad (al costado; no traba la respuesta).
+  await logActivity({
+    session,
+    action:     estado === 'verificado' ? ACTIVITY.COMPROBANTE_VERIFICADO : ACTIVITY.COMPROBANTE_RECHAZADO,
+    objectType: 'comprobante',
+    objectId:   comprobanteId,
+    details:    { estado, monto: efectiveMonto ?? null, contact_id: comprobante.contact_id },
+  });
+
   if (estado === 'verificado' && efectiveMonto) {
     const { data: contact, error: contactError } = await supabaseAdmin
       .from('contacts').select('phone').eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).single();

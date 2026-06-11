@@ -4,6 +4,7 @@ import { sendWhatsAppText } from '@/lib/meta/client';
 import { getSessionAgent } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 // Acceso por TENANT: admin, agente y operador acceden a cualquier contacto de
 // su tenant (la asignación no restringe). Devuelve null si tiene acceso, o una
@@ -142,6 +143,15 @@ export async function POST(request: Request) {
     if (error) {
       return new NextResponse(error.message, { status: 500 });
     }
+
+    // Registro de actividad: el operador/agente respondió la conversación.
+    await logActivity({
+      session,
+      action:     ACTIVITY.MESSAGE_SENT,
+      objectType: 'conversation',
+      objectId:   contactId,
+      details:    { message_id: inserted?.id ?? null, status: data?.status ?? null, failed: !!failureReason },
+    });
 
     return NextResponse.json(failureReason ? { ...data, error: failureReason } : data);
   } catch (err: any) {

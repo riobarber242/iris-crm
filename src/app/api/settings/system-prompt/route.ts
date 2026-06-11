@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { irisSystemPrompt } from '@/lib/system-prompt';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 const KEY = 'system_prompt';
 
@@ -34,5 +35,15 @@ export async function POST(request: Request) {
   const { error } = await supabaseAdmin.from('settings').insert({ key: KEY, value: prompt.trim(), tenant_id: session.tenant_id });
 
   if (error) return new NextResponse(error.message, { status: 500 });
+
+  // Registro de actividad: cambio en las instrucciones del bot.
+  await logActivity({
+    session,
+    action:     ACTIVITY.CONFIG_CHANGED,
+    objectType: 'config',
+    objectId:   KEY,
+    details:    { key: KEY, length: prompt.trim().length },
+  });
+
   return NextResponse.json({ ok: true });
 }

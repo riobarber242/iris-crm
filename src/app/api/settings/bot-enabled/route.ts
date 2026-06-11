@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 export async function GET() {
   const session = await getSessionAgent();
@@ -51,6 +52,15 @@ export async function POST(request: Request) {
   const { data: allRows } = await supabaseAdmin
     .from('settings').select('key, value').in('key', ['bot_enabled', 'bot_mode']).eq('tenant_id', tenantId);
   console.log('[bot-enabled POST] Estado final en DB:', JSON.stringify(allRows));
+
+  // Registro de actividad: encender/apagar el bot.
+  await logActivity({
+    session,
+    action:     ACTIVITY.CONFIG_CHANGED,
+    objectType: 'config',
+    objectId:   'bot_enabled',
+    details:    { key: 'bot_enabled', enabled: !!enabled },
+  });
 
   return NextResponse.json({ ok: true, rows: allRows });
 }

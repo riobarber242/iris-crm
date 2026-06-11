@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -100,6 +101,19 @@ export async function PATCH(request: Request) {
   const { data, error } = await supabaseAdmin.from('contacts').update(updates).eq('id', contactId).eq('tenant_id', session.tenant_id).select('*').single();
   if (error) {
     return new NextResponse(error.message, { status: 500 });
+  }
+
+  // Registro de actividad: edición de contacto (excluye el simple markRead,
+  // que setea last_read_at sin ser una edición de datos).
+  const editedFields = Object.keys(updates).filter((k) => k !== 'last_read_at');
+  if (editedFields.length > 0) {
+    await logActivity({
+      session,
+      action:     ACTIVITY.CONTACT_EDITED,
+      objectType: 'contact',
+      objectId:   contactId,
+      details:    { fields: editedFields, ...(updates.status !== undefined ? { status: updates.status } : {}) },
+    });
   }
 
   return NextResponse.json(data);
