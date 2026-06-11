@@ -261,34 +261,18 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
             <button
               onClick={toggleOffline}
-              className="toggle-3d"
+              className="toggle-3d hdr-toggle"
               aria-label={offlineMode ? 'Desactivar modo offline' : 'Activar modo offline'}
               title={offlineMode ? 'Modo offline ACTIVO — el bot avisa que no operamos' : 'Activar modo offline'}
-              style={{
-                position: 'relative',
-                display: 'inline-flex',
-                alignItems: 'center',
-                width: '52px',
-                height: '28px',
-                borderRadius: '17px',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '3px',
-                background: offlineMode ? '#FF4444' : '#3a3a3a',
-                outline: 'none',
-                transition: 'background 0.2s',
-              }}
+              style={{ background: offlineMode ? '#FF4444' : '#3a3a3a' }}
             >
-              <span style={{
-                display: 'block',
-                width: '22px',
-                height: '22px',
-                borderRadius: '50%',
-                background: '#FFFFFF',
-                transform: offlineMode ? 'translateX(24px)' : 'translateX(0)',
-                transition: 'transform 0.2s',
-                flexShrink: 0,
-              }} />
+              <span
+                className="hdr-toggle-knob"
+                style={{
+                  background: '#FFFFFF',
+                  transform: offlineMode ? 'translateX(var(--knob-x))' : 'translateX(0)',
+                }}
+              />
             </button>
             <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap', marginTop: '2px' }}>
               OFFLINE
@@ -298,32 +282,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
             <button
               onClick={toggleBot}
-              className="toggle-3d"
+              className="toggle-3d hdr-toggle"
               aria-label={botEnabled ? 'Desactivar bot' : 'Activar bot'}
-              style={{
-                position: 'relative',
-                display: 'inline-flex',
-                alignItems: 'center',
-                width: '52px',
-                height: '28px',
-                borderRadius: '24px',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '3px',
-                background: '#1a1a1a',
-                outline: 'none',
-              }}
+              style={{ background: '#1a1a1a' }}
             >
-              <span style={{
-                display: 'block',
-                width: '22px',
-                height: '22px',
-                borderRadius: '50%',
-                background: botEnabled ? '#C8FF00' : '#FFFFFF',
-                transform: botEnabled ? 'translateX(24px)' : 'translateX(0)',
-                transition: 'transform 0.2s, background 0.2s',
-                flexShrink: 0,
-              }} />
+              <span
+                className="hdr-toggle-knob"
+                style={{
+                  background: botEnabled ? '#C8FF00' : '#FFFFFF',
+                  transform: botEnabled ? 'translateX(var(--knob-x))' : 'translateX(0)',
+                }}
+              />
             </button>
             <span style={{ fontSize: '9px', fontWeight: 700, color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', lineHeight: 1, whiteSpace: 'nowrap', marginTop: '2px' }}>
               {botEnabled ? 'BOT' : 'HUM'}

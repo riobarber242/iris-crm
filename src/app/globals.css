@@ -101,6 +101,32 @@ button, input, textarea, select {
 @media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
 
+/* ── Toggles BOT/OFFLINE del header ─────────────────────────────────────────
+   Dimensiones en CSS (no inline) para poder compactarlos en mobile.
+   --knob-x = recorrido del knob: ancho - 2*padding - knob. */
+.hdr-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 52px;
+  height: 28px;
+  border-radius: 17px;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  outline: none;
+  transition: background 0.2s;
+  --knob-x: 24px;
+}
+.hdr-toggle-knob {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: transform 0.2s, background 0.2s;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 /* Hamburguesa oculta en desktop; overlay del drawer oculto por defecto. */
 .app-hamburger { display: none; }
@@ -146,6 +172,11 @@ button, input, textarea, select {
   .dash-charts { flex-direction: column !important; gap: 20px !important; padding: 16px !important; }
   .dash-chart  { min-width: 0 !important; width: 100% !important; flex: 1 1 auto !important; }
   .dash-chart svg { max-width: 100% !important; height: auto !important; }
+
+  /* Conversaciones: filas más compactas (estilo WhatsApp, un poco más grande)
+     para que entren más en pantalla. Mismo estilo visual, menos alto. */
+  .conv-row     { padding: 10px 14px !important; border-radius: 14px !important; }
+  .conv-preview { margin-top: 6px !important; padding: 6px 10px !important; }
 }
 
 /* Celular: métricas en UNA sola columna, todo apilado, sin overflow horizontal. */
@@ -157,8 +188,12 @@ button, input, textarea, select {
 @media (max-width: 480px) {
   .app-agent-name { display: none !important; }
   .app-header-right { gap: 10px !important; }
-  /* Ocultar toggles del bot en celular para que el botón Salir siempre entre. */
-  .app-header-toggles { display: none !important; }
+
+  /* Toggles BOT/OFFLINE visibles también en celular, en versión compacta
+     (antes se ocultaban; ahora se achican para que el botón Salir igual entre). */
+  .app-header-toggles { gap: 10px !important; }
+  .hdr-toggle { width: 44px; height: 24px; padding: 2px; --knob-x: 22px; }
+  .hdr-toggle-knob { width: 18px; height: 18px; }
 
   .chat-input-row { gap: 6px !important; }
 }

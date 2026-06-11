@@ -318,6 +318,7 @@ export default function ConversationsClient() {
             onClick={() => markRead(contact.id)}
           >
             <div
+              className="conv-row"
               style={{
                 background: badgeType ? '#fffdf5' : '#FFFFFF',
                 borderRadius: '16px',
@@ -387,7 +388,7 @@ export default function ConversationsClient() {
               </div>
 
               {lastMessage && (
-                <div style={{ marginTop: '12px', background: '#F5F5F5', borderRadius: '12px', padding: '10px 14px' }}>
+                <div className="conv-preview" style={{ marginTop: '12px', background: '#F5F5F5', borderRadius: '12px', padding: '10px 14px' }}>
                   <p style={{
                     fontSize: '13px',
                     color: badgeType ? '#333' : '#666',

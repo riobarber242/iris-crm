@@ -157,11 +157,13 @@ export default function AgentsClient() {
         </button>
       </form>
 
-      {/* Tabla */}
+      {/* Tabla. En mobile scrollea horizontal (minWidth interno); en desktop
+          no cambia nada porque el contenedor ya es más ancho. */}
       {loading ? (
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando agentes…</p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '860px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             <span>Usuario</span><span>Nombre</span><span>Email</span><span>Rol</span><span>Horario</span><span>Estado</span><span>Acciones</span>
           </div>
@@ -268,6 +270,7 @@ export default function AgentsClient() {
               </div>
             );
           })}
+        </div>
         </div>
       )}
     </div>

@@ -60,6 +60,7 @@ export default function LeadsClient() {
   const [customFrom, setCustomFrom] = useState('');          // YYYY-MM-DD
   const [customTo,   setCustomTo]   = useState('');
   const [minAmount, setMinAmount]  = useState(0);
+  const [maxAmount, setMaxAmount]  = useState(0); // 0 = sin límite superior
   const [clients,   setClients]    = useState<TopClient[]>([]);
   const [loading,   setLoading]    = useState(true);
   const [error,     setError]      = useState(false);
@@ -89,10 +90,11 @@ export default function LeadsClient() {
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
 
-  // Filtro de monto mínimo (en tiempo real, sobre lo ya traído).
+  // Filtro de rango de monto (en tiempo real, sobre lo ya traído).
+  // maxAmount = 0 significa "sin límite superior".
   const filtered = useMemo(
-    () => clients.filter((c) => c.monto_total >= minAmount),
-    [clients, minAmount],
+    () => clients.filter((c) => c.monto_total >= minAmount && (maxAmount <= 0 || c.monto_total <= maxAmount)),
+    [clients, minAmount, maxAmount],
   );
 
   const totalMonto = filtered.reduce((s, c) => s + c.monto_total, 0);
@@ -159,21 +161,39 @@ export default function LeadsClient() {
         )}
 
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Monto mínimo
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
-              <input
-                type="number"
-                min={0}
-                step={1000}
-                value={minAmount || ''}
-                placeholder="0"
-                onChange={(e) => setMinAmount(Math.max(0, Number(e.target.value) || 0))}
-                style={{ ...inputStyle, width: '140px' }}
-              />
-            </div>
-          </label>
+          {/* Rango de monto: mínimo + máximo (0/vacío = sin límite). */}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Monto mínimo
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={minAmount || ''}
+                  placeholder="0"
+                  onChange={(e) => setMinAmount(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ ...inputStyle, width: '120px' }}
+                />
+              </div>
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Monto máximo
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  value={maxAmount || ''}
+                  placeholder="Sin límite"
+                  onChange={(e) => setMaxAmount(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ ...inputStyle, width: '120px' }}
+                />
+              </div>
+            </label>
+          </div>
 
           <button
             onClick={exportCSV}
@@ -225,10 +245,15 @@ export default function LeadsClient() {
           <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>
             {clients.length === 0
               ? 'No hay comprobantes verificados en este período.'
-              : `Ningún cliente supera $${minAmount.toLocaleString('es-AR')} en este período.`}
+              : maxAmount > 0
+                ? `Ningún cliente está entre $${minAmount.toLocaleString('es-AR')} y $${maxAmount.toLocaleString('es-AR')} en este período.`
+                : `Ningún cliente supera $${minAmount.toLocaleString('es-AR')} en este período.`}
           </p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          /* En mobile la tabla scrollea horizontal (minWidth interno); en
+             desktop no cambia nada porque el contenedor ya es más ancho. */
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '640px' }}>
             {/* Header */}
             <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <span>#</span>
@@ -281,6 +306,7 @@ export default function LeadsClient() {
                 </div>
               );
             })}
+          </div>
           </div>
         )}
       </div>
