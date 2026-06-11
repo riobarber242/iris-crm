@@ -18,6 +18,14 @@ const STAFF_PROMPT_EXTRA = `
 
 También tenés herramientas de actividad y desempeño del equipo: comprobantes_stats (cantidad, monto total, ticket promedio, mín/máx de comprobantes; filtrable por quién lo resolvió, estado, período y rango de monto), count_activity (conteo de acciones del registro de actividad: mensajes respondidos, conversaciones atendidas, inicios de sesión, cierres de sesión —con motivo manual o inactividad—, contactos editados/importados, cambios de configuración) y list_team (miembros del equipo). Cuando te pregunten por una persona ("jessica", "el operador X"), si el filtro falla o el nombre es ambiguo usá list_team para identificarla. Para "cuántos comprobantes verificó X" usá comprobantes_stats con estado=verificado y ese operador; para "ticket promedio de X" lo mismo y mirá ticket_promedio.`;
 
+// Extensión del prompt para OPERADORES: las consultas de actividad individual
+// están vetadas para su rol, y NUNCA deben aproximarse con totales generales
+// (sin esto, ante "¿cuánto verifiqué yo?" el modelo caía en get_metrics y
+// respondía el total del negocio).
+const OPERATOR_PROMPT_EXTRA = `
+
+IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre ninguna otra persona: comprobantes verificados/rechazados por alguien, ticket promedio por persona, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.`;
+
 type Tool = Anthropic.Tool;
 
 const TOOLS: Tool[] = [
@@ -400,9 +408,10 @@ async function listTeam(tid: string) {
 
 async function runTool(name: string, input: any, tid: string, isStaff: boolean): Promise<unknown> {
   // Defensa en profundidad: aunque a un operador nunca se le declaran las
-  // herramientas de staff, si llegara a invocarse una, se rechaza acá.
+  // herramientas de staff, si llegara a invocarse una, se rechaza acá con el
+  // mismo mensaje que debe ver el usuario (el modelo lo transmite tal cual).
   if (STAFF_TOOL_NAMES.has(name) && !isStaff) {
-    return { error: 'No autorizado para esta consulta.' };
+    return { error: 'Esa consulta está disponible solo para agentes y administradores.' };
   }
   switch (name) {
     case 'get_metrics':
@@ -448,7 +457,7 @@ export async function POST(request: Request) {
   // A los operadores ni se les declaran (y runTool las rechaza igual).
   const isStaff = session.role === 'admin' || session.role === 'agent';
   const tools = isStaff ? [...TOOLS, ...STAFF_TOOLS] : TOOLS;
-  const system = isStaff ? SYSTEM_PROMPT + STAFF_PROMPT_EXTRA : SYSTEM_PROMPT;
+  const system = SYSTEM_PROMPT + (isStaff ? STAFF_PROMPT_EXTRA : OPERATOR_PROMPT_EXTRA);
 
   const client = new Anthropic();
   const messages: Anthropic.MessageParam[] = [...history, { role: 'user', content: userMessage }];
