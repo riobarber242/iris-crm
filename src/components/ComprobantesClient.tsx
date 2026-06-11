@@ -13,8 +13,21 @@ type ComprobanteItem = {
   monto: number | null;
   estado: 'pendiente' | 'verificado' | 'rechazado';
   created_at: string;
+  // Quién resolvió (verificó/rechazó) el comprobante y cuándo. Pueden faltar en
+  // comprobantes resueltos antes de que existiera el registro → no se muestran.
+  resolved_by_name: string | null;
+  resolved_at: string | null;
   contacts: { name: string | null; phone: string; casino_username: string | null } | null;
 };
+
+// "11 jun 11:16" — fecha corta + hora, es-AR. Vacío si la fecha es inválida.
+function formatResolvedAt(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const fecha = d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' }).replace(/\.$/, '');
+  const hora  = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return `${fecha} ${hora}`;
+}
 
 const ESTADO_STYLE: Record<string, React.CSSProperties> = {
   pendiente:  { background: '#fffbe6', color: '#b8860b', border: '1px solid #f0c040' },
@@ -401,6 +414,14 @@ export default function ComprobantesClient() {
                     </div>
                   )}
                 </div>
+
+                {/* Quién resolvió el comprobante (solo si el dato existe). */}
+                {(item.estado === 'verificado' || item.estado === 'rechazado') && item.resolved_by_name && (
+                  <p style={{ margin: 0, fontSize: '11px', color: '#999' }}>
+                    {item.estado === 'verificado' ? 'Verificado' : 'Rechazado'} por {item.resolved_by_name}
+                    {item.resolved_at ? ` · ${formatResolvedAt(item.resolved_at)}` : ''}
+                  </p>
+                )}
 
                 {/* Row 3: action buttons (only for pending) */}
                 {item.estado === 'pendiente' && (
