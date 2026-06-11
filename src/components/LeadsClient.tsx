@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 
 type TopClient = {
@@ -61,9 +61,23 @@ export default function LeadsClient() {
   const [customTo,   setCustomTo]   = useState('');
   const [minAmount, setMinAmount]  = useState(0);
   const [maxAmount, setMaxAmount]  = useState(0); // 0 = sin límite superior
+  const [sortBy,    setSortBy]     = useState<'monto' | 'cantidad'>('monto');
   const [clients,   setClients]    = useState<TopClient[]>([]);
   const [loading,   setLoading]    = useState(true);
   const [error,     setError]      = useState(false);
+
+  // Panel de filtros colapsable (mismo patrón que Conversaciones).
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) setFiltersOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [filtersOpen]);
 
   const fetchClients = useCallback(async () => {
     let from = '', to = '';
@@ -97,12 +111,25 @@ export default function LeadsClient() {
     [clients, minAmount, maxAmount],
   );
 
+  // Ranking según el criterio elegido (las medallas siguen este orden).
+  const ranked = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => sortBy === 'cantidad'
+      ? (b.total - a.total || b.monto_total - a.monto_total)
+      : (b.monto_total - a.monto_total || b.total - a.total));
+    return arr;
+  }, [filtered, sortBy]);
+
   const totalMonto = filtered.reduce((s, c) => s + c.monto_total, 0);
   const totalComps = filtered.reduce((s, c) => s + c.total, 0);
 
+  // Filtros activos (para el badge del botón): período distinto del default + montos.
+  const activeFilterCount = (period !== 'mes' ? 1 : 0) + (minAmount > 0 ? 1 : 0) + (maxAmount > 0 ? 1 : 0);
+  const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? '';
+
   function exportCSV() {
     const header = ['Posición', 'Nombre', 'Teléfono', 'Total', 'Cantidad de comprobantes'];
-    const rows = filtered.map((c, i) => [
+    const rows = ranked.map((c, i) => [
       i + 1,
       c.casino_username || c.phone,
       c.phone,
@@ -137,82 +164,135 @@ export default function LeadsClient() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
-      {/* Controles: período + monto mínimo + exportar */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: '#fff', borderRadius: '16px', padding: '16px 18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {PERIODS.map((p) => (
-            <button key={p.key} onClick={() => setPeriod(p.key)} style={pillStyle(period === p.key)}>
-              {p.label}
-            </button>
-          ))}
-        </div>
+      {/* Barra: botón Filtros colapsable (período + rango de monto + orden) + exportar.
+          Mismo patrón que el panel de filtros de Conversaciones. */}
+      <div ref={filtersRef} style={{ position: 'relative', display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button
+          onClick={() => setFiltersOpen((o) => !o)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
+            padding: '11px 16px', fontSize: '14px', fontWeight: 700, cursor: 'pointer',
+            borderRadius: '12px',
+            border: activeFilterCount > 0 ? '2px solid #F97316' : '2px solid #e0e0e0',
+            background: activeFilterCount > 0 ? '#F97316' : '#fff',
+            color: activeFilterCount > 0 ? '#fff' : '#555',
+            transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+          }}
+        >
+          {/* Ícono de embudo */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          Filtros
+          {activeFilterCount > 0 && (
+            <span style={{
+              background: '#fff', color: '#F97316', borderRadius: '999px',
+              fontSize: '11px', fontWeight: 800, minWidth: '18px', height: '18px',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+            }}>
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
 
-        {period === 'custom' && (
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Desde
-              <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} style={inputStyle} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Hasta
-              <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} style={inputStyle} />
-            </label>
-          </div>
-        )}
+        <button
+          onClick={exportCSV}
+          disabled={ranked.length === 0}
+          style={{
+            background: ranked.length === 0 ? '#e0e0e0' : '#1a1a1a',
+            color:      ranked.length === 0 ? '#999' : '#C8FF00',
+            border: 'none', borderRadius: '12px', padding: '11px 18px',
+            fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap',
+            cursor: ranked.length === 0 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          ⬇ Exportar CSV
+        </button>
 
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-          {/* Rango de monto: mínimo + máximo (0/vacío = sin límite). */}
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Monto mínimo
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={minAmount || ''}
-                  placeholder="0"
-                  onChange={(e) => setMinAmount(Math.max(0, Number(e.target.value) || 0))}
-                  style={{ ...inputStyle, width: '120px' }}
-                />
-              </div>
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Monto máximo
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
-                <input
-                  type="number"
-                  min={0}
-                  step={1000}
-                  value={maxAmount || ''}
-                  placeholder="Sin límite"
-                  onChange={(e) => setMaxAmount(Math.max(0, Number(e.target.value) || 0))}
-                  style={{ ...inputStyle, width: '120px' }}
-                />
-              </div>
-            </label>
-          </div>
-
-          <button
-            onClick={exportCSV}
-            disabled={filtered.length === 0}
+        {/* Panel desplegable: full width en mobile, 360px alineado a la izquierda en desktop */}
+        {filtersOpen && (
+          <div
             style={{
-              background: filtered.length === 0 ? '#e0e0e0' : '#1a1a1a',
-              color:      filtered.length === 0 ? '#999' : '#C8FF00',
-              border: 'none', borderRadius: '12px', padding: '11px 18px',
-              fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap',
-              cursor: filtered.length === 0 ? 'not-allowed' : 'pointer',
+              position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
+              maxWidth: '360px', marginRight: 'auto',
+              background: '#fff', border: '2px solid #e0e0e0', borderRadius: '14px',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.12)', padding: '14px', zIndex: 20,
+              display: 'flex', flexDirection: 'column', gap: '14px',
             }}
           >
-            ⬇ Exportar CSV
-          </button>
-        </div>
+            {/* Período */}
+            <div>
+              <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Período</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {PERIODS.map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => { setPeriod(p.key); if (p.key !== 'custom') setFiltersOpen(false); }}
+                    style={pillStyle(period === p.key)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {period === 'custom' && (
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Desde
+                  <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} style={inputStyle} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Hasta
+                  <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} style={inputStyle} />
+                </label>
+              </div>
+            )}
+
+            {/* Rango de monto (0/vacío = sin límite) */}
+            <div>
+              <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Rango de monto</p>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
+                  <input
+                    type="number" min={0} step={1000} value={minAmount || ''} placeholder="Mínimo"
+                    onChange={(e) => setMinAmount(Math.max(0, Number(e.target.value) || 0))}
+                    style={{ ...inputStyle, width: '110px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '15px', fontWeight: 800, color: '#666' }}>$</span>
+                  <input
+                    type="number" min={0} step={1000} value={maxAmount || ''} placeholder="Máximo"
+                    onChange={(e) => setMaxAmount(Math.max(0, Number(e.target.value) || 0))}
+                    style={{ ...inputStyle, width: '110px' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Ordenar por */}
+            <div>
+              <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ordenar por</p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {([['monto', 'Monto total'], ['cantidad', 'Cantidad de recargas']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => { setSortBy(key); setFiltersOpen(false); }}
+                    style={pillStyle(sortBy === key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Summary cards (reflejan el filtro activo) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+      {/* Summary cards (reflejan el filtro activo). En mobile se apilan (CSS). */}
+      <div className="leads-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
         {[
           { label: 'Clientes con recargas', value: filtered.length },
           { label: 'Total comprobantes',    value: totalComps },
@@ -232,7 +312,9 @@ export default function LeadsClient() {
       {/* Ranking */}
       <div style={{ background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
         <h2 style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: '0 0 4px 0' }}>Ranking de clientes</h2>
-        <p style={{ fontSize: '12px', color: '#999', margin: '0 0 16px 0' }}>Por monto total de recargas verificadas en el período.</p>
+        <p style={{ fontSize: '12px', color: '#999', margin: '0 0 16px 0' }}>
+          {sortBy === 'cantidad' ? 'Por cantidad de recargas verificadas' : 'Por monto total de recargas verificadas'} — {periodLabel}.
+        </p>
 
         {loading ? (
           <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>Cargando…</p>
@@ -241,7 +323,7 @@ export default function LeadsClient() {
             <p style={{ color: '#c0392b', fontSize: '14px', margin: '0 0 8px 0' }}>No se pudo cargar el ranking.</p>
             <button onClick={fetchClients} style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>Reintentar</button>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : ranked.length === 0 ? (
           <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>
             {clients.length === 0
               ? 'No hay comprobantes verificados en este período.'
@@ -265,7 +347,7 @@ export default function LeadsClient() {
               <span />
             </div>
 
-            {filtered.map((c, i) => {
+            {ranked.map((c, i) => {
               const st     = STATUS_STYLE[c.status] ?? STATUS_STYLE.nuevo;
               const medal  = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : null;
               const isTop1 = i === 0;

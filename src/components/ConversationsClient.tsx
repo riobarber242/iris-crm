@@ -135,7 +135,7 @@ export default function ConversationsClient() {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+    <div className="conv-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
       {/* Barra: búsqueda + botón Filtros colapsable */}
       <div ref={filtersRef} style={{ position: 'relative', display: 'flex', gap: '8px', alignItems: 'stretch' }}>
