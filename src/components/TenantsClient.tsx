@@ -30,10 +30,6 @@ export default function TenantsClient() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
 
-  // create form
-  const [nu, setNu] = useState({ name: '', whatsapp_phone_id: '', whatsapp_access_token: '' });
-  const [creating, setCreating] = useState(false);
-
   // inline edit
   const [editId, setEditId] = useState<string | null>(null);
   const [draft,  setDraft]  = useState<Partial<Tenant>>({});
@@ -51,25 +47,6 @@ export default function TenantsClient() {
   }
 
   useEffect(() => { fetchTenants(); }, []);
-
-  async function createTenant(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-    setCreating(true);
-    try {
-      const res = await fetch('/api/tenants', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(nu),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setNu({ name: '', whatsapp_phone_id: '', whatsapp_access_token: '' });
-        fetchTenants();
-      } else {
-        setError(d.error ?? 'No se pudo crear');
-      }
-    } catch { setError('Error de red'); }
-    finally { setCreating(false); }
-  }
 
   function startEdit(t: Tenant) {
     setEditId(t.id);
@@ -109,16 +86,6 @@ export default function TenantsClient() {
           {error}
         </div>
       )}
-
-      {/* Crear tenant */}
-      <form onSubmit={createTenant} style={{ background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
-        <Field label="Nombre"><input style={inputStyle} value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })} placeholder="Casino XYZ" /></Field>
-        <Field label="WhatsApp Phone ID"><input style={{ ...inputStyle, width: '180px' }} value={nu.whatsapp_phone_id} onChange={e => setNu({ ...nu, whatsapp_phone_id: e.target.value })} placeholder="1135649372965076" /></Field>
-        <Field label="WhatsApp Access Token"><input style={{ ...inputStyle, width: '260px' }} type="password" value={nu.whatsapp_access_token} onChange={e => setNu({ ...nu, whatsapp_access_token: e.target.value })} placeholder="EAAG..." /></Field>
-        <button type="submit" disabled={creating} style={{ ...btn('#C8FF00', '#000'), padding: '10px 18px', fontSize: '13px' }}>
-          {creating ? 'Creando…' : '+ Crear tenant'}
-        </button>
-      </form>
 
       {/* Tabla */}
       {loading ? (
@@ -168,15 +135,6 @@ export default function TenantsClient() {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
-      {children}
     </div>
   );
 }
