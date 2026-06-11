@@ -6,7 +6,8 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { DonutChart, BarChart, ArgentinaMap, type ChartsData } from './DashboardCharts';
 import DashboardCustomizer from './DashboardCustomizer';
-import { DEFAULT_LAYOUT, WIDGET_GROUP, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
+import { DEFAULT_LAYOUT, widgetGroup, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
+import { PERIODS, getMetric, metricKey, formatMetricValue } from '@/lib/dashboard-metrics';
 
 type Stats = {
   convToday: number; convWeek: number; convMonth: number; convPrevMonth: number;
@@ -118,9 +119,45 @@ export default function DashboardClient() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [charts, setCharts] = useState<ChartsData | null>(null);
   const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
+  const [customValues, setCustomValues] = useState<Record<string, number>>({});
   const [customizing, setCustomizing] = useState(false);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
+  // Última versión del layout, para que el polling (closure) refresque los
+  // valores de los widgets custom sin re-crear el intervalo.
+  const layoutRef = useRef<WidgetConfig[]>(DEFAULT_LAYOUT);
+
+  // Junta los pares (métrica, período) que necesitan los widgets custom del
+  // layout y pide sus valores al endpoint dedicado (deduplicado).
+  async function fetchCustomMetrics(l: WidgetConfig[]) {
+    const seen = new Set<string>();
+    const pairs: { metric: string; period: string | null }[] = [];
+    for (const w of l) {
+      if (!w.custom) continue;
+      const def = getMetric(w.custom.metric);
+      if (!def) continue;
+      const periods: (string | null)[] = !def.supportsPeriod
+        ? [null]
+        : w.custom.format === 'breakdown'
+          ? PERIODS.map((p) => p.id)
+          : [w.custom.period];
+      for (const p of periods) {
+        const k = metricKey(w.custom.metric, p as any);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        pairs.push({ metric: w.custom.metric, period: p });
+      }
+    }
+    if (pairs.length === 0) { setCustomValues({}); return; }
+    try {
+      const res = await fetch('/api/dashboard_metric', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairs }),
+      });
+      if (!res.ok) return;
+      const d = await res.json();
+      setCustomValues(d?.values ?? {});
+    } catch {}
+  }
 
   async function fetchStats() {
     try {
@@ -156,6 +193,8 @@ export default function DashboardClient() {
         if (anyHidden && !alreadyReset) {
           const reset = DEFAULT_LAYOUT.map((w) => ({ ...w }));
           setLayout(reset);
+          layoutRef.current = reset;
+          fetchCustomMetrics(reset);
           try { localStorage.setItem('dash-layout-reset-v1', '1'); } catch {}
           fetch('/api/settings/dashboard-layout', {
             method: 'POST',
@@ -164,12 +203,14 @@ export default function DashboardClient() {
           }).catch(() => {});
         } else {
           setLayout(merged);
+          layoutRef.current = merged;
+          fetchCustomMetrics(merged);
         }
       })
       .catch(() => {});
 
     // Polling every 15 s — guaranteed refresh regardless of Realtime status
-    const interval = setInterval(() => { fetchStats(); fetchCharts(); }, 15_000);
+    const interval = setInterval(() => { fetchStats(); fetchCharts(); fetchCustomMetrics(layoutRef.current); }, 15_000);
 
     const sb = getSupabaseBrowser();
     if (sb) {
@@ -193,7 +234,9 @@ export default function DashboardClient() {
 
   async function saveLayout(next: WidgetConfig[]) {
     setLayout(next); // optimista
+    layoutRef.current = next;
     setCustomizing(false);
+    fetchCustomMetrics(next); // muestra valores de widgets recién creados ya mismo
     try {
       const res = await fetch('/api/settings/dashboard-layout', {
         method: 'POST',
@@ -201,7 +244,11 @@ export default function DashboardClient() {
         body: JSON.stringify({ layout: next }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok && Array.isArray(d?.layout)) setLayout(mergeLayout(d.layout));
+      if (res.ok && Array.isArray(d?.layout)) {
+        const merged = mergeLayout(d.layout);
+        setLayout(merged);
+        layoutRef.current = merged;
+      }
     } catch {}
   }
 
@@ -227,7 +274,35 @@ export default function DashboardClient() {
   const comprobanteData = charts ? charts.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color })) : [];
   const twoMonths       = charts ? charts.revenueByMonth.slice(-2) : [];
 
+  function renderCustomWidget(w: WidgetConfig): React.ReactNode {
+    const spec = w.custom!;
+    const def = getMetric(spec.metric);
+    if (!def) return null;
+    const valueFor = (period: string | null) => {
+      const v = customValues[metricKey(spec.metric, period as any)];
+      return v == null ? '—' : formatMetricValue(def.type, v);
+    };
+    // Desglose por los 4 períodos (solo métricas con período).
+    if (def.supportsPeriod && spec.format === 'breakdown') {
+      return (
+        <Column title={w.label} icon="📌">
+          {PERIODS.map((p) => <MetricCard key={p.id} label={p.label} value={valueFor(p.id)} />)}
+        </Column>
+      );
+    }
+    // Número único: un período elegido, o una métrica de estado (sin período).
+    const period = def.supportsPeriod ? spec.period : null;
+    const cardLabel = def.supportsPeriod ? (PERIODS.find((p) => p.id === spec.period)?.label ?? 'Valor') : def.label;
+    const raw = customValues[metricKey(spec.metric, period as any)];
+    return (
+      <Column title={w.label} icon="📌">
+        <MetricCard label={cardLabel} value={valueFor(period)} highlight={(raw ?? 0) > 0} />
+      </Column>
+    );
+  }
+
   function renderWidget(w: WidgetConfig): React.ReactNode {
+    if (w.custom) return renderCustomWidget(w);
     const s = stats!;
     switch (w.id) {
       case 'sin_responder': {
@@ -359,9 +434,9 @@ export default function DashboardClient() {
   }
 
   const visible = [...layout].sort((a, b) => a.order - b.order).filter((w) => w.visible);
-  const heroWidgets   = visible.filter((w) => WIDGET_GROUP[w.id] === 'hero');
-  const metricWidgets = visible.filter((w) => WIDGET_GROUP[w.id] === 'metric');
-  const chartWidgets  = visible.filter((w) => WIDGET_GROUP[w.id] === 'chart');
+  const heroWidgets   = visible.filter((w) => widgetGroup(w) === 'hero');
+  const metricWidgets = visible.filter((w) => widgetGroup(w) === 'metric');
+  const chartWidgets  = visible.filter((w) => widgetGroup(w) === 'chart');
 
   return (
     <>

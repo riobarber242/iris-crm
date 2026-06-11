@@ -10,7 +10,10 @@ import {
   sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { DEFAULT_LAYOUT, WIDGET_GROUP, type WidgetConfig } from '@/lib/dashboard-layout';
+import {
+  DEFAULT_LAYOUT, CUSTOM_PREFIX, widgetGroup, isCustomWidget, type WidgetConfig,
+} from '@/lib/dashboard-layout';
+import { METRIC_CATALOG, PERIODS, getMetric } from '@/lib/dashboard-metrics';
 
 const GROUP_LABEL: Record<string, string> = {
   hero:   'Destacado',
@@ -29,6 +32,44 @@ export default function DashboardCustomizer({
     [...layout].sort((a, b) => a.order - b.order)
   );
   const [saving, setSaving] = useState(false);
+
+  // Formulario de "Crear widget".
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [nwTitle,  setNwTitle]  = useState('');
+  const [nwMetric, setNwMetric] = useState('');
+  const [nwPeriod, setNwPeriod] = useState<'hoy' | 'semana' | 'mes' | 'mes_anterior'>('mes');
+  const [nwFormat, setNwFormat] = useState<'single' | 'breakdown'>('single');
+
+  const nwMetricDef    = getMetric(nwMetric);
+  const nwHasPeriod    = !!nwMetricDef?.supportsPeriod;
+  const canAddWidget   = nwTitle.trim().length > 0 && !!nwMetricDef;
+
+  function resetCreateForm() {
+    setNwTitle(''); setNwMetric(''); setNwPeriod('mes'); setNwFormat('single');
+    setCreatingOpen(false);
+  }
+
+  function addCustomWidget() {
+    if (!canAddWidget || !nwMetricDef) return;
+    const id = `${CUSTOM_PREFIX}${crypto.randomUUID()}`;
+    const widget: WidgetConfig = {
+      id,
+      label: nwTitle.trim().slice(0, 60),
+      visible: true,
+      order: draft.length,
+      custom: {
+        metric: nwMetricDef.id,
+        period: nwHasPeriod ? nwPeriod : null,
+        format: nwHasPeriod ? nwFormat : 'single',
+      },
+    };
+    setDraft((d) => [...d, widget]);
+    resetCreateForm();
+  }
+
+  function removeWidget(id: string) {
+    setDraft((d) => d.filter((w) => w.id !== id));
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -53,7 +94,10 @@ export default function DashboardCustomizer({
     setDraft((d) => d.map((w) => (w.id === id ? { ...w, label } : w)));
   }
   function reset() {
-    setDraft(DEFAULT_LAYOUT.map((w) => ({ ...w })));
+    // Restaura los widgets fijos a su default, pero CONSERVA los widgets custom
+    // creados por el agente (no se pierden al resetear).
+    const customs = draft.filter(isCustomWidget);
+    setDraft([...DEFAULT_LAYOUT.map((w) => ({ ...w })), ...customs]);
   }
 
   async function save() {
@@ -91,10 +135,57 @@ export default function DashboardCustomizer({
 
         {/* Lista sortable */}
         <div style={{ padding: '14px 16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+
+          {/* Crear widget */}
+          {creatingOpen ? (
+            <div style={{ background: '#F7F7F7', border: '2px solid #eee', borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 800, color: '#555', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nuevo widget</span>
+              <FormField label="Título">
+                <input
+                  autoFocus value={nwTitle} onChange={(e) => setNwTitle(e.target.value)}
+                  placeholder="Ej: Comprobantes del mes" maxLength={60}
+                  style={selectStyle}
+                />
+              </FormField>
+              <FormField label="Métrica">
+                <select value={nwMetric} onChange={(e) => setNwMetric(e.target.value)} style={selectStyle}>
+                  <option value="">Elegí una métrica…</option>
+                  {METRIC_CATALOG.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </FormField>
+              {nwHasPeriod && (
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <FormField label="Período">
+                    <select value={nwPeriod} onChange={(e) => setNwPeriod(e.target.value as any)} style={selectStyle}>
+                      {PERIODS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                  </FormField>
+                  <FormField label="Formato">
+                    <select value={nwFormat} onChange={(e) => setNwFormat(e.target.value as any)} style={selectStyle}>
+                      <option value="single">Número único</option>
+                      <option value="breakdown">Desglose por períodos</option>
+                    </select>
+                  </FormField>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button onClick={resetCreateForm} style={{ background: '#fff', color: '#666', border: '2px solid #eee', borderRadius: '10px', padding: '8px 14px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
+                <button onClick={addCustomWidget} disabled={!canAddWidget} style={{ background: canAddWidget ? '#C8FF00' : '#e8e8e8', color: canAddWidget ? '#000' : '#aaa', border: 'none', borderRadius: '10px', padding: '8px 16px', fontWeight: 800, fontSize: '13px', cursor: canAddWidget ? 'pointer' : 'not-allowed' }}>Agregar</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setCreatingOpen(true)}
+              style={{ background: '#0a0a0a', color: '#C8FF00', border: 'none', borderRadius: '12px', padding: '12px', fontWeight: 800, fontSize: '14px', cursor: 'pointer' }}
+            >
+              + Crear widget
+            </button>
+          )}
+
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={draft.map((w) => w.id)} strategy={verticalListSortingStrategy}>
               {draft.map((w) => (
-                <SortableRow key={w.id} w={w} onToggle={toggle} onRename={rename} />
+                <SortableRow key={w.id} w={w} onToggle={toggle} onRename={rename} onDelete={removeWidget} />
               ))}
             </SortableContext>
           </DndContext>
@@ -132,14 +223,16 @@ export default function DashboardCustomizer({
 }
 
 function SortableRow({
-  w, onToggle, onRename,
+  w, onToggle, onRename, onDelete,
 }: {
   w: WidgetConfig;
   onToggle: (id: string) => void;
   onRename: (id: string, label: string) => void;
+  onDelete: (id: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: w.id });
   const [editing, setEditing] = useState(false);
+  const custom = isCustomWidget(w);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -183,8 +276,8 @@ function SortableRow({
             {w.label}
           </span>
         )}
-        <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#bbb' }}>
-          {GROUP_LABEL[WIDGET_GROUP[w.id]]}
+        <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: custom ? '#7da000' : '#bbb' }}>
+          {custom ? 'Personalizado' : GROUP_LABEL[widgetGroup(w)]}
         </span>
       </div>
 
@@ -202,6 +295,35 @@ function SortableRow({
       >
         {w.visible ? '👁 Visible' : '🚫 Oculto'}
       </button>
+
+      {/* Borrar (solo widgets custom; los fijos no se borran, solo se ocultan) */}
+      {custom && (
+        <button
+          onClick={() => onDelete(w.id)}
+          aria-label="Eliminar widget"
+          title="Eliminar widget"
+          style={{
+            background: '#FFE5E5', color: '#CC3333', border: 'none', borderRadius: '8px',
+            padding: '6px 10px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          🗑
+        </button>
+      )}
+    </div>
+  );
+}
+
+const selectStyle: React.CSSProperties = {
+  width: '100%', background: '#fff', border: '2px solid #eee', borderRadius: '8px',
+  padding: '8px 10px', fontSize: '13px', color: '#111', outline: 'none',
+};
+
+function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0 }}>
+      <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
+      {children}
     </div>
   );
 }

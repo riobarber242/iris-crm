@@ -28,6 +28,7 @@ const STAFF_PREFIXES = [
   '/dashboard',
   '/api/dashboard_stats',
   '/api/dashboard_charts',
+  '/api/dashboard_metric',
   '/agentes',
   '/api/agents',
   '/settings',
