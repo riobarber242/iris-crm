@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import OnboardingWizard from './OnboardingWizard';
 
 type Tenant = {
   id: string;
@@ -36,6 +37,9 @@ export default function TenantsClient() {
   // inline edit
   const [editId, setEditId] = useState<string | null>(null);
   const [draft,  setDraft]  = useState<Partial<Tenant>>({});
+
+  // wizard de alta guiada
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   async function fetchTenants() {
     try {
@@ -88,6 +92,17 @@ export default function TenantsClient() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+      {wizardOpen && (
+        <OnboardingWizard onClose={() => setWizardOpen(false)} onCreated={fetchTenants} />
+      )}
+
+      {/* Alta guiada: crea tenant + usuario + system prompt + operadores de una. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button onClick={() => setWizardOpen(true)} style={{ ...btn('#0a0a0a', '#C8FF00'), padding: '12px 22px', fontSize: '14px' }}>
+          + Nuevo agente
+        </button>
+      </div>
 
       {error && (
         <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>

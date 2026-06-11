@@ -15,7 +15,7 @@ const PUBLIC_PREFIXES = [
 ];
 
 // Solo admin: administración de tenants y servicios (datos globales del sistema).
-const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin/services'];
+const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin/services', '/api/admin/onboarding'];
 
 // Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
 //  - Dashboard y sus métricas.
