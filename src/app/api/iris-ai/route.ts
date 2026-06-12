@@ -82,7 +82,7 @@ const OPS_TOOLS: Tool[] = [
   {
     name: 'get_client_history',
     description:
-      'Historial completo de un cliente buscado por teléfono o nombre: datos del contacto (nombre, teléfono, clasificación), total de comprobantes y monto verificado, últimos 10 comprobantes y últimos 5 mensajes de su conversación. Usala para "historial de X", "qué recargó X", "mostrame al cliente X".',
+      'Historial completo de un cliente buscado por teléfono o nombre: datos del contacto (nombre, teléfono, clasificación), total de comprobantes y monto verificado, últimos 10 comprobantes y últimos 5 mensajes de su conversación. Usala para "historial de X", "qué recargó X", "mostrame al cliente X". Mostrá SIEMPRE las secciones que tengan datos: si hay mensajes pero no comprobantes (o al revés), mostrá lo que haya — nunca digas que el historial "no está disponible" si alguna sección tiene datos. Solo si el resultado trae el campo "nota", transmitila tal cual.',
     input_schema: {
       type: 'object',
       properties: {
@@ -370,22 +370,38 @@ async function getClientHistory(tid: string, input: any) {
     }
   }
 
+  // El historial puede estar colgado de OTRO registro de contacto con el mismo
+  // teléfono (duplicados): mensajes y comprobantes se relacionan solo por
+  // contact_id (no existe tabla conversations ni columna phone en esas tablas),
+  // así que unificamos todos los contact_id del tenant que comparten teléfono.
+  let contactIds = [contact.id];
+  if (contact.phone) {
+    const { data: dupes } = await supabaseAdmin
+      .from('contacts')
+      .select('id')
+      .eq('tenant_id', tid)
+      .eq('phone', contact.phone);
+    contactIds = Array.from(new Set([contact.id, ...(dupes ?? []).map((d: any) => d.id)]));
+  }
+
   const [compsRes, msgsRes, totalRes, verifRes] = await Promise.all([
     supabaseAdmin.from('comprobantes').select('monto, estado, created_at')
-      .eq('tenant_id', tid).eq('contact_id', contact.id)
+      .eq('tenant_id', tid).in('contact_id', contactIds)
       .order('created_at', { ascending: false }).limit(10),
     supabaseAdmin.from('messages').select('role, content, created_at')
-      .eq('tenant_id', tid).eq('contact_id', contact.id)
+      .eq('tenant_id', tid).in('contact_id', contactIds)
       .order('created_at', { ascending: false }).limit(5),
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tid).eq('contact_id', contact.id),
+      .eq('tenant_id', tid).in('contact_id', contactIds),
     supabaseAdmin.from('comprobantes').select('monto')
-      .eq('tenant_id', tid).eq('contact_id', contact.id).eq('estado', 'verificado'),
+      .eq('tenant_id', tid).in('contact_id', contactIds).eq('estado', 'verificado'),
   ]);
 
   const montoVerificado = (verifRes.data ?? []).reduce((s: number, r: any) => s + Number(r.monto ?? 0), 0);
+  const totalComprobantes = totalRes.count ?? 0;
+  const mensajes = msgsRes.data ?? [];
 
-  return {
+  const result: Record<string, unknown> = {
     cliente: {
       nombre: contact.name ?? null,
       telefono: contact.phone ?? null,
@@ -394,7 +410,7 @@ async function getClientHistory(tid: string, input: any) {
       cliente_desde: contact.created_at ?? null,
     },
     comprobantes: {
-      total: totalRes.count ?? 0,
+      total: totalComprobantes,
       monto_verificado_total: montoVerificado,
       moneda: 'ARS',
       ultimos: (compsRes.data ?? []).map((c: any) => ({
@@ -403,12 +419,25 @@ async function getClientHistory(tid: string, input: any) {
         fecha: c.created_at,
       })),
     },
-    ultimos_mensajes: (msgsRes.data ?? []).map((m: any) => ({
+    ultimos_mensajes: mensajes.map((m: any) => ({
       de: ROLE_LABEL[m.role] ?? m.role,
       mensaje: snippet(m.content),
       fecha: m.created_at,
     })),
   };
+
+  // Errores de consulta a la vista: sin esto, una query fallida se confunde con
+  // "no tiene datos" y el modelo responde "no disponible" incorrectamente.
+  const advertencias = [compsRes.error, msgsRes.error, totalRes.error, verifRes.error]
+    .filter(Boolean)
+    .map((e) => e!.message);
+  if (advertencias.length > 0) result.advertencias = advertencias;
+
+  if (totalComprobantes === 0 && mensajes.length === 0 && advertencias.length === 0) {
+    result.nota = 'Este contacto no tiene historial de conversaciones ni comprobantes registrados todavía.';
+  }
+
+  return result;
 }
 
 // Resumen de conversaciones derivado de messages + classifyPending: la MISMA
