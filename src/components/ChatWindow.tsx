@@ -86,7 +86,7 @@ function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missin
 
 // Ticks de estado para mensajes salientes (estilo WhatsApp).
 function Ticks({ status }: { status?: string }) {
-  if (status === 'failed')  return <span title="No enviado"  style={{ color: '#E53935', fontSize: '11px' }}>⚠</span>;
+  if (status === 'failed')  return <span title="Meta rechazó el envío — el mensaje NO llegó" style={{ color: '#E53935', fontSize: '11px', fontWeight: 700 }}>⚠ No entregado</span>;
   if (status === 'sending') return <span title="Enviando"    style={{ fontSize: '11px', opacity: 0.6 }}>🕓</span>;
   if (status === 'read')      return <span title="Leído"      style={{ color: '#34B7F1', fontSize: '11px', fontWeight: 700 }}>✓✓</span>;
   if (status === 'delivered') return <span title="Entregado"  style={{ color: '#888',    fontSize: '11px', fontWeight: 700 }}>✓✓</span>;

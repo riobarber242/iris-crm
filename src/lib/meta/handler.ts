@@ -467,14 +467,18 @@ async function processMessage(
     try {
       const wamid = await sendWhatsAppText(from!, textResp, tenantId, numberId);
       if (dbInsertOk && insertedId) {
-        await supabaseAdmin.from('messages')
+        const { error } = await supabaseAdmin.from('messages')
           .update({ status: 'sent', whatsapp_message_id: wamid })
           .eq('id', insertedId);
+        if (error) console.error('[replyAndSave] No se pudo marcar sent:', error.message);
       }
     } catch (err) {
       console.error('[replyAndSave] WhatsApp send error — mensaje NO llegó al usuario');
       if (dbInsertOk && insertedId) {
-        await supabaseAdmin.from('messages').update({ status: 'failed' }).eq('id', insertedId);
+        const { error } = await supabaseAdmin.from('messages')
+          .update({ status: 'failed' })
+          .eq('id', insertedId);
+        if (error) console.error('[replyAndSave] No se pudo marcar failed:', error.message);
       }
     }
 

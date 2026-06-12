@@ -16,12 +16,16 @@ export async function POST(request: Request) {
   const session = await getSessionAgent();
 
   try {
+    // OJO: nunca pisar 'failed' — un mensaje que Meta rechazó no fue entregado
+    // ni leído. Sin este filtro, abrir el chat convertía los fallidos en
+    // "leídos" (doble tilde) y el error quedaba invisible.
     const { data, error } = await supabaseAdmin
       .from('messages')
       .update({ status: 'read' })
       .eq('contact_id', contactId)
       .eq('role', 'assistant')
       .neq('status', 'read')
+      .neq('status', 'failed')
       .select('id');
 
     if (error) return new NextResponse(error.message, { status: 500 });
