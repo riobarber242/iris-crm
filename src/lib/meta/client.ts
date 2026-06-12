@@ -79,6 +79,42 @@ function logApiError(context: string, err: any) {
   );
 }
 
+// ── Retry ante errores transitorios de Meta ───────────────────────────────────
+// Meta a veces responde 500 OAuthException con code 1/2 e is_transient:true
+// ("Please retry your request later"): el mismo envío suele funcionar segundos
+// después. Errores permanentes (token inválido, ventana de 24h, número
+// bloqueado) cortan al primer intento.
+
+const RETRY_DELAYS_MS = [2000, 5000];
+
+function isTransientMetaError(err: any): boolean {
+  const status = err?.response?.status;
+  const e      = err?.response?.data?.error;
+  return e?.is_transient === true || e?.code === 1 || e?.code === 2 || status === 500;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Hasta 3 intentos en total (esperas de 2s y 5s). Corre dentro del webhook en
+// Vercel: el peor caso suma ~7s de espera, dentro del tiempo de ejecución de
+// la función — NO alargar estas esperas sin revisar ese límite.
+async function withTransientRetry<T>(context: string, fn: () => Promise<T>): Promise<T> {
+  const attempts = RETRY_DELAYS_MS.length + 1;
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (!isTransientMetaError(err) || i >= RETRY_DELAYS_MS.length) throw err;
+      const delay = RETRY_DELAYS_MS[i];
+      const meta  = err?.response?.data?.error;
+      console.warn(
+        `[retry] ${context}: error transitorio de Meta (status=${err?.response?.status ?? '?'} code=${meta?.code ?? '?'}) — intento ${i + 2}/${attempts} en ${delay / 1000}s`,
+      );
+      await sleep(delay);
+    }
+  }
+}
+
 // Devuelve el wamid (id del mensaje en WhatsApp) para poder matchear luego los
 // webhooks de status (ticks) y reacciones. null si no vino en la respuesta.
 export async function sendWhatsAppText(to: string, text: string, tenantId?: string, numberId?: string | null): Promise<string | null> {
@@ -88,10 +124,12 @@ export async function sendWhatsAppText(to: string, text: string, tenantId?: stri
   console.log(`[sendWhatsAppText] → ${to}: "${text.slice(0, 60)}"`);
 
   try {
-    const res = await axios.post(
-      `${BASE_URL}/${phoneId}/messages`,
-      { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
-      { headers },
+    const res = await withTransientRetry(`sendWhatsAppText → ${to}`, () =>
+      axios.post(
+        `${BASE_URL}/${phoneId}/messages`,
+        { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
+        { headers },
+      ),
     );
     const wamid = res.data?.messages?.[0]?.id ?? null;
     console.log(`[sendWhatsAppText] ✓ Enviado a ${to} wamid=${wamid}`);
@@ -107,10 +145,12 @@ export async function sendWhatsAppImage(to: string, imageUrl: string, caption: s
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
-    await axios.post(
-      `${BASE_URL}/${phoneId}/messages`,
-      { messaging_product: 'whatsapp', to, type: 'image', image: { link: imageUrl, caption } },
-      { headers },
+    await withTransientRetry(`sendWhatsAppImage → ${to}`, () =>
+      axios.post(
+        `${BASE_URL}/${phoneId}/messages`,
+        { messaging_product: 'whatsapp', to, type: 'image', image: { link: imageUrl, caption } },
+        { headers },
+      ),
     );
   } catch (err: any) {
     logApiError('sendWhatsAppImage', err);
@@ -149,7 +189,9 @@ export async function sendWhatsAppTemplate(
   }
 
   try {
-    await axios.post(`${BASE_URL}/${phoneId}/messages`, body, { headers });
+    await withTransientRetry(`sendWhatsAppTemplate → ${to}`, () =>
+      axios.post(`${BASE_URL}/${phoneId}/messages`, body, { headers }),
+    );
   } catch (err: any) {
     logApiError('sendWhatsAppTemplate', err);
     throw err;
@@ -163,10 +205,12 @@ export async function sendWhatsAppReaction(to: string, messageId: string, emoji:
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
-    await axios.post(
-      `${BASE_URL}/${phoneId}/messages`,
-      { messaging_product: 'whatsapp', to, type: 'reaction', reaction: { message_id: messageId, emoji } },
-      { headers },
+    await withTransientRetry(`sendWhatsAppReaction → ${to}`, () =>
+      axios.post(
+        `${BASE_URL}/${phoneId}/messages`,
+        { messaging_product: 'whatsapp', to, type: 'reaction', reaction: { message_id: messageId, emoji } },
+        { headers },
+      ),
     );
   } catch (err: any) {
     logApiError('sendWhatsAppReaction', err);
@@ -179,10 +223,12 @@ export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?:
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
-    await axios.post(
-      `${BASE_URL}/${phoneId}/messages`,
-      { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } },
-      { headers },
+    await withTransientRetry(`sendWhatsAppAudio → ${to}`, () =>
+      axios.post(
+        `${BASE_URL}/${phoneId}/messages`,
+        { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } },
+        { headers },
+      ),
     );
   } catch (err: any) {
     logApiError('sendWhatsAppAudio', err);
