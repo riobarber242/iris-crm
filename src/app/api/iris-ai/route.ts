@@ -335,7 +335,10 @@ async function getPendingComprobantes(tid: string) {
 }
 
 async function getClientHistory(tid: string, input: any) {
-  const phone = String(input?.phone ?? '').replace(/[%,()]/g, ' ').trim();
+  // Los teléfonos se guardan como dígitos puros ("5492996231978"): para buscar
+  // hay que descartar +, espacios y guiones del input ("+54 9 299 623-1978").
+  const phoneRaw = String(input?.phone ?? '').replace(/[%,()]/g, ' ').trim();
+  const phone = phoneRaw.replace(/\D/g, '') || phoneRaw;
   const name = String(input?.name ?? '').replace(/[%,()]/g, ' ').trim();
   if (!phone && !name) return { error: 'Indicá el teléfono o el nombre del cliente.' };
 
