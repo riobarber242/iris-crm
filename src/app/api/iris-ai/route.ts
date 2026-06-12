@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { classifyPending } from '@/lib/pending';
 
 // Modelo de Anthropic. Se usa el alias vigente de Sonnet (claude-sonnet-4-6);
 // el ID con fecha claude-sonnet-4-20250514 está deprecado y se retira el
@@ -11,12 +12,16 @@ const MAX_TOOL_TURNS = 5;
 
 const SYSTEM_PROMPT = `Sos Iris AI, la asistente inteligente del CRM IRIS. Solo respondés preguntas sobre la plataforma IRIS del agente (conversaciones, contactos, comprobantes, métricas del dashboard, campañas) y ayudás a personalizar el dashboard: mostrar/ocultar y reordenar widgets, y entender qué mide cada uno. Para personalizar el dashboard, indicá al usuario que abra el botón ⚙ "Personalizar" arriba del widget "Sin responder", donde puede arrastrar para reordenar, renombrar y ocultar/mostrar widgets. No respondés sobre temas externos, no explicás qué es un CRM ni cómo funciona WhatsApp. Si te preguntan algo fuera de contexto, decís: 'Solo puedo ayudarte con información de tu plataforma Iris.' Siempre respondés en español, de forma concisa y útil.
 
-Tenés herramientas para consultar datos reales de la plataforma. Cuando la pregunta dependa de datos (cantidades, métricas, clientes, comprobantes), USÁ las herramientas antes de responder en vez de inventar números. Todas las consultas ya están limitadas automáticamente a los datos de este usuario. Si ninguna herramienta puede responder la pregunta, decí "No puedo responder eso todavía" — NUNCA inventes un número.`;
+Tenés herramientas para consultar datos reales de la plataforma. Cuando la pregunta dependa de datos (cantidades, métricas, clientes, comprobantes), USÁ las herramientas antes de responder en vez de inventar números. Todas las consultas ya están limitadas automáticamente a los datos de este usuario. Si ninguna herramienta puede responder la pregunta, decí "No puedo responder eso todavía" — NUNCA inventes un número.
+
+Podés consultar los comprobantes pendientes de verificación (get_pending_comprobantes), ver el historial completo de un cliente por nombre o teléfono (get_client_history) y revisar el estado de las conversaciones activas: chats con actividad hoy, sin responder y las pendientes más recientes (get_conversation_summary).`;
 
 // Extensión del prompt solo para admin/agente: herramientas de actividad del equipo.
 const STAFF_PROMPT_EXTRA = `
 
-También tenés herramientas de actividad y desempeño del equipo: comprobantes_stats (cantidad, monto total, ticket promedio, mín/máx de comprobantes; filtrable por quién lo resolvió, estado, período y rango de monto), count_activity (conteo de acciones del registro de actividad: mensajes respondidos, conversaciones atendidas, inicios de sesión, cierres de sesión —con motivo manual o inactividad—, contactos editados/importados, cambios de configuración) y list_team (miembros del equipo). Cuando te pregunten por una persona ("jessica", "el operador X"), si el filtro falla o el nombre es ambiguo usá list_team para identificarla. Para "cuántos comprobantes verificó X" usá comprobantes_stats con estado=verificado y ese operador; para "ticket promedio de X" lo mismo y mirá ticket_promedio.`;
+También tenés herramientas de actividad y desempeño del equipo: comprobantes_stats (cantidad, monto total, ticket promedio, mín/máx de comprobantes; filtrable por quién lo resolvió, estado, período y rango de monto), count_activity (conteo de acciones del registro de actividad: mensajes respondidos, conversaciones atendidas, inicios de sesión, cierres de sesión —con motivo manual o inactividad—, contactos editados/importados, cambios de configuración) y list_team (miembros del equipo). Cuando te pregunten por una persona ("jessica", "el operador X"), si el filtro falla o el nombre es ambiguo usá list_team para identificarla. Para "cuántos comprobantes verificó X" usá comprobantes_stats con estado=verificado y ese operador; para "ticket promedio de X" lo mismo y mirá ticket_promedio.
+
+Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.`;
 
 // Extensión del prompt para OPERADORES: las consultas de actividad individual
 // están vetadas para su rol, y NUNCA deben aproximarse con totales generales
@@ -24,7 +29,9 @@ También tenés herramientas de actividad y desempeño del equipo: comprobantes_
 // respondía el total del negocio).
 const OPERATOR_PROMPT_EXTRA = `
 
-IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre ninguna otra persona: comprobantes verificados/rechazados por alguien, ticket promedio por persona, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.`;
+IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre ninguna otra persona: comprobantes verificados/rechazados por alguien, ticket promedio por persona, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.
+
+Las herramientas de comprobantes pendientes (get_pending_comprobantes), historial de clientes (get_client_history) y estado de conversaciones (get_conversation_summary) SÍ están disponibles para este usuario: usalas con normalidad.`;
 
 type Tool = Anthropic.Tool;
 
@@ -58,6 +65,37 @@ const TOOLS: Tool[] = [
         limit: { type: 'integer', description: 'Cantidad máxima a devolver (1-25). Default 10.' },
       },
     },
+  },
+];
+
+// ── Herramientas operativas — disponibles para TODOS los roles ───────────────
+// Pensadas para el trabajo diario del operador (y útiles también para staff).
+// Todas son READ-ONLY y filtran por tenant_id internamente.
+
+const OPS_TOOLS: Tool[] = [
+  {
+    name: 'get_pending_comprobantes',
+    description:
+      'Lista los comprobantes pendientes de verificación (hasta 20, más recientes primero) con nombre y teléfono del contacto, monto y fecha de llegada. Usala para "qué comprobantes están pendientes", "qué hay para verificar".',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_client_history',
+    description:
+      'Historial completo de un cliente buscado por teléfono o nombre: datos del contacto (nombre, teléfono, clasificación), total de comprobantes y monto verificado, últimos 10 comprobantes y últimos 5 mensajes de su conversación. Usala para "historial de X", "qué recargó X", "mostrame al cliente X".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phone: { type: 'string', description: 'Teléfono del cliente (puede ser parcial).' },
+        name: { type: 'string', description: 'Nombre o usuario de casino del cliente (puede ser parcial).' },
+      },
+    },
+  },
+  {
+    name: 'get_conversation_summary',
+    description:
+      'Estado de las conversaciones activas: cuántos chats tuvieron actividad hoy, cuántas conversaciones están sin responder (pendientes de atención humana, con desglose rojo/naranja) y las 5 pendientes más recientes con nombre del contacto y último mensaje. Usala para "cómo vienen las conversaciones", "cuántas hay sin responder".',
+    input_schema: { type: 'object', properties: {} },
   },
 ];
 
@@ -108,6 +146,23 @@ const STAFF_TOOLS: Tool[] = [
     name: 'list_team',
     description:
       'Lista los miembros del equipo (nombre, usuario, rol, activo). Usala para resolver a quién se refiere el usuario ("jessica", "el operador X") cuando el nombre sea ambiguo o no se encuentre, o para preguntas sobre el equipo.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_inactive_clients',
+    description:
+      'Clientes inactivos: contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días (default 30). Devuelve nombre, teléfono, clasificación y fecha del último comprobante (hasta 20, los que dejaron de recargar más recientemente primero). Usala para "qué clientes dejaron de recargar", "clientes inactivos hace X días".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'Días sin comprobantes para considerar inactivo al cliente. Default 30.' },
+      },
+    },
+  },
+  {
+    name: 'get_unverified_alerts',
+    description:
+      'Alertas de comprobantes sin verificar: comprobantes pendientes hace más de 2 horas. Devuelve la cantidad total y los 5 más antiguos con nombre del contacto, monto y horas de espera. Usala para "hay comprobantes demorados", "alertas de verificación pendiente".',
     input_schema: { type: 'object', properties: {} },
   },
 ];
@@ -235,6 +290,179 @@ async function searchContacts(tid: string, query: string | undefined, status: st
 
   const { data } = await q;
   return { contactos: data ?? [] };
+}
+
+const ROLE_LABEL: Record<string, string> = { user: 'cliente', assistant: 'bot', human: 'operador' };
+
+function snippet(s: unknown, max = 200): string {
+  const t = String(s ?? '');
+  return t.length > max ? t.slice(0, max) + '…' : t;
+}
+
+async function getPendingComprobantes(tid: string) {
+  const { data, error } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, contact_id, monto, created_at')
+    .eq('tenant_id', tid)
+    .eq('estado', 'pendiente')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) return { error: error.message };
+  const comps = data ?? [];
+  if (comps.length === 0) return { comprobantes: [] };
+
+  const ids = Array.from(new Set(comps.map((c: any) => c.contact_id)));
+  const { data: contacts } = await supabaseAdmin
+    .from('contacts')
+    .select('id, name, phone')
+    .eq('tenant_id', tid)
+    .in('id', ids);
+  const byId = new Map((contacts ?? []).map((c: any) => [c.id, c]));
+
+  return {
+    comprobantes: comps.map((c: any) => {
+      const ct = byId.get(c.contact_id) as any;
+      return {
+        id: c.id,
+        contacto: ct?.name ?? null,
+        telefono: ct?.phone ?? null,
+        monto: Number(c.monto ?? 0),
+        created_at: c.created_at,
+      };
+    }),
+    moneda: 'ARS',
+  };
+}
+
+async function getClientHistory(tid: string, input: any) {
+  const phone = String(input?.phone ?? '').replace(/[%,()]/g, ' ').trim();
+  const name = String(input?.name ?? '').replace(/[%,()]/g, ' ').trim();
+  if (!phone && !name) return { error: 'Indicá el teléfono o el nombre del cliente.' };
+
+  let q = supabaseAdmin
+    .from('contacts')
+    .select('id, name, phone, casino_username, status, created_at')
+    .eq('tenant_id', tid)
+    .limit(6);
+  if (phone && name) q = q.or(`phone.ilike.%${phone}%,name.ilike.%${name}%`);
+  else if (phone) q = q.ilike('phone', `%${phone}%`);
+  else q = q.or(`name.ilike.%${name}%,casino_username.ilike.%${name}%`);
+
+  const { data: matches, error } = await q;
+  if (error) return { error: error.message };
+  if (!matches || matches.length === 0) {
+    return { error: `No encontré ningún cliente que coincida con "${phone || name}".` };
+  }
+
+  let contact = matches[0];
+  if (matches.length > 1) {
+    const exact = matches.filter(
+      (c: any) =>
+        (name && (c.name ?? '').toLowerCase() === name.toLowerCase()) ||
+        (phone && c.phone === phone),
+    );
+    if (exact.length === 1) contact = exact[0];
+    else {
+      return {
+        error: 'Hay varios clientes que coinciden. Pedile al usuario que aclare.',
+        candidatos: matches.map((c: any) => ({ nombre: c.name, telefono: c.phone })),
+      };
+    }
+  }
+
+  const [compsRes, msgsRes, totalRes, verifRes] = await Promise.all([
+    supabaseAdmin.from('comprobantes').select('monto, estado, created_at')
+      .eq('tenant_id', tid).eq('contact_id', contact.id)
+      .order('created_at', { ascending: false }).limit(10),
+    supabaseAdmin.from('messages').select('role, content, created_at')
+      .eq('tenant_id', tid).eq('contact_id', contact.id)
+      .order('created_at', { ascending: false }).limit(5),
+    supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).eq('contact_id', contact.id),
+    supabaseAdmin.from('comprobantes').select('monto')
+      .eq('tenant_id', tid).eq('contact_id', contact.id).eq('estado', 'verificado'),
+  ]);
+
+  const montoVerificado = (verifRes.data ?? []).reduce((s: number, r: any) => s + Number(r.monto ?? 0), 0);
+
+  return {
+    cliente: {
+      nombre: contact.name ?? null,
+      telefono: contact.phone ?? null,
+      usuario_casino: contact.casino_username ?? null,
+      clasificacion: contact.status ?? null,
+      cliente_desde: contact.created_at ?? null,
+    },
+    comprobantes: {
+      total: totalRes.count ?? 0,
+      monto_verificado_total: montoVerificado,
+      moneda: 'ARS',
+      ultimos: (compsRes.data ?? []).map((c: any) => ({
+        monto: Number(c.monto ?? 0),
+        estado: c.estado,
+        fecha: c.created_at,
+      })),
+    },
+    ultimos_mensajes: (msgsRes.data ?? []).map((m: any) => ({
+      de: ROLE_LABEL[m.role] ?? m.role,
+      mensaje: snippet(m.content),
+      fecha: m.created_at,
+    })),
+  };
+}
+
+// Resumen de conversaciones derivado de messages + classifyPending: la MISMA
+// regla de "sin responder" que usan el dashboard y la lista de conversaciones.
+async function getConversationSummary(tid: string) {
+  const todayStart = periodRange('hoy').gte!;
+
+  const [offlineRes, contactsRes, msgsRes, activeTodayRes] = await Promise.all([
+    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', tid).limit(1).maybeSingle(),
+    supabaseAdmin.from('contacts').select('id, name, phone, conversation_state, last_read_at').eq('tenant_id', tid),
+    supabaseAdmin.from('messages').select('contact_id, role, content, created_at')
+      .eq('tenant_id', tid).order('created_at', { ascending: false }).limit(1000),
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', todayStart),
+  ]);
+  const offlineMode = offlineRes.data?.value === 'true';
+
+  const lastMsgByContact = new Map<string, { role: string; content: string; created_at: string }>();
+  for (const m of (msgsRes.data ?? [])) {
+    if (!lastMsgByContact.has(m.contact_id)) {
+      lastMsgByContact.set(m.contact_id, { role: m.role, content: m.content, created_at: m.created_at });
+    }
+  }
+
+  let rojo = 0;
+  let naranja = 0;
+  const pendientes: { nombre: string | null; telefono: string | null; nivel: string; ultimo_mensaje: string; de: string; fecha: string }[] = [];
+  for (const c of (contactsRes.data ?? [])) {
+    const lm = lastMsgByContact.get(c.id as string);
+    const level = classifyPending({
+      lastRole: lm?.role,
+      lastMsgAt: lm?.created_at,
+      lastReadAt: c.last_read_at,
+      conversationState: c.conversation_state,
+      offline: offlineMode,
+    });
+    if (!level) continue;
+    if (level === 'red') rojo++;
+    else naranja++;
+    pendientes.push({
+      nombre: c.name ?? null,
+      telefono: c.phone ?? null,
+      nivel: level === 'red' ? 'rojo' : 'naranja',
+      ultimo_mensaje: snippet(lm!.content),
+      de: ROLE_LABEL[lm!.role] ?? lm!.role,
+      fecha: lm!.created_at,
+    });
+  }
+  pendientes.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  return {
+    chats_con_actividad_hoy: new Set((activeTodayRes.data ?? []).map((m: any) => m.contact_id)).size,
+    sin_responder: { total: rojo + naranja, rojo, naranja },
+    pendientes_mas_recientes: pendientes.slice(0, 5),
+  };
 }
 
 // Fronteras de período alineadas a medianoche Argentina (UTC-3 fijo), igual que
@@ -406,6 +634,101 @@ async function listTeam(tid: string) {
   };
 }
 
+async function getInactiveClients(tid: string, daysInput: unknown) {
+  const n = Number(daysInput);
+  const days = Number.isFinite(n) && n > 0 ? Math.min(365, Math.floor(n)) : 30;
+  const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+
+  // Último comprobante por contacto. Paginado (PostgREST corta en ~1000 filas);
+  // al venir ordenado DESC, la primera fila de cada contacto es su más reciente.
+  const PAGE = 1000;
+  const lastComp = new Map<string, string>();
+  for (let from = 0; from < 10_000; from += PAGE) {
+    const { data, error } = await supabaseAdmin
+      .from('comprobantes')
+      .select('contact_id, created_at')
+      .eq('tenant_id', tid)
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) return { error: error.message };
+    for (const r of data ?? []) {
+      if (!lastComp.has(r.contact_id)) lastComp.set(r.contact_id, r.created_at);
+    }
+    if (!data || data.length < PAGE) break;
+  }
+
+  // Clientes que recargaron alguna vez pero no en los últimos N días, los que
+  // dejaron de recargar más recientemente primero.
+  const stale = Array.from(lastComp.entries())
+    .filter(([, ts]) => ts < cutoff)
+    .sort((a, b) => (a[1] < b[1] ? 1 : -1))
+    .slice(0, 20);
+  if (stale.length === 0) return { dias: days, clientes: [] };
+
+  const { data: contacts, error } = await supabaseAdmin
+    .from('contacts')
+    .select('id, name, phone, status')
+    .eq('tenant_id', tid)
+    .in('id', stale.map(([id]) => id));
+  if (error) return { error: error.message };
+  const byId = new Map((contacts ?? []).map((c: any) => [c.id, c]));
+
+  return {
+    dias: days,
+    criterio: 'contactos con al menos un comprobante histórico y ninguno en el período',
+    clientes: stale.map(([id, ts]) => {
+      const c = byId.get(id) as any;
+      return {
+        nombre: c?.name ?? null,
+        telefono: c?.phone ?? null,
+        clasificacion: c?.status ?? null,
+        ultimo_comprobante: ts,
+      };
+    }),
+  };
+}
+
+async function getUnverifiedAlerts(tid: string) {
+  const cutoff = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  const [countRes, oldestRes] = await Promise.all([
+    supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).eq('estado', 'pendiente').lt('created_at', cutoff),
+    supabaseAdmin.from('comprobantes').select('id, contact_id, monto, created_at')
+      .eq('tenant_id', tid).eq('estado', 'pendiente').lt('created_at', cutoff)
+      .order('created_at', { ascending: true }).limit(5),
+  ]);
+  if (countRes.error) return { error: countRes.error.message };
+  if (oldestRes.error) return { error: oldestRes.error.message };
+
+  const oldest = oldestRes.data ?? [];
+  const byId = new Map<string, any>();
+  if (oldest.length > 0) {
+    const ids = Array.from(new Set(oldest.map((c: any) => c.contact_id)));
+    const { data: contacts } = await supabaseAdmin
+      .from('contacts')
+      .select('id, name, phone')
+      .eq('tenant_id', tid)
+      .in('id', ids);
+    for (const c of contacts ?? []) byId.set(c.id, c);
+  }
+
+  const now = Date.now();
+  return {
+    umbral_horas: 2,
+    total_demorados: countRes.count ?? 0,
+    mas_antiguos: oldest.map((c: any) => {
+      const ct = byId.get(c.contact_id);
+      return {
+        contacto: ct?.name ?? null,
+        telefono: ct?.phone ?? null,
+        monto: Number(c.monto ?? 0),
+        horas_esperando: Math.round(((now - new Date(c.created_at).getTime()) / 3600000) * 10) / 10,
+      };
+    }),
+    moneda: 'ARS',
+  };
+}
+
 async function runTool(name: string, input: any, tid: string, isStaff: boolean): Promise<unknown> {
   // Defensa en profundidad: aunque a un operador nunca se le declaran las
   // herramientas de staff, si llegara a invocarse una, se rechaza acá con el
@@ -420,12 +743,22 @@ async function runTool(name: string, input: any, tid: string, isStaff: boolean):
       return listTopClients(tid, clampLimit(input?.limit));
     case 'search_contacts':
       return searchContacts(tid, input?.query, input?.status, clampLimit(input?.limit));
+    case 'get_pending_comprobantes':
+      return getPendingComprobantes(tid);
+    case 'get_client_history':
+      return getClientHistory(tid, input);
+    case 'get_conversation_summary':
+      return getConversationSummary(tid);
     case 'comprobantes_stats':
       return comprobantesStats(tid, input);
     case 'count_activity':
       return countActivity(tid, input);
     case 'list_team':
       return listTeam(tid);
+    case 'get_inactive_clients':
+      return getInactiveClients(tid, input?.days);
+    case 'get_unverified_alerts':
+      return getUnverifiedAlerts(tid);
     default:
       return { error: `Herramienta desconocida: ${name}` };
   }
@@ -456,7 +789,7 @@ export async function POST(request: Request) {
   // Solo admin y agentes acceden a las herramientas de actividad del equipo.
   // A los operadores ni se les declaran (y runTool las rechaza igual).
   const isStaff = session.role === 'admin' || session.role === 'agent';
-  const tools = isStaff ? [...TOOLS, ...STAFF_TOOLS] : TOOLS;
+  const tools = isStaff ? [...TOOLS, ...OPS_TOOLS, ...STAFF_TOOLS] : [...TOOLS, ...OPS_TOOLS];
   const system = SYSTEM_PROMPT + (isStaff ? STAFF_PROMPT_EXTRA : OPERATOR_PROMPT_EXTRA);
 
   const client = new Anthropic();
