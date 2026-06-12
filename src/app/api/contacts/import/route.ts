@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   const tenantId = session.tenant_id;
 
-  const { contacts }: { contacts: ContactInput[] } = await req.json();
+  const { contacts, mode }: { contacts: ContactInput[]; mode?: string } = await req.json();
 
   if (!Array.isArray(contacts) || contacts.length === 0) {
     return NextResponse.json({ error: 'Array de contactos vacío' }, { status: 400 });
@@ -27,7 +27,96 @@ export async function POST(req: NextRequest) {
     .filter((c) => c.phone.length >= 7);
 
   if (rows.length === 0) {
-    return NextResponse.json({ imported: 0, skipped: contacts.length });
+    return NextResponse.json({ imported: 0, updated: 0, skipped: contacts.length });
+  }
+
+  // ── Modo actualizar: completa campos vacíos de contactos existentes ─────────
+  // phone + tenant_id son la clave y nunca se tocan. Solo se escriben name,
+  // casino_username y provincia cuando el CSV los trae y el contacto los tiene
+  // vacíos. Los teléfonos que no existen se insertan igual que en modo insert.
+  if (mode === 'update') {
+    // Dedupe por teléfono (un CSV puede repetir filas; gana la primera).
+    const byPhone = new Map<string, (typeof rows)[number]>();
+    for (const c of rows) if (!byPhone.has(c.phone)) byPhone.set(c.phone, c);
+    const unique = Array.from(byPhone.values());
+
+    // Contactos existentes del tenant para esos teléfonos (lookup en chunks
+    // para no exceder el límite de URL de PostgREST con CSVs grandes).
+    const existing = new Map<string, { id: string; name: string | null; casino_username: string | null; provincia: string | null }>();
+    const phones = unique.map((c) => c.phone);
+    for (let i = 0; i < phones.length; i += 200) {
+      const { data, error } = await supabaseAdmin
+        .from('contacts')
+        .select('id, phone, name, casino_username, provincia')
+        .eq('tenant_id', tenantId)
+        .in('phone', phones.slice(i, i + 200));
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      for (const c of data ?? []) existing.set(c.phone, c);
+    }
+
+    // Nuevos → mismo insert que el modo insert.
+    const newRows = unique.filter((c) => !existing.has(c.phone));
+    let imported = 0;
+    if (newRows.length > 0) {
+      const { data, error } = await supabaseAdmin
+        .from('contacts')
+        .upsert(
+          newRows.map((c) => {
+            const provincia = inferProvinciaFromPhone(c.phone);
+            return {
+              phone: c.phone,
+              tenant_id: tenantId,
+              ...(c.casino_username ? { casino_username: c.casino_username } : {}),
+              ...(c.name ? { name: c.name } : {}),
+              ...(provincia ? { provincia } : {}),
+              status: 'nuevo',
+            };
+          }),
+          { onConflict: 'phone,tenant_id', ignoreDuplicates: true },
+        )
+        .select('id');
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      imported = data?.length ?? 0;
+    }
+
+    // Existentes → armar el patch solo con campos vacíos que el CSV completa.
+    let skipped = 0;
+    const pending: { id: string; patch: Record<string, string> }[] = [];
+    for (const c of unique) {
+      const ex = existing.get(c.phone);
+      if (!ex) continue;
+      const patch: Record<string, string> = {};
+      if (c.name && !ex.name) patch.name = c.name;
+      if (c.casino_username && !ex.casino_username) patch.casino_username = c.casino_username;
+      const provincia = inferProvinciaFromPhone(c.phone);
+      if (provincia && !ex.provincia) patch.provincia = provincia;
+      if (Object.keys(patch).length > 0) pending.push({ id: ex.id, patch });
+      else skipped++;
+    }
+
+    let updated = 0;
+    for (let i = 0; i < pending.length; i += 20) {
+      const chunk = pending.slice(i, i + 20);
+      const results = await Promise.all(
+        chunk.map(({ id, patch }) =>
+          supabaseAdmin.from('contacts').update(patch).eq('id', id).eq('tenant_id', tenantId),
+        ),
+      );
+      for (const r of results) {
+        if (r.error) return NextResponse.json({ error: r.error.message }, { status: 500 });
+      }
+      updated += chunk.length;
+    }
+
+    await logActivity({
+      session,
+      action:     ACTIVITY.CONTACT_IMPORTED,
+      objectType: 'contact',
+      objectId:   null,
+      details:    { mode: 'update', imported, updated, skipped, total: unique.length },
+    });
+
+    return NextResponse.json({ imported, updated, skipped });
   }
 
   // upsert with ignoreDuplicates returns only the rows actually inserted.

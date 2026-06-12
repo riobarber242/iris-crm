@@ -19,7 +19,8 @@ const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
   bloqueado:      { bg: '#FF4444', fg: '#fff' },
 };
 
-type ImportResult = { imported: number; skipped: number };
+type ImportMode = 'insert' | 'update';
+type ImportResult = { imported: number; skipped: number; updated?: number; mode: ImportMode };
 
 function parseCSV(text: string): { phone: string; casino_username: string; name: string }[] {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(Boolean);
@@ -51,6 +52,7 @@ export default function ContactsClient() {
   const [loading,      setLoading]      = useState(true);
   const [query,        setQuery]        = useState('');
   const [importing,    setImporting]    = useState(false);
+  const [importMode,   setImportMode]   = useState<ImportMode>('insert');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -86,11 +88,11 @@ export default function ContactsClient() {
       const res = await fetch('/api/contacts/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts }),
+        body: JSON.stringify({ contacts, mode: importMode }),
       });
       if (res.ok) {
         const result = await res.json();
-        setImportResult(result);
+        setImportResult({ ...result, mode: importMode });
         fetchContacts();
       }
     } catch {
@@ -128,6 +130,31 @@ export default function ContactsClient() {
           }}
         />
         <input ref={csvInputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+
+        {/* Modo de import: insertar nuevos vs completar datos de existentes */}
+        <div style={{ display: 'flex', background: '#F5F5F5', borderRadius: '12px', padding: '3px', flexShrink: 0 }}>
+          {([
+            { value: 'insert', label: 'Insertar nuevos' },
+            { value: 'update', label: 'Actualizar existentes' },
+          ] as { value: ImportMode; label: string }[]).map((m) => (
+            <button
+              key={m.value}
+              onClick={() => setImportMode(m.value)}
+              title={m.value === 'insert'
+                ? 'Solo agrega teléfonos que no existen; los repetidos se saltean.'
+                : 'Completa name, casino_username y provincia vacíos de contactos existentes; los teléfonos nuevos se insertan igual.'}
+              style={{
+                background: importMode === m.value ? '#1a1a1a' : 'transparent',
+                color: importMode === m.value ? '#C8FF00' : '#888',
+                fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '10px',
+                padding: '9px 14px', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
         <button
           onClick={() => csvInputRef.current?.click()}
           disabled={importing}
@@ -150,30 +177,44 @@ export default function ContactsClient() {
       </div>
 
       {/* Import result banner */}
-      {importResult && (
-        <div style={{
-          background: importResult.imported > 0 ? '#f0fff4' : '#f5f5f5',
-          border: `1px solid ${importResult.imported > 0 ? '#86efac' : '#e0e0e0'}`,
-          borderRadius: '12px',
-          padding: '12px 18px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-        }}>
-          <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#1a1a1a' }}>
-            {importResult.imported > 0
-              ? `✅ ${importResult.imported} contacto${importResult.imported !== 1 ? 's' : ''} importado${importResult.imported !== 1 ? 's' : ''}`
-              : '— Sin contactos nuevos'}
-            {importResult.skipped > 0 && (
-              <span style={{ fontWeight: 400, color: '#888', marginLeft: '8px' }}>
-                · {importResult.skipped} ya existían
-              </span>
-            )}
-          </p>
-          <button onClick={() => setImportResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '18px', lineHeight: 1, padding: '2px' }}>×</button>
-        </div>
-      )}
+      {importResult && (() => {
+        const hasChanges = importResult.imported > 0 || (importResult.updated ?? 0) > 0;
+        return (
+          <div style={{
+            background: hasChanges ? '#f0fff4' : '#f5f5f5',
+            border: `1px solid ${hasChanges ? '#86efac' : '#e0e0e0'}`,
+            borderRadius: '12px',
+            padding: '12px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+          }}>
+            <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#1a1a1a' }}>
+              {importResult.mode === 'update' ? (
+                <>
+                  {hasChanges ? '✅ ' : '— '}
+                  {importResult.imported} insertado{importResult.imported !== 1 ? 's' : ''},{' '}
+                  {importResult.updated ?? 0} actualizado{(importResult.updated ?? 0) !== 1 ? 's' : ''},{' '}
+                  {importResult.skipped} sin cambios
+                </>
+              ) : (
+                <>
+                  {importResult.imported > 0
+                    ? `✅ ${importResult.imported} contacto${importResult.imported !== 1 ? 's' : ''} importado${importResult.imported !== 1 ? 's' : ''}`
+                    : '— Sin contactos nuevos'}
+                  {importResult.skipped > 0 && (
+                    <span style={{ fontWeight: 400, color: '#888', marginLeft: '8px' }}>
+                      · {importResult.skipped} ya existían
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+            <button onClick={() => setImportResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '18px', lineHeight: 1, padding: '2px' }}>×</button>
+          </div>
+        );
+      })()}
 
       {loading && (
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando contactos...</p>
