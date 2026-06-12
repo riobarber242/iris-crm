@@ -3,10 +3,12 @@ export const dynamic = 'force-dynamic';
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
 import BotConfigEditor from '@/components/BotConfigEditor';
+import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
 
 // Panel self-service del agente para editar el system prompt de su bot,
 // sin pasar por el admin. El acceso (admin + agent, sin operator) lo controla
-// el middleware vía /configuracion en STAFF_PREFIXES.
+// el middleware vía /configuracion en STAFF_PREFIXES. La sección de números
+// de WhatsApp se auto-oculta para no-admin (y su API exige rol admin).
 export default function ConfiguracionPage() {
   return (
     <AdminShell>
@@ -17,6 +19,7 @@ export default function ConfiguracionPage() {
         >
           <BotConfigEditor />
         </SectionCard>
+        <WhatsAppNumbersManager />
       </div>
     </AdminShell>
   );
