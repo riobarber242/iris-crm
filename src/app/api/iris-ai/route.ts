@@ -29,9 +29,9 @@ Además de tus herramientas actuales, podés identificar clientes inactivos con 
 // respondía el total del negocio).
 const OPERATOR_PROMPT_EXTRA = `
 
-IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre ninguna otra persona: comprobantes verificados/rechazados por alguien, ticket promedio por persona, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.
+IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual DE MIEMBROS DEL EQUIPO (operadores, agentes o administradores) NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre otro miembro del equipo: comprobantes verificados/rechazados por un operador, ticket promedio por operador, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.
 
-Las herramientas de comprobantes pendientes (get_pending_comprobantes), historial de clientes (get_client_history) y estado de conversaciones (get_conversation_summary) SÍ están disponibles para este usuario: usalas con normalidad.`;
+Esa restricción aplica SOLO al equipo, NUNCA a los clientes. Este usuario SÍ PUEDE consultar todo lo relacionado con clientes y con la operación diaria, y tenés herramientas para eso: comprobantes pendientes de verificación (get_pending_comprobantes), historial completo de un cliente por nombre o teléfono (get_client_history) y estado de las conversaciones activas (get_conversation_summary). Ante "historial de X", "qué recargó X", "mostrame al cliente X" o "dame el historial de [nombre o teléfono]", X es un CLIENTE: usá get_client_history sin dudar — eso NO es una consulta de actividad del equipo y negarla es un error.`;
 
 type Tool = Anthropic.Tool;
 
@@ -82,7 +82,7 @@ const OPS_TOOLS: Tool[] = [
   {
     name: 'get_client_history',
     description:
-      'Historial completo de un cliente buscado por teléfono o nombre: datos del contacto (nombre, teléfono, clasificación), total de comprobantes y monto verificado, últimos 10 comprobantes y últimos 5 mensajes de su conversación. Usala para "historial de X", "qué recargó X", "mostrame al cliente X". Mostrá SIEMPRE las secciones que tengan datos: si hay mensajes pero no comprobantes (o al revés), mostrá lo que haya — nunca digas que el historial "no está disponible" si alguna sección tiene datos. Solo si el resultado trae el campo "nota", transmitila tal cual.',
+      'Historial completo de un CLIENTE (contacto del negocio, no un miembro del equipo) buscado por teléfono o nombre: datos del contacto (nombre, teléfono, clasificación), total de comprobantes y monto verificado, últimos 10 comprobantes y últimos 5 mensajes de su conversación. Disponible para TODOS los roles, incluido operador. Usala ante frases como: "historial de X", "qué recargó X", "mostrame al cliente X", "dame el historial de [nombre o teléfono]", "buscá el número [teléfono]". Mostrá SIEMPRE las secciones que tengan datos: si hay mensajes pero no comprobantes (o al revés), mostrá lo que haya — nunca digas que el historial "no está disponible" si alguna sección tiene datos. Solo si el resultado trae el campo "nota", transmitila tal cual.',
     input_schema: {
       type: 'object',
       properties: {
