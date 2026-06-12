@@ -63,8 +63,12 @@ export default function CampanasClient() {
   const [countLoading,   setCountLoading]   = useState(false);
   const [creating,       setCreating]       = useState(false);
   const [error,          setError]          = useState('');
-  const [historyOpen,    setHistoryOpen]    = useState(false);
+  // Abierto por defecto: colapsado pasaba desapercibido y parecía que no existía.
+  const [historyOpen,    setHistoryOpen]    = useState(true);
   const [historyRange,   setHistoryRange]   = useState('1m');
+
+  // Lista principal: solo campañas activas. Las completadas viven en el historial.
+  const activeCampaigns = campaigns.filter((c) => c.status !== 'completada');
 
   // Form state
   const [name,             setName]             = useState('');
@@ -356,12 +360,12 @@ export default function CampanasClient() {
         </p>
       </div>
 
-      {/* Lista de campañas */}
-      {campaigns.length === 0 && !showForm && (
-        <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: '14px' }}>No hay campañas. Creá la primera con el botón de arriba.</div>
+      {/* Lista de campañas activas (las completadas están en el historial) */}
+      {activeCampaigns.length === 0 && !showForm && (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: '#999', fontSize: '14px' }}>No hay campañas activas. Creá una con el botón de arriba.</div>
       )}
 
-      {campaigns.map((campaign) => {
+      {activeCampaigns.map((campaign) => {
         const estilo    = STATUS_STYLE[campaign.status] ?? STATUS_STYLE.borrador;
         const isSending = sending === campaign.id;
         const result    = sendResult?.campaignId === campaign.id ? sendResult : null;
