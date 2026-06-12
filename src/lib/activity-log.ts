@@ -19,6 +19,7 @@ export const ACTIVITY = {
   CONTACT_EDITED:         'contact_edited',
   CONTACT_IMPORTED:       'contact_imported',
   CONFIG_CHANGED:         'config_changed',         // details.key: system_prompt | bot_enabled | offline_mode | …
+  BOT_CONFIG_UPDATED:     'bot_config_updated',     // via Iris AI; details guarda los valores ANTERIORES (respaldo)
 } as const;
 
 export type ActivityAction = typeof ACTIVITY[keyof typeof ACTIVITY];

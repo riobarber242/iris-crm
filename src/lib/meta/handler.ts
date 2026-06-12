@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText, resolveCreds } from './client';
+import { getOfflineMsg } from '../bot-config';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
@@ -97,7 +98,8 @@ const BOT_ENABLED_KEY     = 'bot_enabled';
 const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual 🤖 Para orientarte mejor necesito hacerte un par de preguntas. ¿Es tu primera vez con nosotros o ya tenés cuenta?';
 const HANDOFF_MSG     = '¡Listo! Un operador humano te va a atender en breve 👋';
 const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
-const OFFLINE_MSG         = 'Hola! En este momento no estamos operando. Volvemos pronto 🙏';
+// El mensaje de offline ahora es configurable por tenant (settings key
+// 'offline_msg', editable vía Iris AI) con DEFAULT_OFFLINE_MSG como fallback.
 const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te respondemos cuando volvamos 🙏';
 
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
@@ -517,7 +519,7 @@ async function processMessage(
   const offline = await getOfflineMode(tenantId);
   if (offline) {
     console.log('[bot] OFFLINE — aviso directo a todos');
-    if (!contact.blocked) await replyAndSave(OFFLINE_MSG);
+    if (!contact.blocked) await replyAndSave(await getOfflineMsg(tenantId));
     return;
   }
 

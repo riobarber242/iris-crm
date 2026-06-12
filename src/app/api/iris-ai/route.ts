@@ -3,6 +3,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
+import { irisSystemPrompt } from '@/lib/system-prompt';
+import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import {
+  getTenantSetting, setTenantSetting, getOfflineMsg,
+  validateBotText, SYSTEM_PROMPT_MAX_LEN,
+} from '@/lib/bot-config';
 
 // Modelo de Anthropic. Se usa el alias vigente de Sonnet (claude-sonnet-4-6);
 // el ID con fecha claude-sonnet-4-20250514 está deprecado y se retira el
@@ -21,7 +27,9 @@ const STAFF_PROMPT_EXTRA = `
 
 También tenés herramientas de actividad y desempeño del equipo: comprobantes_stats (cantidad, monto total, ticket promedio, mín/máx de comprobantes; filtrable por quién lo resolvió, estado, período y rango de monto), count_activity (conteo de acciones del registro de actividad: mensajes respondidos, conversaciones atendidas, inicios de sesión, cierres de sesión —con motivo manual o inactividad—, contactos editados/importados, cambios de configuración) y list_team (miembros del equipo). Cuando te pregunten por una persona ("jessica", "el operador X"), si el filtro falla o el nombre es ambiguo usá list_team para identificarla. Para "cuántos comprobantes verificó X" usá comprobantes_stats con estado=verificado y ese operador; para "ticket promedio de X" lo mismo y mirá ticket_promedio.
 
-Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.`;
+Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.
+
+También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje natural, con un flujo de DOS PASOS OBLIGATORIOS. Paso 1: cuando el usuario pida cambiar el comportamiento del bot ("quiero un bot más amable", "que nunca diga X", "cambiá el mensaje de offline"), usá propose_bot_config con su pedido — devuelve un BORRADOR de system prompt y de mensaje de offline. Mostrale al usuario AMBOS textos COMPLETOS y preguntale si los aplica tal cual o quiere ajustar algo. Paso 2: SOLO cuando el usuario confirme explícitamente en la conversación ("sí, aplicalo", "dale, confirmo"), usá apply_bot_config con confirmado=true y los textos confirmados. NUNCA apliques sin esa confirmación explícita; si pide ajustes, volvé a proponer con propose_bot_config. apply_bot_config valida el límite de 4000 caracteres y rechaza textos con la palabra "casino" o promesas de premios garantizados; el valor anterior queda respaldado en el registro de actividad por si hay que volver atrás.`;
 
 // Extensión del prompt para OPERADORES: las consultas de actividad individual
 // están vetadas para su rol, y NUNCA deben aproximarse con totales generales
@@ -164,6 +172,32 @@ const STAFF_TOOLS: Tool[] = [
     description:
       'Alertas de comprobantes sin verificar: comprobantes pendientes hace más de 2 horas. Devuelve la cantidad total y los 5 más antiguos con nombre del contacto, monto y horas de espera. Usala para "hay comprobantes demorados", "alertas de verificación pendiente".',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'propose_bot_config',
+    description:
+      'Genera un BORRADOR de configuración del bot de WhatsApp del negocio (system prompt + mensaje de offline) a partir de una descripción en lenguaje natural, usando el system prompt actual como referencia de estilo (voseo argentino, respuestas cortas, sin markdown, términos neutros como recarga/saldo — nunca "casino"). NO aplica nada: mostrale al usuario ambos textos completos y pedile confirmación explícita antes de usar apply_bot_config.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        descripcion: { type: 'string', description: 'Pedido del usuario en lenguaje natural sobre cómo debe comportarse el bot (tono, temas, qué decir y qué no, cuándo derivar a humano, etc.).' },
+      },
+      required: ['descripcion'],
+    },
+  },
+  {
+    name: 'apply_bot_config',
+    description:
+      'Aplica una configuración del bot YA CONFIRMADA explícitamente por el usuario en esta conversación: guarda el system prompt (y opcionalmente el mensaje de offline) del negocio, respaldando antes los valores anteriores en el registro de actividad. Usala SOLO después de que el usuario vio el borrador y confirmó. Valida máximo 4000 caracteres y rechaza la palabra "casino" y promesas de premios garantizados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        system_prompt: { type: 'string', description: 'El system prompt completo a aplicar (el borrador confirmado, con los ajustes que haya pedido el usuario).' },
+        offline_msg:   { type: 'string', description: 'Mensaje de offline a aplicar. Omitir para no cambiar el actual.' },
+        confirmado:    { type: 'boolean', description: 'true SOLO si el usuario confirmó explícitamente en esta conversación que quiere aplicar estos textos.' },
+      },
+      required: ['system_prompt', 'confirmado'],
+    },
   },
 ];
 
@@ -761,7 +795,129 @@ async function getUnverifiedAlerts(tid: string) {
   };
 }
 
-async function runTool(name: string, input: any, tid: string, isStaff: boolean): Promise<unknown> {
+// ── Configuración del bot vía Iris (proponer → confirmar → aplicar) ──────────
+
+// Genera el borrador con una llamada aparte al modelo: el system prompt actual
+// va como referencia de estilo/contenido. NO escribe nada en la base.
+async function proposeBotConfig(tid: string, input: any, client: Anthropic) {
+  const descripcion = String(input?.descripcion ?? '').trim();
+  if (!descripcion) return { error: 'Falta la descripción de cómo debe comportarse el bot.' };
+
+  const [actual, offlineActual] = await Promise.all([
+    getTenantSetting(tid, 'system_prompt'),
+    getOfflineMsg(tid),
+  ]);
+  const promptActual = actual ?? irisSystemPrompt;
+
+  const gen = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2000,
+    system:
+      'Sos redactora experta de system prompts para bots de WhatsApp de plataformas de recargas y juego online en Argentina. ' +
+      'Estilo OBLIGATORIO: voseo argentino, respuestas cortas y cálidas, SIN markdown (WhatsApp no lo renderiza), términos neutros ' +
+      '("recarga", "saldo", "fichas", "plataforma") — JAMÁS las palabras "casino" o "apuestas", y JAMÁS prometer premios o ganancias garantizadas. ' +
+      `El system_prompt debe tener MENOS de ${SYSTEM_PROMPT_MAX_LEN} caracteres. El offline_msg es UN solo mensaje corto (1-2 líneas) para cuando el negocio está cerrado. ` +
+      'Respondé ÚNICAMENTE con JSON válido, sin texto afuera, con esta forma exacta: {"system_prompt": "...", "offline_msg": "..."}',
+    messages: [{
+      role: 'user',
+      content:
+        `System prompt ACTUAL del bot (referencia de formato; conservá lo que el pedido no cambie):\n---\n${promptActual}\n---\n\n` +
+        `Mensaje de offline actual: "${offlineActual}"\n\nPedido del usuario: ${descripcion}`,
+    }],
+  });
+
+  const raw = gen.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text).join('').trim();
+
+  let parsed: any = null;
+  try {
+    const jsonText = raw.startsWith('{') ? raw : raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+    parsed = JSON.parse(jsonText);
+  } catch { /* parsed queda null */ }
+  if (!parsed?.system_prompt) {
+    return { error: 'No se pudo generar el borrador. Reintentá con propose_bot_config.' };
+  }
+
+  const systemPrompt = String(parsed.system_prompt).trim();
+  const offlineMsg = String(parsed.offline_msg ?? offlineActual).trim();
+
+  // Mismas validaciones que apply: si el borrador nace inválido, se regenera
+  // acá en vez de fallar recién al aplicar.
+  const invalid = validateBotText(`${systemPrompt}\n${offlineMsg}`);
+  if (invalid) return { error: `El borrador generado ${invalid}. Reintentá con propose_bot_config.` };
+  if (systemPrompt.length > SYSTEM_PROMPT_MAX_LEN) {
+    return { error: `El borrador supera el máximo de ${SYSTEM_PROMPT_MAX_LEN} caracteres. Reintentá pidiendo un prompt más corto.` };
+  }
+
+  return {
+    borrador: { system_prompt: systemPrompt, offline_msg: offlineMsg },
+    instrucciones: 'Mostrale al usuario AMBOS textos completos y preguntale si los aplica o quiere ajustar algo. NO uses apply_bot_config sin su confirmación explícita.',
+  };
+}
+
+// Aplica la configuración confirmada. Respaldo del valor anterior en
+// activity_log ANTES de pisar (action bot_config_updated) para poder volver.
+async function applyBotConfig(tid: string, input: any, session: any) {
+  if (input?.confirmado !== true) {
+    return { error: 'Falta la confirmación explícita del usuario. Mostrale el borrador y preguntale si lo aplica antes de volver a llamar.' };
+  }
+
+  const prompt = String(input?.system_prompt ?? '').trim();
+  const offline = String(input?.offline_msg ?? '').trim();
+  if (!prompt) return { error: 'El system prompt no puede estar vacío.' };
+  if (prompt.length > SYSTEM_PROMPT_MAX_LEN) {
+    return { error: `Rechazado: el system prompt supera el máximo de ${SYSTEM_PROMPT_MAX_LEN} caracteres (tiene ${prompt.length}).` };
+  }
+  const invalidPrompt = validateBotText(prompt);
+  if (invalidPrompt) return { error: `Rechazado: el system prompt ${invalidPrompt}.` };
+  if (offline) {
+    const invalidOffline = validateBotText(offline);
+    if (invalidOffline) return { error: `Rechazado: el mensaje de offline ${invalidOffline}.` };
+  }
+
+  const [promptAnterior, offlineAnterior] = await Promise.all([
+    getTenantSetting(tid, 'system_prompt'),
+    getTenantSetting(tid, 'offline_msg'),
+  ]);
+  await logActivity({
+    session,
+    action:     ACTIVITY.BOT_CONFIG_UPDATED,
+    objectType: 'config',
+    objectId:   null,
+    details: {
+      via: 'iris_ai',
+      // null = se usaba el default hardcodeado.
+      system_prompt_anterior: promptAnterior,
+      offline_msg_anterior:   offlineAnterior,
+    },
+  });
+
+  const e1 = await setTenantSetting(tid, 'system_prompt', prompt);
+  if (e1) return { error: `No se pudo guardar el system prompt: ${e1}` };
+  if (offline) {
+    const e2 = await setTenantSetting(tid, 'offline_msg', offline);
+    if (e2) return { error: `Se guardó el system prompt pero falló el mensaje de offline: ${e2}` };
+  }
+
+  return {
+    ok: true,
+    aplicado: {
+      system_prompt_caracteres: prompt.length,
+      offline_msg: offline || '(sin cambios)',
+    },
+    nota: 'Configuración aplicada. El valor anterior quedó respaldado en el registro de actividad (bot_config_updated).',
+  };
+}
+
+async function runTool(
+  name: string,
+  input: any,
+  tid: string,
+  isStaff: boolean,
+  session: any,
+  client: Anthropic,
+): Promise<unknown> {
   // Defensa en profundidad: aunque a un operador nunca se le declaran las
   // herramientas de staff, si llegara a invocarse una, se rechaza acá con el
   // mismo mensaje que debe ver el usuario (el modelo lo transmite tal cual).
@@ -791,6 +947,10 @@ async function runTool(name: string, input: any, tid: string, isStaff: boolean):
       return getInactiveClients(tid, input?.days);
     case 'get_unverified_alerts':
       return getUnverifiedAlerts(tid);
+    case 'propose_bot_config':
+      return proposeBotConfig(tid, input, client);
+    case 'apply_bot_config':
+      return applyBotConfig(tid, input, session);
     default:
       return { error: `Herramienta desconocida: ${name}` };
   }
@@ -830,9 +990,11 @@ export async function POST(request: Request) {
   try {
     let reply = '';
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+      // 2048: las respuestas con borradores de configuración del bot (prompt
+      // completo + offline) no entran en 1024 tokens.
       const resp = await client.messages.create({
         model: MODEL,
-        max_tokens: 1024,
+        max_tokens: 2048,
         system,
         tools,
         messages,
@@ -843,7 +1005,7 @@ export async function POST(request: Request) {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const block of resp.content) {
           if (block.type === 'tool_use') {
-            const out = await runTool(block.name, block.input, tid, isStaff);
+            const out = await runTool(block.name, block.input, tid, isStaff, session, client);
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
