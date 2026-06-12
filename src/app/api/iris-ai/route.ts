@@ -9,6 +9,8 @@ import {
   getTenantSetting, setTenantSetting, getOfflineMsg,
   validateBotText, SYSTEM_PROMPT_MAX_LEN,
 } from '@/lib/bot-config';
+import { HELP_SECTIONS, helpSectionsForRole } from '@/lib/iris-help';
+import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
 
 // Modelo de Anthropic. Se usa el alias vigente de Sonnet (claude-sonnet-4-6);
 // el ID con fecha claude-sonnet-4-20250514 está deprecado y se retira el
@@ -16,11 +18,13 @@ import {
 const MODEL = 'claude-sonnet-4-6';
 const MAX_TOOL_TURNS = 5;
 
-const SYSTEM_PROMPT = `Sos Iris AI, la asistente inteligente del CRM IRIS. Solo respondés preguntas sobre la plataforma IRIS del agente (conversaciones, contactos, comprobantes, métricas del dashboard, campañas) y ayudás a personalizar el dashboard: mostrar/ocultar y reordenar widgets, y entender qué mide cada uno. Para personalizar el dashboard, indicá al usuario que abra el botón ⚙ "Personalizar" arriba del widget "Sin responder", donde puede arrastrar para reordenar, renombrar y ocultar/mostrar widgets. No respondés sobre temas externos, no explicás qué es un CRM ni cómo funciona WhatsApp. Si te preguntan algo fuera de contexto, decís: 'Solo puedo ayudarte con información de tu plataforma Iris.' Siempre respondés en español, de forma concisa y útil.
+const SYSTEM_PROMPT = `Sos Iris AI, la asistente inteligente del CRM IRIS: respondés con datos reales de la plataforma, sos la guía oficial de uso del panel y asesorás al usuario en su trabajo diario. Solo hablás de la plataforma IRIS y del trabajo del usuario en ella. No respondés sobre temas externos, no explicás qué es un CRM ni cómo funciona WhatsApp por dentro. Si te preguntan algo fuera de contexto, decís: 'Solo puedo ayudarte con información de tu plataforma Iris.' Siempre respondés en español argentino, de forma concisa y útil.
 
 Tenés herramientas para consultar datos reales de la plataforma. Cuando la pregunta dependa de datos (cantidades, métricas, clientes, comprobantes), USÁ las herramientas antes de responder en vez de inventar números. Todas las consultas ya están limitadas automáticamente a los datos de este usuario. Si ninguna herramienta puede responder la pregunta, decí "No puedo responder eso todavía" — NUNCA inventes un número.
 
-Podés consultar los comprobantes pendientes de verificación (get_pending_comprobantes), ver el historial completo de un cliente por nombre o teléfono (get_client_history) y revisar el estado de las conversaciones activas: chats con actividad hoy, sin responder y las pendientes más recientes (get_conversation_summary).`;
+Podés consultar los comprobantes pendientes de verificación (get_pending_comprobantes), ver el historial completo de un cliente por nombre o teléfono (get_client_history) y revisar el estado de las conversaciones activas: chats con actividad hoy, sin responder y las pendientes más recientes (get_conversation_summary).
+
+GUÍA DE USO DEL PANEL: cuando el usuario pregunte cómo se hace algo ("cómo verifico un comprobante", "cómo importo contactos", "cómo creo una campaña") usá get_help con la sección correspondiente y explicá los pasos tal cual los devuelve la guía, en orden y con los nombres reales de los botones. Sé proactiva: si notás que el usuario está trabado o no conoce una función que resolvería su problema, ofrecele la explicación sin que la pida. IMPORTANTE: solo podés explicar las secciones listadas en "SECCIONES DEL PANEL DE ESTE USUARIO" más abajo — JAMÁS expliques ni menciones que existen otras secciones fuera de esa lista.`;
 
 // Extensión del prompt solo para admin/agente: herramientas de actividad del equipo.
 const STAFF_PROMPT_EXTRA = `
@@ -28,6 +32,8 @@ const STAFF_PROMPT_EXTRA = `
 También tenés herramientas de actividad y desempeño del equipo: comprobantes_stats (cantidad, monto total, ticket promedio, mín/máx de comprobantes; filtrable por quién lo resolvió, estado, período y rango de monto), count_activity (conteo de acciones del registro de actividad: mensajes respondidos, conversaciones atendidas, inicios de sesión, cierres de sesión —con motivo manual o inactividad—, contactos editados/importados, cambios de configuración) y list_team (miembros del equipo). Cuando te pregunten por una persona ("jessica", "el operador X"), si el filtro falla o el nombre es ambiguo usá list_team para identificarla. Para "cuántos comprobantes verificó X" usá comprobantes_stats con estado=verificado y ese operador; para "ticket promedio de X" lo mismo y mirá ticket_promedio.
 
 Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.
+
+Sos también ASESORA DE ESTRATEGIA del negocio: cuando el usuario pregunte qué le conviene hacer ("qué campaña lanzo", "cómo reactivo clientes", "cómo viene el negocio"), cruzá datos reales con tus herramientas y respondé con una recomendación concreta y accionable. Ejemplos del método: get_inactive_clients + get_available_templates → "tenés N clientes sin recargar hace 30 días; podrías lanzar la plantilla reactivacion_15 con filtro Inactivo 30+ días"; get_campaign_stats → qué campañas pasadas funcionaron y cuáles repetir; list_top_clients → a quiénes cuidar con beneficios; get_metrics → la foto general. Siempre con números reales de las herramientas, nunca estimaciones inventadas, y cerrando con el paso concreto en el panel para ejecutarlo.
 
 También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje natural, con un flujo de DOS PASOS OBLIGATORIOS. Paso 1: cuando el usuario pida cambiar el comportamiento del bot ("quiero un bot más amable", "que nunca diga X", "cambiá el mensaje de offline"), usá propose_bot_config con su pedido — devuelve un BORRADOR de system prompt y de mensaje de offline. Mostrale al usuario AMBOS textos COMPLETOS y preguntale si los aplica tal cual o quiere ajustar algo. Paso 2: SOLO cuando el usuario confirme explícitamente en la conversación ("sí, aplicalo", "dale, confirmo"), usá apply_bot_config con confirmado=true y los textos confirmados. NUNCA apliques sin esa confirmación explícita; si pide ajustes, volvé a proponer con propose_bot_config. apply_bot_config valida el límite de 4000 caracteres del system prompt y, solo en el mensaje de offline (el cliente lo ve), rechaza la palabra "casino" y promesas de premios garantizados — el system prompt puede mencionarlas para prohibirlas; el valor anterior queda respaldado en el registro de actividad por si hay que volver atrás.`;
 
@@ -37,30 +43,29 @@ También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje n
 // respondía el total del negocio).
 const OPERATOR_PROMPT_EXTRA = `
 
-IMPORTANTE: este usuario tiene rol OPERADOR. Las consultas sobre actividad o desempeño individual DE MIEMBROS DEL EQUIPO (operadores, agentes o administradores) NO están disponibles para su rol — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre otro miembro del equipo: comprobantes verificados/rechazados por un operador, ticket promedio por operador, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses get_metrics ni ninguna otra herramienta para aproximar la respuesta: los totales generales del negocio NO son la actividad de una persona y responderlos en su lugar es un error.
+IMPORTANTE: este usuario tiene rol OPERADOR. NO están disponibles para su rol: 1) las consultas sobre actividad o desempeño individual DE MIEMBROS DEL EQUIPO (operadores, agentes o administradores) — ni sobre sí mismo ("yo", "mis comprobantes", "cuánto verifiqué") ni sobre otro miembro: comprobantes verificados/rechazados por alguien, ticket promedio por operador, mensajes respondidos, conversaciones atendidas, inicios o cierres de sesión, o quiénes integran el equipo; 2) las MÉTRICAS GLOBALES DEL NEGOCIO: totales de contactos, montos verificados, facturación, métricas del dashboard, estadísticas de campañas. Ante cualquiera de esas preguntas respondé exactamente: "Esa consulta está disponible solo para agentes y administradores." NO uses ninguna otra herramienta para aproximar la respuesta: responder con datos parciales en su lugar es un error.
 
-Esa restricción aplica SOLO al equipo, NUNCA a los clientes. Este usuario SÍ PUEDE consultar todo lo relacionado con clientes y con la operación diaria, y tenés herramientas para eso: comprobantes pendientes de verificación (get_pending_comprobantes), historial completo de un cliente por nombre o teléfono (get_client_history) y estado de las conversaciones activas (get_conversation_summary). Ante "historial de X", "qué recargó X", "mostrame al cliente X" o "dame el historial de [nombre o teléfono]", X es un CLIENTE: usá get_client_history sin dudar — eso NO es una consulta de actividad del equipo y negarla es un error.`;
+Esa restricción aplica SOLO al equipo, NUNCA a los clientes. Este usuario SÍ PUEDE consultar todo lo relacionado con clientes y con la operación diaria, y tenés herramientas para eso: comprobantes pendientes de verificación (get_pending_comprobantes), historial completo de un cliente por nombre o teléfono (get_client_history) y estado de las conversaciones activas (get_conversation_summary). Ante "historial de X", "qué recargó X", "mostrame al cliente X" o "dame el historial de [nombre o teléfono]", X es un CLIENTE: usá get_client_history sin dudar — eso NO es una consulta de actividad del equipo y negarla es un error.
+
+Además, ayudalo activamente en su trabajo diario (siempre dentro de su alcance): si te pide ayuda para responderle a un cliente, proponele un borrador de mensaje con tono cordial, voseo argentino, corto y sin prometer nada que no corresponda (podés mirar el historial del cliente con get_client_history para dar contexto). Si duda con un comprobante (imagen ilegible, monto que no coincide, posible duplicado), recordale el criterio: no verificar sin monto claro, pedir una captura legible por el chat y, ante la duda, consultar con su agente o admin. Si pregunta qué atender primero, usá get_conversation_summary y get_pending_comprobantes: primero los pendientes 🔴 rojos (cliente esperando humano), después los 🟠 naranjas, y los comprobantes pendientes más viejos.`;
 
 type Tool = Anthropic.Tool;
 
-const TOOLS: Tool[] = [
-  {
-    name: 'get_metrics',
-    description:
-      'Métricas y conteos generales del CRM: total de contactos y su distribución por estado (nuevo, cliente_activo, inactivo, bloqueado), contactos nuevos hoy/últimos 7 días/este mes, total de mensajes y mensajes de hoy, comprobantes por estado (pendiente, verificado, rechazado), y monto verificado total y del mes. Usala para cualquier pregunta de "cuántos…" o de métricas del dashboard.',
-    input_schema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'list_top_clients',
-    description:
-      'Lista los mejores clientes ordenados por monto total de recargas (comprobantes) verificadas. Usala para preguntas sobre top clientes, quién recargó más, ranking de clientes.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        limit: { type: 'integer', description: 'Cantidad de clientes a devolver (1-25). Default 10.' },
-      },
+// Top Clientes se declara aparte: staff siempre; operador SOLO si su agente le
+// habilitó el permiso "Top Clientes" (mismo flag que gatea la página /leads).
+const TOP_CLIENTS_TOOL: Tool = {
+  name: 'list_top_clients',
+  description:
+    'Lista los mejores clientes ordenados por monto total de recargas (comprobantes) verificadas. Usala para preguntas sobre top clientes, quién recargó más, ranking de clientes.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      limit: { type: 'integer', description: 'Cantidad de clientes a devolver (1-25). Default 10.' },
     },
   },
+};
+
+const TOOLS: Tool[] = [
   {
     name: 'search_contacts',
     description:
@@ -72,6 +77,18 @@ const TOOLS: Tool[] = [
         status: { type: 'string', enum: ['nuevo', 'cliente_activo', 'inactivo', 'bloqueado'], description: 'Filtrar por estado del contacto.' },
         limit: { type: 'integer', description: 'Cantidad máxima a devolver (1-25). Default 10.' },
       },
+    },
+  },
+  {
+    name: 'get_help',
+    description:
+      'Guía oficial de uso del panel IRIS: devuelve las instrucciones paso a paso de una sección (botones reales y flujo verdadero de la UI). Usala SIEMPRE que el usuario pregunte cómo se hace algo en el panel ("cómo verifico un comprobante", "cómo importo contactos", "cómo creo una campaña"). Solo podés pedir las secciones listadas en tu prompt para este usuario.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        section: { type: 'string', description: 'Clave de la sección (ver "SECCIONES DEL PANEL DE ESTE USUARIO" en tu prompt). Ej: comprobantes, conversaciones, campanas.' },
+      },
+      required: ['section'],
     },
   },
 ];
@@ -120,6 +137,12 @@ const ACTIVITY_ACTIONS = [
 const PERIODOS = ['hoy', 'semana', 'mes', 'mes_anterior', 'historico'] as const;
 
 const STAFF_TOOLS: Tool[] = [
+  {
+    name: 'get_metrics',
+    description:
+      'Métricas y conteos generales del CRM: total de contactos y su distribución por estado (nuevo, cliente_activo, inactivo, bloqueado), contactos nuevos hoy/últimos 7 días/este mes, total de mensajes y mensajes de hoy, comprobantes por estado (pendiente, verificado, rechazado), y monto verificado total y del mes. Usala para cualquier pregunta de "cuántos…" o de métricas del dashboard.',
+    input_schema: { type: 'object', properties: {} },
+  },
   {
     name: 'comprobantes_stats',
     description:
@@ -172,6 +195,23 @@ const STAFF_TOOLS: Tool[] = [
     description:
       'Alertas de comprobantes sin verificar: comprobantes pendientes hace más de 2 horas. Devuelve la cantidad total y los 5 más antiguos con nombre del contacto, monto y horas de espera. Usala para "hay comprobantes demorados", "alertas de verificación pendiente".',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_available_templates',
+    description:
+      'Lista las plantillas de WhatsApp (Meta) disponibles para envío: nombre, idioma, categoría, propósito y texto. Usala para recomendar qué plantilla usar en una campaña o para responder "qué plantillas tengo".',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_campaign_stats',
+    description:
+      'Resultados de las campañas del negocio: por cada una nombre, estado, tipo (texto libre o template), template usado, filtro de destinatarios, cantidad enviada y fecha; más totales generales. Usala para "cómo funcionaron las campañas", "cuántos mensajes mandamos", o como contexto antes de recomendar una campaña nueva.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', description: 'Cantidad de campañas recientes a listar (1-25). Default 10.' },
+      },
+    },
   },
   {
     name: 'propose_bot_config',
@@ -324,6 +364,26 @@ async function searchContacts(tid: string, query: string | undefined, status: st
 
   const { data } = await q;
   return { contactos: data ?? [] };
+}
+
+// Secciones de la guía visibles para esta sesión (rol + permisos de operador).
+function allowedHelpSections(session: any): string[] {
+  return helpSectionsForRole(String(session?.role ?? ''), {
+    top_clientes: !!session?.can_see_top_clients,
+    campanas: !!session?.can_see_campaigns,
+  });
+}
+
+// Validación por rol en el backend: aunque el modelo pida una sección ajena,
+// acá se rechaza sin filtrar su existencia (solo se listan las permitidas).
+function getHelp(sectionRaw: unknown, session: any) {
+  const section = String(sectionRaw ?? '').trim().toLowerCase();
+  const allowed = allowedHelpSections(session);
+  if (!allowed.includes(section) || !HELP_SECTIONS[section]) {
+    return { error: `Sección inválida. Las secciones disponibles para este usuario son: ${allowed.join(', ')}.` };
+  }
+  const s = HELP_SECTIONS[section];
+  return { seccion: section, titulo: s.titulo, guia: s.contenido };
 }
 
 const ROLE_LABEL: Record<string, string> = { user: 'cliente', assistant: 'bot', human: 'operador' };
@@ -795,6 +855,58 @@ async function getUnverifiedAlerts(tid: string) {
   };
 }
 
+// Propósito legible de cada plantilla conocida (para que Iris recomiende bien).
+const TEMPLATE_PURPOSE: Record<string, string> = {
+  reactivacion_inactivos:  'reactivar clientes inactivos ofreciendo 20% extra en la recarga',
+  reactivacion_15:         'reactivar clientes inactivos ofreciendo 15% extra en la recarga',
+  reactivacion_25:         'reactivar clientes inactivos ofreciendo 25% extra en la recarga',
+  reactivacion_30:         'reactivar clientes inactivos ofreciendo 30% extra (la oferta más fuerte)',
+  bienvenida_reactivacion: 'avisar que el negocio volvió a estar activo después de una pausa',
+};
+
+function getAvailableTemplates() {
+  return {
+    plantillas: TEMPLATES.map((t) => ({
+      nombre:    t.name,
+      idioma:    t.language,
+      categoria: t.category,
+      proposito: TEMPLATE_PURPOSE[t.name] ?? 'plantilla aprobada en Meta',
+      texto:     previewTemplate(t),
+    })),
+    nota: 'Todas resuelven {{1}} con el nombre del contacto. Para usarlas en una campaña: tipo "Template Meta" con el nombre exacto.',
+  };
+}
+
+async function getCampaignStats(tid: string, limit: number) {
+  const { data, error } = await supabaseAdmin
+    .from('campaigns')
+    .select('name, status, type, template_name, target_filter, sent_count, recipient_ids, created_at')
+    .eq('tenant_id', tid)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) return { error: error.message };
+
+  const campanas = (data ?? []).map((c: any) => ({
+    nombre:        c.name,
+    estado:        c.status,
+    tipo:          c.type === 'template_meta' ? 'template' : 'texto_libre',
+    template:      c.template_name ?? null,
+    filtro:        c.target_filter,
+    enviados:      c.recipient_ids?.length ?? c.sent_count ?? 0,
+    fecha:         c.created_at,
+  }));
+
+  const completadas = campanas.filter((c: any) => c.estado === 'completada');
+  return {
+    campanas,
+    totales: {
+      listadas:           campanas.length,
+      completadas:        completadas.length,
+      mensajes_enviados:  completadas.reduce((s: number, c: any) => s + c.enviados, 0),
+    },
+  };
+}
+
 // ── Configuración del bot vía Iris (proponer → confirmar → aplicar) ──────────
 
 // Genera el borrador con una llamada aparte al modelo: el system prompt actual
@@ -929,6 +1041,10 @@ async function runTool(
   if (STAFF_TOOL_NAMES.has(name) && !isStaff) {
     return { error: 'Esa consulta está disponible solo para agentes y administradores.' };
   }
+  // Top Clientes para operador: solo con el permiso habilitado por su agente.
+  if (name === 'list_top_clients' && !isStaff && !session?.can_see_top_clients) {
+    return { error: 'Esa consulta está disponible solo para agentes y administradores.' };
+  }
   switch (name) {
     case 'get_metrics':
       return getMetrics(tid);
@@ -942,6 +1058,8 @@ async function runTool(
       return getClientHistory(tid, input);
     case 'get_conversation_summary':
       return getConversationSummary(tid);
+    case 'get_help':
+      return getHelp(input?.section, session);
     case 'comprobantes_stats':
       return comprobantesStats(tid, input);
     case 'count_activity':
@@ -952,6 +1070,10 @@ async function runTool(
       return getInactiveClients(tid, input?.days);
     case 'get_unverified_alerts':
       return getUnverifiedAlerts(tid);
+    case 'get_available_templates':
+      return getAvailableTemplates();
+    case 'get_campaign_stats':
+      return getCampaignStats(tid, clampLimit(input?.limit));
     case 'propose_bot_config':
       return proposeBotConfig(tid, input, client);
     case 'apply_bot_config':
@@ -986,8 +1108,20 @@ export async function POST(request: Request) {
   // Solo admin y agentes acceden a las herramientas de actividad del equipo.
   // A los operadores ni se les declaran (y runTool las rechaza igual).
   const isStaff = session.role === 'admin' || session.role === 'agent';
-  const tools = isStaff ? [...TOOLS, ...OPS_TOOLS, ...STAFF_TOOLS] : [...TOOLS, ...OPS_TOOLS];
-  const system = SYSTEM_PROMPT + (isStaff ? STAFF_PROMPT_EXTRA : OPERATOR_PROMPT_EXTRA);
+  // Operador: herramientas operativas + Top Clientes SOLO con permiso. Nada de
+  // STAFF_TOOLS (métricas globales, actividad del equipo, asesoría, bot config).
+  const tools = isStaff
+    ? [...TOOLS, TOP_CLIENTS_TOOL, ...OPS_TOOLS, ...STAFF_TOOLS]
+    : [...TOOLS, ...OPS_TOOLS, ...(session.can_see_top_clients ? [TOP_CLIENTS_TOOL] : [])];
+
+  // Índice de la guía filtrado por rol/permisos: Iris solo conoce (y get_help
+  // solo entrega) las secciones que ESTE usuario realmente ve en su panel.
+  const helpKeys = allowedHelpSections(session);
+  const helpIndex = helpKeys.map((k) => `${k} ("${HELP_SECTIONS[k].titulo}")`).join(', ');
+  const system =
+    SYSTEM_PROMPT +
+    (isStaff ? STAFF_PROMPT_EXTRA : OPERATOR_PROMPT_EXTRA) +
+    `\n\nSECCIONES DEL PANEL DE ESTE USUARIO (las únicas que existen para él): ${helpIndex}.`;
 
   const client = new Anthropic();
   const messages: Anthropic.MessageParam[] = [...history, { role: 'user', content: userMessage }];
