@@ -29,7 +29,7 @@ También tenés herramientas de actividad y desempeño del equipo: comprobantes_
 
 Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.
 
-También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje natural, con un flujo de DOS PASOS OBLIGATORIOS. Paso 1: cuando el usuario pida cambiar el comportamiento del bot ("quiero un bot más amable", "que nunca diga X", "cambiá el mensaje de offline"), usá propose_bot_config con su pedido — devuelve un BORRADOR de system prompt y de mensaje de offline. Mostrale al usuario AMBOS textos COMPLETOS y preguntale si los aplica tal cual o quiere ajustar algo. Paso 2: SOLO cuando el usuario confirme explícitamente en la conversación ("sí, aplicalo", "dale, confirmo"), usá apply_bot_config con confirmado=true y los textos confirmados. NUNCA apliques sin esa confirmación explícita; si pide ajustes, volvé a proponer con propose_bot_config. apply_bot_config valida el límite de 4000 caracteres y rechaza textos con la palabra "casino" o promesas de premios garantizados; el valor anterior queda respaldado en el registro de actividad por si hay que volver atrás.`;
+También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje natural, con un flujo de DOS PASOS OBLIGATORIOS. Paso 1: cuando el usuario pida cambiar el comportamiento del bot ("quiero un bot más amable", "que nunca diga X", "cambiá el mensaje de offline"), usá propose_bot_config con su pedido — devuelve un BORRADOR de system prompt y de mensaje de offline. Mostrale al usuario AMBOS textos COMPLETOS y preguntale si los aplica tal cual o quiere ajustar algo. Paso 2: SOLO cuando el usuario confirme explícitamente en la conversación ("sí, aplicalo", "dale, confirmo"), usá apply_bot_config con confirmado=true y los textos confirmados. NUNCA apliques sin esa confirmación explícita; si pide ajustes, volvé a proponer con propose_bot_config. apply_bot_config valida el límite de 4000 caracteres del system prompt y, solo en el mensaje de offline (el cliente lo ve), rechaza la palabra "casino" y promesas de premios garantizados — el system prompt puede mencionarlas para prohibirlas; el valor anterior queda respaldado en el registro de actividad por si hay que volver atrás.`;
 
 // Extensión del prompt para OPERADORES: las consultas de actividad individual
 // están vetadas para su rol, y NUNCA deben aproximarse con totales generales
@@ -188,7 +188,7 @@ const STAFF_TOOLS: Tool[] = [
   {
     name: 'apply_bot_config',
     description:
-      'Aplica una configuración del bot YA CONFIRMADA explícitamente por el usuario en esta conversación: guarda el system prompt (y opcionalmente el mensaje de offline) del negocio, respaldando antes los valores anteriores en el registro de actividad. Usala SOLO después de que el usuario vio el borrador y confirmó. Valida máximo 4000 caracteres y rechaza la palabra "casino" y promesas de premios garantizados.',
+      'Aplica una configuración del bot YA CONFIRMADA explícitamente por el usuario en esta conversación: guarda el system prompt (y opcionalmente el mensaje de offline) del negocio, respaldando antes los valores anteriores en el registro de actividad. Usala SOLO después de que el usuario vio el borrador y confirmó. Valida máximo 4000 caracteres del system prompt; al mensaje de offline (que el cliente ve) le rechaza la palabra "casino" y promesas de premios garantizados — el system prompt SÍ puede mencionarlas para prohibirlas.',
     input_schema: {
       type: 'object',
       properties: {
@@ -811,17 +811,20 @@ async function proposeBotConfig(tid: string, input: any, client: Anthropic) {
 
   const gen = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    max_tokens: 3000,
     system:
       'Sos redactora experta de system prompts para bots de WhatsApp de plataformas de recargas y juego online en Argentina. ' +
-      'Estilo OBLIGATORIO: voseo argentino, respuestas cortas y cálidas, SIN markdown (WhatsApp no lo renderiza), términos neutros ' +
-      '("recarga", "saldo", "fichas", "plataforma") — JAMÁS las palabras "casino" o "apuestas", y JAMÁS prometer premios o ganancias garantizadas. ' +
-      `El system_prompt debe tener MENOS de ${SYSTEM_PROMPT_MAX_LEN} caracteres. El offline_msg es UN solo mensaje corto (1-2 líneas) para cuando el negocio está cerrado. ` +
+      'Estilo OBLIGATORIO de las RESPUESTAS del bot (lo que el cliente lee): voseo argentino, cortas y cálidas, SIN markdown (WhatsApp no lo renderiza), ' +
+      'términos neutros ("recarga", "saldo", "fichas", "plataforma"); el bot JAMÁS le dice al cliente "casino" o "apuestas" ni le promete premios o ganancias garantizadas. ' +
+      'OJO: el system_prompt es texto INTERNO — puede y suele mencionar esas palabras para PROHIBIRLAS explícitamente (ej: "Nunca usás palabras como casino"); eso es correcto y esperable. ' +
+      'CONSERVÁ INTACTOS los elementos del negocio presentes en el system prompt actual salvo que el pedido diga explícitamente cambiarlos: nombre del bot, canales mencionados (Telegram/WhatsApp), ' +
+      'beneficios y porcentajes (ej. bonos como el 15%), reglas de derivación a humano y límites de longitud de las respuestas. ' +
+      `El system_prompt debe tener MENOS de ${SYSTEM_PROMPT_MAX_LEN} caracteres. El offline_msg es UN solo mensaje corto (1-2 líneas) que el CLIENTE ve cuando el negocio está cerrado: ese sí, sin "casino" ni promesas. ` +
       'Respondé ÚNICAMENTE con JSON válido, sin texto afuera, con esta forma exacta: {"system_prompt": "...", "offline_msg": "..."}',
     messages: [{
       role: 'user',
       content:
-        `System prompt ACTUAL del bot (referencia de formato; conservá lo que el pedido no cambie):\n---\n${promptActual}\n---\n\n` +
+        `System prompt ACTUAL del bot (COMPLETO — conservá todo lo que el pedido no cambie):\n---\n${promptActual}\n---\n\n` +
         `Mensaje de offline actual: "${offlineActual}"\n\nPedido del usuario: ${descripcion}`,
     }],
   });
@@ -842,10 +845,11 @@ async function proposeBotConfig(tid: string, input: any, client: Anthropic) {
   const systemPrompt = String(parsed.system_prompt).trim();
   const offlineMsg = String(parsed.offline_msg ?? offlineActual).trim();
 
-  // Mismas validaciones que apply: si el borrador nace inválido, se regenera
-  // acá en vez de fallar recién al aplicar.
-  const invalid = validateBotText(`${systemPrompt}\n${offlineMsg}`);
-  if (invalid) return { error: `El borrador generado ${invalid}. Reintentá con propose_bot_config.` };
+  // Mismas validaciones que apply. El check de contenido aplica SOLO al
+  // offline_msg (el cliente lo ve): el system_prompt es interno y necesita
+  // poder mencionar "casino" para prohibirlo.
+  const invalid = validateBotText(offlineMsg);
+  if (invalid) return { error: `El mensaje de offline del borrador ${invalid}. Reintentá con propose_bot_config.` };
   if (systemPrompt.length > SYSTEM_PROMPT_MAX_LEN) {
     return { error: `El borrador supera el máximo de ${SYSTEM_PROMPT_MAX_LEN} caracteres. Reintentá pidiendo un prompt más corto.` };
   }
@@ -865,12 +869,13 @@ async function applyBotConfig(tid: string, input: any, session: any) {
 
   const prompt = String(input?.system_prompt ?? '').trim();
   const offline = String(input?.offline_msg ?? '').trim();
+  // El system_prompt es texto interno (el cliente nunca lo ve) y NECESITA poder
+  // mencionar "casino"/promesas para prohibirlas → solo se valida no-vacío y
+  // longitud. El check de contenido aplica únicamente al offline_msg (visible).
   if (!prompt) return { error: 'El system prompt no puede estar vacío.' };
   if (prompt.length > SYSTEM_PROMPT_MAX_LEN) {
     return { error: `Rechazado: el system prompt supera el máximo de ${SYSTEM_PROMPT_MAX_LEN} caracteres (tiene ${prompt.length}).` };
   }
-  const invalidPrompt = validateBotText(prompt);
-  if (invalidPrompt) return { error: `Rechazado: el system prompt ${invalidPrompt}.` };
   if (offline) {
     const invalidOffline = validateBotText(offline);
     if (invalidOffline) return { error: `Rechazado: el mensaje de offline ${invalidOffline}.` };

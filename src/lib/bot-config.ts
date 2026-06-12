@@ -38,9 +38,11 @@ export async function getOfflineMsg(tenantId: string): Promise<string> {
   return v && v.trim() ? v : DEFAULT_OFFLINE_MSG;
 }
 
-// Reglas de negocio para los textos del bot: jamás la palabra "casino" ni
-// promesas de premios/ganancias garantizadas. Devuelve el motivo del rechazo
-// o null si el texto es válido.
+// Reglas de negocio para TEXTOS QUE VE EL CLIENTE (ej: mensaje de offline):
+// jamás la palabra "casino" ni promesas de premios/ganancias garantizadas.
+// NO aplicar al system_prompt: es texto interno que el cliente nunca ve y
+// NECESITA mencionar esas palabras justamente para prohibirlas ("Nunca usás
+// palabras como casino..."). Devuelve el motivo del rechazo o null si es válido.
 export function validateBotText(text: string): string | null {
   if (/casino/i.test(text)) {
     return 'contiene la palabra "casino" (usar términos neutros: recarga, saldo, plataforma)';
