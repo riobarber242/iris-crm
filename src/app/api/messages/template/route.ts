@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   // Acceso por tenant (igual que el resto de /api/messages).
   const { data: contact } = await supabaseAdmin
     .from('contacts')
-    .select('id, phone, name, casino_username')
+    .select('id, phone, name, casino_username, whatsapp_number_id')
     .eq('id', contactId)
     .eq('tenant_id', session.tenant_id)
     .maybeSingle();
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   let failureReason: string | null = null;
   try {
-    await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id);
+    await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id, contact.whatsapp_number_id);
   } catch (err: any) {
     failureReason =
       err?.response?.data?.error?.message ||

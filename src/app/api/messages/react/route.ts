@@ -26,11 +26,11 @@ export async function POST(request: Request) {
   }
 
   const { data: contact, error: cErr } = await supabaseAdmin
-    .from('contacts').select('phone').eq('id', msg.contact_id).single();
+    .from('contacts').select('phone, tenant_id, whatsapp_number_id').eq('id', msg.contact_id).single();
   if (cErr || !contact?.phone) return new NextResponse('Contacto no encontrado', { status: 404 });
 
   try {
-    await sendWhatsAppReaction(contact.phone, msg.whatsapp_message_id, emoji);
+    await sendWhatsAppReaction(contact.phone, msg.whatsapp_message_id, emoji, contact.tenant_id, contact.whatsapp_number_id);
   } catch {
     return new NextResponse('No se pudo enviar la reacción a WhatsApp', { status: 502 });
   }

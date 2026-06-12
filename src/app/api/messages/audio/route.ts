@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
     const { data: contact } = await supabaseAdmin
       .from('contacts')
-      .select('phone')
+      .select('phone, whatsapp_number_id')
       .eq('id', contactId)
       .eq('tenant_id', session.tenant_id)
       .single();
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
     let whatsappStatus: 'sent' | 'failed' = 'sent';
     try {
-      await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id);
+      await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id, contact.whatsapp_number_id);
     } catch {
       whatsappStatus = 'failed';
     }

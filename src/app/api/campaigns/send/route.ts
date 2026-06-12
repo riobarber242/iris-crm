@@ -5,7 +5,7 @@ import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
 async function resolveContacts(filter: string, tenantId: string) {
   const base = supabaseAdmin
-    .from('contacts').select('id, phone, name').eq('tenant_id', tenantId).neq('blocked', true)
+    .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
   if (filter.startsWith('phone:')) {
@@ -71,6 +71,8 @@ export async function POST(request: Request) {
         v.trim().toLowerCase() === '{{nombre}}' ? (contact.name ?? contact.phone) : v
       );
 
+      // Cada contacto recibe por SU número (el último por el que habló);
+      // sin número asignado, resolveCreds cae al default del tenant.
       if (isTemplate) {
         await sendWhatsAppTemplate(
           contact.phone,
@@ -79,9 +81,10 @@ export async function POST(request: Request) {
           resolvedVars,
           undefined,
           session.tenant_id,
+          contact.whatsapp_number_id,
         );
       } else {
-        await sendWhatsAppText(contact.phone, campaign.message, session.tenant_id);
+        await sendWhatsAppText(contact.phone, campaign.message, session.tenant_id, contact.whatsapp_number_id);
       }
 
       const msgContent = isTemplate

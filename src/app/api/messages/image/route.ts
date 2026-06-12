@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
     const { data: contact } = await supabaseAdmin
       .from('contacts')
-      .select('phone')
+      .select('phone, whatsapp_number_id')
       .eq('id', contactId)
       .eq('tenant_id', session.tenant_id)
       .single();
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
 
     try {
-      await sendWhatsAppImage(contact.phone, publicUrl, caption, session.tenant_id);
+      await sendWhatsAppImage(contact.phone, publicUrl, caption, session.tenant_id, contact.whatsapp_number_id);
     } catch {
       // Imagen subida pero WhatsApp falló: guardamos la fila como 'failed' y la
       // devolvemos con 207 (igual que audio). Así el cliente la reconcilia por id

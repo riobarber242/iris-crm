@@ -105,7 +105,7 @@ export async function PATCH(request: Request) {
 
   if (estado === 'verificado' && efectiveMonto) {
     const { data: contact, error: contactError } = await supabaseAdmin
-      .from('contacts').select('phone').eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).single();
+      .from('contacts').select('phone, whatsapp_number_id').eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).single();
     if (!contactError && contact?.phone) {
       // Fire-and-forget: Meta Pixel purchase event
       sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto)).catch(() => {});
@@ -118,7 +118,7 @@ export async function PATCH(request: Request) {
       if (autoMsg) {
         const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
         const msg = `Tu recarga de $${montoFmt} fue confirmada ✅ ¡Ya podés jugar!`;
-        sendWhatsAppText(contact.phone, msg, session.tenant_id).catch(() => {
+        sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id).catch(() => {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
         });
       }

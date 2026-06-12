@@ -100,7 +100,7 @@ export async function POST(request: Request) {
 
     const { data: contact, error: contactError } = await supabaseAdmin
       .from('contacts')
-      .select('phone')
+      .select('phone, whatsapp_number_id')
       .eq('id', contactId)
       .eq('tenant_id', session.tenant_id)
       .single();
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
     // para mostrarlo en el chat en vez de un error genérico.
     let failureReason: string | null = null;
     try {
-      const wamid = await sendWhatsAppText(contact.phone, content, session.tenant_id);
+      const wamid = await sendWhatsAppText(contact.phone, content, session.tenant_id, contact.whatsapp_number_id);
       if (inserted?.id) {
         await supabaseAdmin.from('messages')
           .update({ status: 'sent', whatsapp_message_id: wamid })

@@ -22,15 +22,37 @@ function getBusinessAccountId(): string {
   return id;
 }
 
-// Resuelve las credenciales de WhatsApp a usar para enviar.
-//  · Si `tenantId` tiene en la tabla tenants AMBOS (whatsapp_access_token y
-//    whatsapp_phone_id) → usa ese par (envía desde el número del tenant).
-//  · Si no (tenant sin credenciales propias, o sin tenantId) → fallback a las
-//    env vars globales. Es un par atómico: nunca se mezcla token de un origen con
-//    phone_id de otro.
-async function resolveCreds(tenantId?: string): Promise<{ token: string; phoneId: string }> {
-  if (tenantId) {
-    try {
+// Resuelve las credenciales de WhatsApp a usar para enviar/leer media.
+// Siempre como par atómico (nunca token de un origen con phone_id de otro):
+//  1. numberId → fila de whatsapp_numbers (el número de ESA conversación).
+//     access_token null en la fila = usar el token global de env.
+//  2. tenantId → número default activo del tenant en whatsapp_numbers.
+//  3. tenantId → columnas legacy tenants.whatsapp_* (números aún no migrados
+//     a whatsapp_numbers; retirar cuando se eliminen esas columnas).
+//  4. Env vars globales (tenant Principal / sin configuración propia).
+export async function resolveCreds(tenantId?: string, numberId?: string | null): Promise<{ token: string; phoneId: string }> {
+  try {
+    if (numberId) {
+      const { data } = await supabaseAdmin
+        .from('whatsapp_numbers')
+        .select('phone_number_id, access_token')
+        .eq('id', numberId)
+        .maybeSingle();
+      if (data?.phone_number_id) {
+        return { token: data.access_token || getToken(), phoneId: data.phone_number_id };
+      }
+    }
+    if (tenantId) {
+      const { data: def } = await supabaseAdmin
+        .from('whatsapp_numbers')
+        .select('phone_number_id, access_token')
+        .eq('tenant_id', tenantId)
+        .eq('is_default', true)
+        .eq('active', true)
+        .maybeSingle();
+      if (def?.phone_number_id) {
+        return { token: def.access_token || getToken(), phoneId: def.phone_number_id };
+      }
       const { data } = await supabaseAdmin
         .from('tenants')
         .select('whatsapp_access_token, whatsapp_phone_id')
@@ -39,9 +61,9 @@ async function resolveCreds(tenantId?: string): Promise<{ token: string; phoneId
       if (data?.whatsapp_access_token && data?.whatsapp_phone_id) {
         return { token: data.whatsapp_access_token, phoneId: data.whatsapp_phone_id };
       }
-    } catch (err) {
-      console.warn('[WhatsApp] resolveCreds falló, uso env globales:', err);
     }
+  } catch (err) {
+    console.warn('[WhatsApp] resolveCreds falló, uso env globales:', err);
   }
   // Fallback: credenciales globales de env (tenant Principal / sin creds propias).
   return { token: getToken(), phoneId: getPhoneNumberId() };
@@ -59,8 +81,8 @@ function logApiError(context: string, err: any) {
 
 // Devuelve el wamid (id del mensaje en WhatsApp) para poder matchear luego los
 // webhooks de status (ticks) y reacciones. null si no vino en la respuesta.
-export async function sendWhatsAppText(to: string, text: string, tenantId?: string): Promise<string | null> {
-  const { token, phoneId } = await resolveCreds(tenantId);
+export async function sendWhatsAppText(to: string, text: string, tenantId?: string, numberId?: string | null): Promise<string | null> {
+  const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers     = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   console.log(`[sendWhatsAppText] → ${to}: "${text.slice(0, 60)}"`);
@@ -80,8 +102,8 @@ export async function sendWhatsAppText(to: string, text: string, tenantId?: stri
   }
 }
 
-export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string, tenantId?: string) {
-  const { token, phoneId } = await resolveCreds(tenantId);
+export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string, tenantId?: string, numberId?: string | null) {
+  const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
@@ -103,8 +125,9 @@ export async function sendWhatsAppTemplate(
   variables: string[],
   phoneNumberId?: string,
   tenantId?: string,
+  numberId?: string | null,
 ) {
-  const creds   = await resolveCreds(tenantId);
+  const creds   = await resolveCreds(tenantId, numberId);
   const token   = creds.token;
   // Un phoneNumberId explícito (ej. plantilla con número dedicado) tiene prioridad
   // sobre el del tenant/env.
@@ -135,9 +158,8 @@ export async function sendWhatsAppTemplate(
 
 // Reacción a un mensaje del cliente (WhatsApp Reactions API).
 // emoji = '' quita la reacción. messageId = wamid del mensaje a reaccionar.
-export async function sendWhatsAppReaction(to: string, messageId: string, emoji: string) {
-  const token   = getToken();
-  const phoneId = getPhoneNumberId();
+export async function sendWhatsAppReaction(to: string, messageId: string, emoji: string, tenantId?: string, numberId?: string | null) {
+  const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
@@ -152,8 +174,8 @@ export async function sendWhatsAppReaction(to: string, messageId: string, emoji:
   }
 }
 
-export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?: string) {
-  const { token, phoneId } = await resolveCreds(tenantId);
+export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?: string, numberId?: string | null) {
+  const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
@@ -208,8 +230,10 @@ export async function createMessageTemplate(def: {
   }
 }
 
-export async function fetchWhatsAppMediaUrl(mediaId: string): Promise<string> {
-  const token   = getToken();
+// El media de un mensaje entrante solo se puede leer con el token del número
+// que lo recibió — por eso acepta tenantId/numberId como los senders.
+export async function fetchWhatsAppMediaUrl(mediaId: string, tenantId?: string, numberId?: string | null): Promise<string> {
+  const { token } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   console.log(`[fetchWhatsAppMediaUrl] mediaId=${mediaId}`);

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
-import { sendWhatsAppText } from './client';
+import { sendWhatsAppText, resolveCreds } from './client';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
@@ -11,17 +11,27 @@ import { generateBotResponse } from '../groq';
 // Tenant principal (fallback cuando no se puede resolver por whatsapp_phone_id).
 const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
-// Resuelve el tenant a partir del phone_number_id que llega en el webhook,
-// matcheando tenants.whatsapp_phone_id. Si no hay match (o error) → Principal.
-async function resolveTenantId(phoneNumberId: string | undefined): Promise<string> {
-  if (!phoneNumberId) return PRINCIPAL_TENANT_ID;
+// Resuelve tenant + número a partir del phone_number_id que llega en el webhook.
+//  1. whatsapp_numbers (multi-número por tenant).
+//  2. Compat: tenants.whatsapp_phone_id (números aún no migrados a la tabla).
+//  3. Sin match (o error) → Principal, sin número (numberId null = el envío
+//     cae al default del tenant / env globales vía resolveCreds).
+async function resolveTenantAndNumber(
+  phoneNumberId: string | undefined,
+): Promise<{ tenantId: string; numberId: string | null }> {
+  if (!phoneNumberId) return { tenantId: PRINCIPAL_TENANT_ID, numberId: null };
   try {
+    const { data: num } = await supabaseAdmin
+      .from('whatsapp_numbers').select('id, tenant_id')
+      .eq('phone_number_id', phoneNumberId).maybeSingle();
+    if (num) return { tenantId: num.tenant_id, numberId: num.id };
+
     const { data } = await supabaseAdmin
       .from('tenants').select('id').eq('whatsapp_phone_id', phoneNumberId).maybeSingle();
-    return data?.id ?? PRINCIPAL_TENANT_ID;
+    return { tenantId: data?.id ?? PRINCIPAL_TENANT_ID, numberId: null };
   } catch (err) {
-    console.warn('[webhook] resolveTenantId falló, uso Principal:', err);
-    return PRINCIPAL_TENANT_ID;
+    console.warn('[webhook] resolveTenantAndNumber falló, uso Principal:', err);
+    return { tenantId: PRINCIPAL_TENANT_ID, numberId: null };
   }
 }
 
@@ -96,12 +106,11 @@ const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te r
 // Step 3: Upload buffer to Supabase Storage (service role)   → stored file
 // Step 4: Construct permanent public URL manually             → saved to DB
 
-async function saveComprobanteImage(mediaId: string, contactId: string): Promise<string | null> {
-  const waToken  = process.env.WHATSAPP_ACCESS_TOKEN;
+async function saveComprobanteImage(mediaId: string, contactId: string, waToken: string | null): Promise<string | null> {
   const supaUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
   if (!waToken) {
-    console.error('[saveComprobanteImage] WHATSAPP_ACCESS_TOKEN no configurado');
+    console.error('[saveComprobanteImage] Sin access token de WhatsApp para descargar el media');
     return null;
   }
   if (!supaUrl) {
@@ -175,9 +184,18 @@ async function saveComprobanteImage(mediaId: string, contactId: string): Promise
 // Se llama SIEMPRE que entra una imagen/documento, sin importar el estado del bot.
 // Sube la imagen a Storage, la guarda como comprobante y devuelve la URL pública
 // (o null si no se pudo). Se llama SIEMPRE que entra una imagen/documento.
-async function persistComprobanteImage(message: any, contactId: string, tenantId: string): Promise<string | null> {
+async function persistComprobanteImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
   const mediaId = message.image?.id ?? message.document?.id ?? null;
-  const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId) : null;
+  // El media solo puede descargarse con el token del número que lo recibió.
+  let waToken: string | null = null;
+  if (mediaId) {
+    try {
+      waToken = (await resolveCreds(tenantId, numberId)).token;
+    } catch (err) {
+      console.error('[persistComprobanteImage] No se pudo resolver token de WhatsApp:', err);
+    }
+  }
+  const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId, waToken) : null;
 
   if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
   if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
@@ -270,9 +288,9 @@ async function processMessage(
     return;
   }
 
-  // ── Multi-tenant: resolver el tenant por el phone_number_id del webhook ──────
-  const tenantId = await resolveTenantId(_phoneNumberId);
-  console.log(`[webhook] tenant resuelto=${tenantId} (phone_number_id=${_phoneNumberId ?? 'null'})`);
+  // ── Multi-tenant: resolver tenant + número por el phone_number_id del webhook ─
+  const { tenantId, numberId } = await resolveTenantAndNumber(_phoneNumberId);
+  console.log(`[webhook] tenant=${tenantId} numero=${numberId ?? 'null'} (phone_number_id=${_phoneNumberId ?? 'null'})`);
 
   // ── Deduplication ──────────────────────────────────────────────────────────
   try {
@@ -309,12 +327,25 @@ async function processMessage(
   }
 
   // ── Contact ────────────────────────────────────────────────────────────────
-  const { contact, isNew } = await findOrCreateContact(from, contactMeta?.profile?.name ?? null, tenantId);
+  const { contact, isNew } = await findOrCreateContact(from, contactMeta?.profile?.name ?? null, tenantId, numberId);
   if (!contact) {
     console.error('[webhook] No se pudo crear/obtener contacto para', from);
     return;
   }
   console.log(`[webhook] Contact: id=${contact.id} phone=${contact.phone} isNew=${isNew} status=${contact.status} conversation_state=${contact.conversation_state ?? 'null'}`);
+
+  // ── Persistir por cuál número habla este contacto ───────────────────────────
+  // Si escribió a OTRO número del tenant (o es un contacto previo a multi-número,
+  // con null), las respuestas deben salir por el último número que usó.
+  if (numberId && contact.whatsapp_number_id !== numberId) {
+    const { error } = await supabaseAdmin
+      .from('contacts').update({ whatsapp_number_id: numberId }).eq('id', contact.id);
+    if (error) console.warn('[webhook] No se pudo actualizar whatsapp_number_id:', error.message);
+    else {
+      console.log(`[webhook] contact.whatsapp_number_id → ${numberId}`);
+      contact.whatsapp_number_id = numberId;
+    }
+  }
 
   // ── Sincronizar identidad conocida (name ⇄ casino_username) ──────────────────
   // Si ya sabemos quién es (el contacto tiene name o casino_username con valor),
@@ -344,7 +375,7 @@ async function processMessage(
   //    como comprobante (operador la necesita).
   let inboundImageUrl: string | null = null;
   if (type === 'image' || type === 'document') {
-    inboundImageUrl = await persistComprobanteImage(message, contact.id, tenantId);
+    inboundImageUrl = await persistComprobanteImage(message, contact.id, tenantId, numberId);
   }
 
   // Contenido del mensaje del usuario.
@@ -430,9 +461,11 @@ async function processMessage(
       console.error('[replyAndSave] DB insert excepción:', err);
     }
 
-    // 2. Send via WhatsApp API — always attempt regardless of DB result
+    // 2. Send via WhatsApp API — always attempt regardless of DB result.
+    // Sale por el número que recibió el mensaje (numberId); si es null,
+    // resolveCreds cae al default del tenant / env globales.
     try {
-      const wamid = await sendWhatsAppText(from!, textResp, tenantId);
+      const wamid = await sendWhatsAppText(from!, textResp, tenantId, numberId);
       if (dbInsertOk && insertedId) {
         await supabaseAdmin.from('messages')
           .update({ status: 'sent', whatsapp_message_id: wamid })
@@ -641,7 +674,7 @@ async function processMessage(
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 const CONTACT_COLS =
-  'id, phone, name, status, casino_username, conversation_state, last_read_at, blocked, assigned_agent_id';
+  'id, phone, name, status, casino_username, conversation_state, last_read_at, blocked, assigned_agent_id, whatsapp_number_id';
 
 // Extracts the national significant number (area code + subscriber) so numbers
 // stored in different formats still match. WhatsApp sends AR mobiles as
@@ -662,6 +695,7 @@ async function findOrCreateContact(
   phone: string,
   _whatsappName: string | null,
   tenantId: string,
+  numberId: string | null,
 ): Promise<{ contact: any | null; isNew: boolean }> {
   // _whatsappName is intentionally ignored — bot never writes name to contacts.
   // Explicit column list avoids PostgREST schema-cache issues with recently added columns.
@@ -704,7 +738,11 @@ async function findOrCreateContact(
     const provincia = inferProvinciaFromPhone(phone);
     const { data: inserted, error } = await supabaseAdmin
       .from('contacts')
-      .insert({ phone, name: null, status: 'nuevo', tenant_id: tenantId, ...(provincia ? { provincia } : {}) })
+      .insert({
+        phone, name: null, status: 'nuevo', tenant_id: tenantId,
+        whatsapp_number_id: numberId,
+        ...(provincia ? { provincia } : {}),
+      })
       .select('*')
       .single();
 
