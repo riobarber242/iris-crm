@@ -21,6 +21,7 @@ const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
 
 type ImportMode = 'insert' | 'update';
 type ImportResult = { imported: number; skipped: number; updated?: number; mode: ImportMode };
+type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean };
 
 // Split de una línea CSV respetando comillas: Google Contacts exporta campos
 // entrecomillados con comas adentro, que un split(',') simple desalinearía.
@@ -87,6 +88,8 @@ export default function ContactsClient() {
   const [importing,    setImporting]    = useState(false);
   const [importMode,   setImportMode]   = useState<ImportMode>('insert');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [lines,        setLines]        = useState<WaLine[]>([]);
+  const [importLine,   setImportLine]   = useState('');
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   async function fetchContacts() {
@@ -100,6 +103,16 @@ export default function ContactsClient() {
 
   useEffect(() => {
     fetchContacts();
+    // Líneas activas del tenant para "Asignar a línea" (default: la línea default).
+    fetch('/api/whatsapp-numbers')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: WaLine[]) => {
+        const activas = (Array.isArray(d) ? d : []).filter((l) => l.active);
+        setLines(activas);
+        const def = activas.find((l) => l.is_default) ?? activas[0];
+        if (def) setImportLine(def.id);
+      })
+      .catch(() => {});
     const timer = setInterval(fetchContacts, 15_000);
     return () => clearInterval(timer);
   }, []);
@@ -121,7 +134,7 @@ export default function ContactsClient() {
       const res = await fetch('/api/contacts/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts, mode: importMode }),
+        body: JSON.stringify({ contacts, mode: importMode, whatsapp_number_id: importLine || undefined }),
       });
       if (res.ok) {
         const result = await res.json();
@@ -147,7 +160,7 @@ export default function ContactsClient() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* Search + Import */}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -163,6 +176,25 @@ export default function ContactsClient() {
           }}
         />
         <input ref={csvInputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+
+        {/* Línea a la que se asignan los contactos importados */}
+        {lines.length > 0 && (
+          <select
+            value={importLine}
+            onChange={(e) => setImportLine(e.target.value)}
+            title="Asignar a línea: los contactos nuevos quedan en esta línea de WhatsApp; en modo actualizar, también los existentes sin línea."
+            style={{
+              background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '12px',
+              border: 'none', borderRadius: '12px', padding: '11px 12px', cursor: 'pointer', flexShrink: 0,
+            }}
+          >
+            {lines.map((l) => (
+              <option key={l.id} value={l.id}>
+                📱 {(l.label ?? l.id)}{l.is_default ? ' (default)' : ''}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* Modo de import: insertar nuevos vs completar datos de existentes */}
         <div style={{ display: 'flex', background: '#F5F5F5', borderRadius: '12px', padding: '3px', flexShrink: 0 }}>

@@ -16,10 +16,20 @@ export async function POST(req: NextRequest) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   const tenantId = session.tenant_id;
 
-  const { contacts, mode }: { contacts: ContactInput[]; mode?: string } = await req.json();
+  const { contacts, mode, whatsapp_number_id }: { contacts: ContactInput[]; mode?: string; whatsapp_number_id?: string } = await req.json();
 
   if (!Array.isArray(contacts) || contacts.length === 0) {
     return NextResponse.json({ error: 'Array de contactos vacío' }, { status: 400 });
+  }
+
+  // Línea a asignar (opcional): debe ser un número ACTIVO del tenant; si no
+  // valida, se importa sin línea (null), igual que antes de multi-número.
+  let lineId: string | null = null;
+  if (whatsapp_number_id) {
+    const { data: num } = await supabaseAdmin
+      .from('whatsapp_numbers').select('id')
+      .eq('id', whatsapp_number_id).eq('tenant_id', tenantId).eq('active', true).maybeSingle();
+    lineId = num?.id ?? null;
   }
 
   const rows = contacts
@@ -42,12 +52,12 @@ export async function POST(req: NextRequest) {
 
     // Contactos existentes del tenant para esos teléfonos (lookup en chunks
     // para no exceder el límite de URL de PostgREST con CSVs grandes).
-    const existing = new Map<string, { id: string; name: string | null; casino_username: string | null; provincia: string | null }>();
+    const existing = new Map<string, { id: string; name: string | null; casino_username: string | null; provincia: string | null; whatsapp_number_id: string | null }>();
     const phones = unique.map((c) => c.phone);
     for (let i = 0; i < phones.length; i += 200) {
       const { data, error } = await supabaseAdmin
         .from('contacts')
-        .select('id, phone, name, casino_username, provincia')
+        .select('id, phone, name, casino_username, provincia, whatsapp_number_id')
         .eq('tenant_id', tenantId)
         .in('phone', phones.slice(i, i + 200));
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -66,6 +76,7 @@ export async function POST(req: NextRequest) {
             return {
               phone: c.phone,
               tenant_id: tenantId,
+              whatsapp_number_id: lineId,
               ...(c.casino_username ? { casino_username: c.casino_username } : {}),
               ...(c.name ? { name: c.name } : {}),
               ...(provincia ? { provincia } : {}),
@@ -90,6 +101,8 @@ export async function POST(req: NextRequest) {
       if (c.casino_username && !ex.casino_username) patch.casino_username = c.casino_username;
       const provincia = inferProvinciaFromPhone(c.phone);
       if (provincia && !ex.provincia) patch.provincia = provincia;
+      // Línea: solo se asigna a los que no tienen; nunca se pisa la existente.
+      if (lineId && !ex.whatsapp_number_id) patch.whatsapp_number_id = lineId;
       if (Object.keys(patch).length > 0) pending.push({ id: ex.id, patch });
       else skipped++;
     }
@@ -130,6 +143,7 @@ export async function POST(req: NextRequest) {
         return {
           phone: c.phone,
           tenant_id: tenantId,
+          whatsapp_number_id: lineId,
           ...(c.casino_username ? { casino_username: c.casino_username } : {}),
           ...(c.name ? { name: c.name } : {}),
           ...(provincia ? { provincia } : {}),

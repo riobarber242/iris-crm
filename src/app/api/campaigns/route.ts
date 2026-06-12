@@ -21,9 +21,19 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
+
+  // Línea destino (opcional): debe ser un número del tenant. null = todas.
+  let targetNumberId: string | null = null;
+  if (target_number_id) {
+    const { data: num } = await supabaseAdmin
+      .from('whatsapp_numbers').select('id')
+      .eq('id', target_number_id).eq('tenant_id', session.tenant_id).maybeSingle();
+    if (!num) return new NextResponse('Línea inválida', { status: 400 });
+    targetNumberId = num.id;
+  }
 
   const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
 
@@ -38,6 +48,7 @@ export async function POST(request: Request) {
     name,
     message:            campaignType === 'texto_libre' ? message : null,
     target_filter:      target_filter ?? 'todos',
+    target_number_id:   targetNumberId,
     status:             'borrador',
     type:               campaignType,
     template_name:      campaignType === 'template_meta' ? template_name.trim() : null,

@@ -61,3 +61,8 @@ from whatsapp_numbers w
 where c.whatsapp_number_id is null
   and w.tenant_id = c.tenant_id
   and w.is_default;
+
+-- ── Etapa 2 ──────────────────────────────────────────────────────────────────
+
+-- 5. Campañas segmentadas por línea: null = todas las líneas del tenant.
+alter table campaigns add column if not exists target_number_id uuid references whatsapp_numbers(id) on delete set null;

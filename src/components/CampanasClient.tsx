@@ -13,11 +13,14 @@ type Campaign = {
   template_language: string | null;
   template_variables: string[] | null;
   target_filter: string;
+  target_number_id: string | null;
   status: 'borrador' | 'enviando' | 'completada';
   sent_count: number;
   created_at: string;
   recipient_ids: string[] | null;
 };
+
+type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean };
 
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
   borrador:   { background: '#F0F0F0', color: '#888' },
@@ -70,10 +73,14 @@ export default function CampanasClient() {
   // Lista principal: solo campañas activas. Las completadas viven en el historial.
   const activeCampaigns = campaigns.filter((c) => c.status !== 'completada');
 
+  // Líneas de WhatsApp del tenant (para el filtro por línea)
+  const [lines, setLines] = useState<WaLine[]>([]);
+
   // Form state
   const [name,             setName]             = useState('');
   const [campaignType,     setCampaignType]     = useState<CampaignType>('texto_libre');
   const [filter,           setFilter]           = useState('todos');
+  const [lineFilter,       setLineFilter]       = useState('todas');
   const [sendLimit,        setSendLimit]        = useState('');
   const [message,          setMessage]          = useState('');
   const [templateName,     setTemplateName]     = useState('');
@@ -90,11 +97,16 @@ export default function CampanasClient() {
 
   useEffect(() => {
     fetchCampaigns();
+    // Líneas del tenant para el selector (si falla, el filtro simplemente no aparece).
+    fetch('/api/whatsapp-numbers')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setLines(Array.isArray(d) ? d : []))
+      .catch(() => {});
     const t = setInterval(fetchCampaigns, 10_000);
     return () => clearInterval(t);
   }, []);
 
-  async function fetchRecipientCount(f: string) {
+  async function fetchRecipientCount(f: string, line: string) {
     setCountLoading(true);
     setRecipientCount(null);
     try {
@@ -102,7 +114,8 @@ export default function CampanasClient() {
       const param = isInactivoDays
         ? `?status=inactivo`
         : f === 'todos' ? '?all=true' : `?status=${f}`;
-      const res = await fetch(`/api/contacts${param}`);
+      const lineParam = line !== 'todas' ? `&number=${line}` : '';
+      const res = await fetch(`/api/contacts${param}${lineParam}`);
       if (!res.ok) return;
       const data = await res.json();
       setRecipientCount(Array.isArray(data) ? data.length : null);
@@ -112,11 +125,16 @@ export default function CampanasClient() {
 
   function handleFilterChange(f: string) {
     setFilter(f);
-    fetchRecipientCount(f);
+    fetchRecipientCount(f, lineFilter);
+  }
+
+  function handleLineChange(l: string) {
+    setLineFilter(l);
+    fetchRecipientCount(filter, l);
   }
 
   function resetForm() {
-    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setSendLimit('');
+    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setLineFilter('todas'); setSendLimit('');
     setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
     setError(''); setRecipientCount(null);
   }
@@ -128,7 +146,7 @@ export default function CampanasClient() {
     setTemplateLang('es');
     setTemplateName('');
     setTemplateVars(['20%']);
-    fetchRecipientCount('inactivo_30d');
+    fetchRecipientCount('inactivo_30d', lineFilter);
   }
 
   async function handleDelete(campaign: Campaign) {
@@ -150,7 +168,11 @@ export default function CampanasClient() {
 
     setCreating(true); setError('');
     try {
-      const body: any = { name: name.trim(), target_filter: filter, type: campaignType, send_limit: sendLimit ? Number(sendLimit) : null };
+      const body: any = {
+        name: name.trim(), target_filter: filter, type: campaignType,
+        send_limit: sendLimit ? Number(sendLimit) : null,
+        target_number_id: lineFilter !== 'todas' ? lineFilter : null,
+      };
       if (campaignType === 'texto_libre') {
         body.message = message.trim();
       } else {
@@ -207,7 +229,7 @@ export default function CampanasClient() {
             </button>
           )}
           <button
-            onClick={() => { if (showForm) { resetForm(); setShowForm(false); } else { setShowForm(true); fetchRecipientCount('todos'); } }}
+            onClick={() => { if (showForm) { resetForm(); setShowForm(false); } else { setShowForm(true); fetchRecipientCount('todos', lineFilter); } }}
             style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '12px', padding: '10px 20px', cursor: 'pointer' }}
           >
             {showForm ? '✕ Cancelar' : '+ Nueva campaña'}
@@ -259,6 +281,19 @@ export default function CampanasClient() {
             <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
               {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
+            {lines.length > 0 && (
+              <>
+                <label style={{ ...labelStyle, marginTop: '4px' }}>Línea</label>
+                <select value={lineFilter} onChange={(e) => handleLineChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                  <option value="todas">Todas las líneas</option>
+                  {lines.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {(l.label ?? l.id)}{l.is_default ? ' (default)' : ''}{!l.active ? ' — inactiva' : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             {(countLoading || recipientCount !== null) && (
               <p style={{ fontSize: '12px', color: '#555', margin: 0, fontWeight: 600 }}>
                 {countLoading ? 'Contando...' : `~${recipientCount} contacto${recipientCount !== 1 ? 's' : ''}`}
@@ -383,6 +418,9 @@ export default function CampanasClient() {
                 </div>
                 <p style={{ fontSize: '12px', color: '#aaa', margin: '3px 0 0 0' }}>
                   Filtro: <strong>{FILTERS.find(f => f.value === campaign.target_filter)?.label ?? campaign.target_filter}</strong>
+                  {campaign.target_number_id && (
+                    <> · Línea: <strong>{lines.find((l) => l.id === campaign.target_number_id)?.label ?? campaign.target_number_id}</strong></>
+                  )}
                   {' · '}{new Date(campaign.created_at).toLocaleDateString('es-AR')}
                   {campaign.sent_count > 0 && ` · ${campaign.sent_count} enviados`}
                 </p>

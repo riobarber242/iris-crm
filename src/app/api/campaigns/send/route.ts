@@ -3,10 +3,13 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
-async function resolveContacts(filter: string, tenantId: string) {
-  const base = supabaseAdmin
+async function resolveContacts(filter: string, tenantId: string, targetNumberId: string | null) {
+  let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
+
+  // Campaña segmentada por línea: solo contactos asignados a ese número.
+  if (targetNumberId) base = base.eq('whatsapp_number_id', targetNumberId);
 
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
@@ -58,7 +61,7 @@ export async function POST(request: Request) {
 
   await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
-  let contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id);
+  let contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id, campaign.target_number_id ?? null);
   if (campaign.send_limit) contacts = contacts.slice(0, Number(campaign.send_limit));
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];

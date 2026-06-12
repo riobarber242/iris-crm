@@ -19,9 +19,12 @@ async function requireAdmin(): Promise<{ session: any; error?: undefined } | { s
   return { session };
 }
 
+// GET: cualquier sesión (no solo admin) — Campañas e Import necesitan listar
+// las líneas para sus selectores. La respuesta no expone secretos (has_token
+// es booleano; el token nunca viaja). POST/PATCH/verify siguen admin-only.
 export async function GET() {
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const { data, error: dbErr } = await supabaseAdmin
     .from('whatsapp_numbers')

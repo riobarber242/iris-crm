@@ -6,16 +6,18 @@ export async function GET(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
-  const url    = new URL(request.url);
-  const status = url.searchParams.get('status');
-  const all    = url.searchParams.get('all') === 'true';
+  const url      = new URL(request.url);
+  const status   = url.searchParams.get('status');
+  const all      = url.searchParams.get('all') === 'true';
+  const numberId = url.searchParams.get('number'); // filtro por línea de WhatsApp
 
   // ?all=true or ?status=X → count mode for campaign recipient estimation
   if (all || status) {
     let query = supabaseAdmin.from('contacts').select('id')
       .eq('tenant_id', session.tenant_id)
       .neq('blocked', true);
-    if (status) query = query.eq('status', status);
+    if (status)   query = query.eq('status', status);
+    if (numberId) query = query.eq('whatsapp_number_id', numberId);
     const { data, error } = await query;
     if (error) return new NextResponse(error.message, { status: 500 });
     return NextResponse.json(data ?? []);
