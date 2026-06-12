@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
 
 export type Agent = {
   id: string;
@@ -14,15 +15,19 @@ export type Agent = {
   phone?:      string | null;
 };
 
+// Resultado de refresh(): 'ok' = sesión cargada, 'denied' = 401/403 definitivo
+// (no tiene sentido reintentar), 'error' = fallo transitorio (red caída, 5xx).
+export type RefreshResult = 'ok' | 'denied' | 'error';
+
 type AuthCtx = {
   agent:   Agent | null;
   loading: boolean;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<RefreshResult>;
   logout:  () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx>({
-  agent: null, loading: true, refresh: async () => {}, logout: async () => {},
+  agent: null, loading: true, refresh: async () => 'error', logout: async () => {},
 });
 
 export function useAuth() {
@@ -44,23 +49,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [agent,   setAgent]   = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<RefreshResult> => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('/api/auth/me', { cache: 'no-store' });
       if (res.ok) {
         const a = (await res.json()) as Agent;
         setAgent(a);
         writeAgentHint(a);
-      } else if (res.status === 401 || res.status === 403) {
+        return 'ok';
+      }
+      if (res.status === 401 || res.status === 403) {
         // Sesión realmente inválida → recién acá limpiamos el menú.
         setAgent(null);
         writeAgentHint(null);
+        return 'denied';
       }
-      // Otros estados (5xx transitorios) → conservamos el agente actual.
+      // Otros estados (5xx transitorios) → conservamos el agente actual y
+      // devolvemos 'error' para que el reintento automático insista.
+      return 'error';
     } catch {
       // Error de red transitorio: NO blanqueamos el menú. Si todavía no hay
       // agente, caemos al último conocido en vez de dejar el sidebar vacío.
       setAgent((prev) => prev ?? readAgentHint());
+      return 'error';
     } finally {
       setLoading(false);
     }
@@ -90,6 +101,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (hint) setAgent((prev) => prev ?? hint);
     refresh();
   }, [refresh]);
+
+  // Este provider vive en el layout raíz y NO se re-monta al navegar. Tras el
+  // login (router.push de /login al panel) nadie volvía a pedir /api/auth/me:
+  // el agente quedaba null y la sidebar en esqueleto permanente hasta un F5.
+  // Ante cada cambio de ruta sin agente cargado, re-consultamos la sesión.
+  const pathname = usePathname();
+  useEffect(() => {
+    if (!agent) refresh();
+    // setAgent(null) sobre null no re-renderiza (React bail-out) → sin loops.
+  }, [pathname, agent, refresh]);
+
+  // Reintento automático con backoff ante fallos TRANSITORIOS (red caída, 5xx):
+  // sin esto, un único fetch fallido dejaba el panel en esqueleto para siempre.
+  // 'denied' (401/403) corta enseguida: reintentar sin sesión no tiene sentido.
+  useEffect(() => {
+    if (agent) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    const tick = async () => {
+      if (disposed) return;
+      const result = await refresh();
+      if (disposed || result !== 'error') return;
+      attempt++;
+      if (attempt > 4) return; // se rinde — AdminShell ofrece "Reintentar" manual
+      timer = setTimeout(tick, Math.min(8000, 1000 * 2 ** attempt));
+    };
+
+    // Espera corta inicial para no duplicar el fetch del mount/cambio de ruta.
+    timer = setTimeout(tick, 1500);
+    return () => { disposed = true; if (timer) clearTimeout(timer); };
+  }, [agent, refresh]);
 
   return <Ctx.Provider value={{ agent, loading, refresh, logout }}>{children}</Ctx.Provider>;
 }

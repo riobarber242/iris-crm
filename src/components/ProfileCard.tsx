@@ -79,7 +79,7 @@ export default function ProfileCard() {
         </span>
       </button>
 
-      {open && <ProfileModal onClose={() => setOpen(false)} onSaved={refresh} />}
+      {open && <ProfileModal onClose={() => setOpen(false)} onSaved={() => { refresh(); }} />}
     </>
   );
 }

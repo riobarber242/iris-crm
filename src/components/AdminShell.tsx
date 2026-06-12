@@ -29,7 +29,7 @@ const BANNER_H = 80;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { agent, logout } = useAuth();
+  const { agent, loading, refresh, logout } = useAuth();
   // El rol está confirmado en cuanto conocemos el agente (del backend o del
   // último rol recordado en AuthProvider). NO lo atamos a `loading`: así un
   // /api/auth/me lento o que falla una vez no deja al operador con el sidebar
@@ -348,19 +348,39 @@ export function AdminShell({ children }: { children: ReactNode }) {
         }}>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {!roleReady ? (
-              // Skeleton neutro: no revela ninguna opción hasta confirmar el rol.
-              Array.from({ length: 5 }).map((_, i) => (
-                <div
-                  key={i}
-                  aria-hidden="true"
-                  style={{
-                    height: '40px',
-                    borderRadius: '10px',
-                    background: '#f0f0f0',
-                    opacity: 0.7,
-                  }}
-                />
-              ))
+              loading ? (
+                // Skeleton neutro: no revela ninguna opción hasta confirmar el rol.
+                Array.from({ length: 5 }).map((_, i) => (
+                  <div
+                    key={i}
+                    aria-hidden="true"
+                    style={{
+                      height: '40px',
+                      borderRadius: '10px',
+                      background: '#f0f0f0',
+                      opacity: 0.7,
+                    }}
+                  />
+                ))
+              ) : (
+                // La carga de sesión terminó sin agente (falló /api/auth/me y
+                // se agotaron los reintentos automáticos): nunca dejamos el
+                // esqueleto permanente — mensaje claro + reintento manual.
+                <div style={{ padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#888', lineHeight: 1.5 }}>
+                    No se pudo cargar tu sesión.
+                  </p>
+                  <button
+                    onClick={() => refresh()}
+                    style={{
+                      background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px',
+                      border: 'none', borderRadius: '10px', padding: '10px 14px', cursor: 'pointer',
+                    }}
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              )
             ) : items.map((item) => {
               const path = item === 'dashboard' ? '/dashboard'
                          : item === 'tenants'   ? '/admin/tenants'

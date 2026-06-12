@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -10,6 +11,7 @@ export default function LoginPage() {
   const [notice,   setNotice]   = useState('');
   const [loading,  setLoading]  = useState(false);
   const router = useRouter();
+  const { refresh } = useAuth();
 
   // Mensaje de sesión cerrada por inactividad (?reason=inactividad).
   useEffect(() => {
@@ -29,6 +31,10 @@ export default function LoginPage() {
       });
       if (res.ok) {
         const d = await res.json().catch(() => ({}));
+        // Cargar la sesión en el AuthProvider ANTES de navegar: el provider
+        // vive en el layout raíz y no se re-monta con router.push, así que sin
+        // esto la sidebar/header quedaban en esqueleto hasta un F5.
+        await refresh();
         // Los operators no tienen dashboard → van directo a Conversaciones.
         router.push(d.role === 'operator' ? '/conversations' : '/dashboard');
         router.refresh();
