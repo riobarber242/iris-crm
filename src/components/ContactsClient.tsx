@@ -22,22 +22,55 @@ const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
 type ImportMode = 'insert' | 'update';
 type ImportResult = { imported: number; skipped: number; updated?: number; mode: ImportMode };
 
+// Split de una línea CSV respetando comillas: Google Contacts exporta campos
+// entrecomillados con comas adentro, que un split(',') simple desalinearía.
+function splitCSVLine(line: string): string[] {
+  const cols: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      cols.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cols.push(cur.trim());
+  return cols;
+}
+
 function parseCSV(text: string): { phone: string; casino_username: string; name: string }[] {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(Boolean);
   if (lines.length < 2) return [];
 
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase().replace(/"/g, ''));
+  const headers = splitCSVLine(lines[0]).map((h) => h.toLowerCase());
   const idx = (terms: string[]) => headers.findIndex((h) => terms.some((t) => h.includes(t)));
 
-  const phoneIdx  = idx(['phone', 'telefono', 'tel', 'celular']);
-  const userIdx   = idx(['casino', 'usuario', 'username', 'user']);
-  const nameIdx   = idx(['name', 'nombre']);
+  // Google Contacts: el teléfono viene en "Phone 1 - Value", pero "Phone 1 - Label"
+  // aparece ANTES y también contiene "phone" — el header exacto tiene prioridad.
+  const googlePhoneIdx = headers.indexOf('phone 1 - value');
+  const phoneIdx = googlePhoneIdx !== -1 ? googlePhoneIdx : idx(['phone', 'telefono', 'tel', 'celular']);
+  // "first name" (Google Contacts) trae el usuario de casino.
+  const userIdx = idx(['casino', 'usuario', 'username', 'user', 'first name']);
+  // Exacto primero: "casino_username" también contiene "name" y, si aparece
+  // antes en el header, le robaba la columna al nombre.
+  const nameExact = headers.findIndex((h) => h === 'name' || h === 'nombre');
+  const nameIdx = nameExact !== -1 ? nameExact : idx(['name', 'nombre']);
 
   if (phoneIdx === -1) return [];
 
   return lines.slice(1).flatMap((line) => {
-    const cols = line.split(',').map((c) => c.trim().replace(/^"(.*)"$/, '$1'));
-    const phone = cols[phoneIdx] ?? '';
+    const cols = splitCSVLine(line);
+    // Google separa múltiples teléfonos con ":::" — usamos el primero. Y los
+    // exporta como "+54 9 ..." mientras la base guarda dígitos puros: sin
+    // normalizar acá, el modo actualizar nunca matchearía los existentes.
+    const phoneRaw = (cols[phoneIdx] ?? '').split(':::')[0];
+    const phone = phoneRaw.replace(/\D/g, '');
     if (!phone) return [];
     return [{
       phone,
