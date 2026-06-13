@@ -222,15 +222,16 @@ export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?:
   const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
+  const payload = { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } };
+  console.log(`[sendWhatsAppAudio] → ${to} phoneId=${phoneId} payload=${JSON.stringify(payload)}`);
+
   try {
-    await withTransientRetry(`sendWhatsAppAudio → ${to}`, () =>
-      axios.post(
-        `${BASE_URL}/${phoneId}/messages`,
-        { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } },
-        { headers },
-      ),
+    const res = await withTransientRetry(`sendWhatsAppAudio → ${to}`, () =>
+      axios.post(`${BASE_URL}/${phoneId}/messages`, payload, { headers }),
     );
+    console.log(`[sendWhatsAppAudio] ✓ status=${res.status} body=${JSON.stringify(res.data)}`);
   } catch (err: any) {
+    console.error(`[sendWhatsAppAudio] ✗ status=${err?.response?.status} body=${JSON.stringify(err?.response?.data ?? err?.message)}`);
     logApiError('sendWhatsAppAudio', err);
     throw err;
   }

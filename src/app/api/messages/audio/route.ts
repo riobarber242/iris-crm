@@ -53,10 +53,13 @@ export async function POST(req: NextRequest) {
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
     const content = JSON.stringify({ _type: 'audio', url: publicUrl });
 
+    console.log(`[messages/audio] enviando a ${contact.phone} url=${publicUrl} mime=${baseMime}`);
+
     let whatsappStatus: 'sent' | 'failed' = 'sent';
     try {
       await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id, contact.whatsapp_number_id);
-    } catch {
+    } catch (err) {
+      console.error('[messages/audio] sendWhatsAppAudio falló:', err);
       whatsappStatus = 'failed';
     }
 
