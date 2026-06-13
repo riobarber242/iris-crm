@@ -710,6 +710,7 @@ async function findOrCreateContact(
     const { data: exact } = await supabaseAdmin
       .from('contacts')
       .select(CONTACT_COLS)
+      .eq('tenant_id', tenantId)
       .eq('phone', phone)
       .limit(1)
       .maybeSingle();
@@ -726,6 +727,7 @@ async function findOrCreateContact(
       const { data: fuzzy } = await supabaseAdmin
         .from('contacts')
         .select(CONTACT_COLS)
+        .eq('tenant_id', tenantId)
         .ilike('phone', `%${core}`)
         .order('created_at', { ascending: true })
         .limit(1)
@@ -756,7 +758,7 @@ async function findOrCreateContact(
       console.error('[findOrCreateContact] Insert error:', error.message);
       // Race condition: otro proceso lo creó en paralelo → existía, isNew=false.
       const { data: retry } = await supabaseAdmin
-        .from('contacts').select('*').eq('phone', phone).limit(1).maybeSingle();
+        .from('contacts').select('*').eq('tenant_id', tenantId).eq('phone', phone).limit(1).maybeSingle();
       return { contact: retry ?? null, isNew: false };
     }
 
