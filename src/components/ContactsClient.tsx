@@ -4,11 +4,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 
 type ContactRow = {
-  id:              string;
-  phone:           string;
-  status:          string;
-  casino_username: string;
-  created_at:      string;
+  id:                 string;
+  phone:              string;
+  status:             string;
+  casino_username:    string;
+  whatsapp_number_id: string | null;
+  created_at:         string;
 };
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
@@ -89,6 +90,7 @@ export default function ContactsClient() {
   const [importMode,   setImportMode]   = useState<ImportMode>('insert');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [lines,        setLines]        = useState<WaLine[]>([]);
+  const [lineLabels,   setLineLabels]   = useState<Record<string, string>>({});
   const [importLine,   setImportLine]   = useState('');
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -107,7 +109,11 @@ export default function ContactsClient() {
     fetch('/api/whatsapp-numbers')
       .then((r) => (r.ok ? r.json() : []))
       .then((d: WaLine[]) => {
-        const activas = (Array.isArray(d) ? d : []).filter((l) => l.active);
+        const all = Array.isArray(d) ? d : [];
+        // Mapa id→label de TODAS las líneas (incluso inactivas) para mostrar la
+        // columna Línea aunque el contacto pertenezca a una línea ya desactivada.
+        setLineLabels(Object.fromEntries(all.map((l) => [l.id, l.label ?? l.id])));
+        const activas = all.filter((l) => l.active);
         setLines(activas);
         const def = activas.find((l) => l.is_default) ?? activas[0];
         if (def) setImportLine(def.id);
@@ -298,6 +304,7 @@ export default function ContactsClient() {
             <span />
             <span>Usuario casino</span>
             <span>Teléfono</span>
+            <span>Línea</span>
             <span>Estado</span>
             <span>Alta</span>
             <span />
@@ -324,6 +331,27 @@ export default function ContactsClient() {
 
                 {/* Teléfono */}
                 <p className="c-phone" style={{ margin: 0, fontSize: '13px', color: '#666' }}>{c.phone}</p>
+
+                {/* Línea de WhatsApp */}
+                {(() => {
+                  const label = c.whatsapp_number_id ? lineLabels[c.whatsapp_number_id] : null;
+                  return (
+                    <span className="c-line">
+                      {label ? (
+                        <span style={{
+                          display: 'inline-block', maxWidth: '100%', overflow: 'hidden',
+                          textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom',
+                          background: '#F0F0F0', color: '#555', fontSize: '11px', fontWeight: 700,
+                          borderRadius: '999px', padding: '3px 9px',
+                        }}>
+                          📱 {label}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#ccc', fontSize: '13px' }}>—</span>
+                      )}
+                    </span>
+                  );
+                })()}
 
                 {/* Estado */}
                 <span className="c-status" style={{

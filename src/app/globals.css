@@ -235,7 +235,7 @@ button, input, textarea, select {
 /* ── Tabla de contactos: grid en desktop, tarjeta apilada en mobile ───────── */
 .contact-row {
   display: grid;
-  grid-template-columns: 44px 1fr 1fr 100px 130px 44px;
+  grid-template-columns: 44px 1fr 1fr 90px 100px 120px 44px;
   gap: 12px;
   align-items: center;
 }
@@ -260,23 +260,28 @@ button, input, textarea, select {
    de su columna 1fr. Truncar lo mantiene contenido en cualquier breakpoint. */
 .c-phone { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-user  { min-width: 0; }
+.c-line  { min-width: 0; overflow: hidden; }
 
-/* Mobile: tarjeta de una línea. avatar | usuario · teléfono | 💬.
-   El botón de conversación queda SIEMPRE visible y tocable; estado y fecha
-   se ocultan porque no entran en una sola línea. */
+/* Mobile: tarjeta de dos renglones. Arriba: avatar | usuario · teléfono | 💬.
+   Abajo: el pill de la línea. El botón de conversación queda SIEMPRE visible y
+   tocable; estado y fecha se ocultan porque no entran en la tarjeta. */
 @media (max-width: 639px) {
   .contact-header { display: none; }
 
   .contact-card {
     grid-template-columns: 44px 1fr auto auto;
-    grid-template-areas: "avatar user phone chat";
+    grid-template-areas:
+      "avatar user phone chat"
+      "avatar line line  chat";
     column-gap: 10px;
+    row-gap: 4px;
     padding: 12px 14px;
   }
-  .c-avatar { grid-area: avatar; }
+  .c-avatar { grid-area: avatar; align-self: center; }
   .c-user   { grid-area: user; }
   .c-phone  { grid-area: phone; }
-  .c-chat   { grid-area: chat; }
+  .c-line   { grid-area: line; }
+  .c-chat   { grid-area: chat; align-self: center; }
   .c-status, .c-date { display: none; }
 
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }

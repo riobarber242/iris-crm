@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   // Default: agendados (with casino_username) for /contacts page
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, phone, status, casino_username, created_at')
+    .select('id, phone, status, casino_username, whatsapp_number_id, created_at')
     .eq('tenant_id', session.tenant_id)
     .not('casino_username', 'is', null)
     .neq('casino_username', '')
