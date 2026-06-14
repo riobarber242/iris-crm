@@ -13,6 +13,9 @@ export type Agent = {
   // Perfil de usuario (foto + teléfono).
   avatar_url?: string | null;
   phone?:      string | null;
+  // Cierre de sesión por inactividad (rol operator). Lo lee ActivityGuard.
+  session_timeout_enabled?: boolean;
+  session_timeout_minutes?: number;
 };
 
 // Resultado de refresh(): 'ok' = sesión cargada, 'denied' = 401/403 definitivo

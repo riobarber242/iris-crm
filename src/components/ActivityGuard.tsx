@@ -1,15 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useAuth } from './AuthProvider';
 
-// Sistema de actividad para operadores: tras 20 min de inactividad aparece un
+// Sistema de actividad para operadores: tras N min de inactividad aparece un
 // popup con countdown de 60 s. Si no responde, cierra la sesión y redirige a
 // /login. Sólo se monta para el rol operator (ver AdminShell).
-const INACTIVITY_MS     = 20 * 60 * 1000; // 20 minutos
+// N (minutos) y el on/off son configurables por operador (agents.session_timeout_*);
+// default = 20 min activado, que replica el comportamiento histórico.
 const COUNTDOWN_SECONDS = 60;
 const IRIS = '#F97316';
 
 export default function ActivityGuard({ children }: { children: ReactNode }) {
+  const { agent } = useAuth();
+  // Fallback al comportamiento histórico si /api/auth/me aún no trae los campos.
+  const timeoutEnabled = agent?.session_timeout_enabled ?? true;
+  const timeoutMinutes = agent?.session_timeout_minutes ?? 20;
+  const INACTIVITY_MS  = Math.max(1, timeoutMinutes) * 60 * 1000;
+
   const [showPopup,   setShowPopup]   = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(COUNTDOWN_SECONDS);
 
@@ -38,7 +46,7 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
     if (countdownTimer.current) { clearInterval(countdownTimer.current); countdownTimer.current = null; }
   }, []);
 
-  // (Re)arranca el timer de 20 min. Se llama al montar y con cada acción del usuario.
+  // (Re)arranca el timer de inactividad. Se llama al montar y con cada acción.
   const startInactivityTimer = useCallback(() => {
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
     inactivityTimer.current = setTimeout(() => {
@@ -50,9 +58,9 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
       }, 1000);
       logoutTimer.current = setTimeout(doLogout, COUNTDOWN_SECONDS * 1000);
     }, INACTIVITY_MS);
-  }, [doLogout]);
+  }, [doLogout, INACTIVITY_MS]);
 
-  // "Sí, sigo activo": cierra el popup y reinicia el ciclo de 20 min.
+  // "Sí, sigo activo": cierra el popup y reinicia el ciclo.
   const stayActive = useCallback(() => {
     popupOpenRef.current = false;
     setShowPopup(false);
@@ -61,6 +69,16 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
   }, [clearCountdown, startInactivityTimer]);
 
   useEffect(() => {
+    // Timer desactivado para este operador → la sesión no expira nunca.
+    // Limpiamos cualquier popup/timer que hubiera quedado de una config previa.
+    if (!timeoutEnabled) {
+      popupOpenRef.current = false;
+      setShowPopup(false);
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+      clearCountdown();
+      return;
+    }
+
     startInactivityTimer();
 
     const onActivity = () => {
@@ -77,7 +95,7 @@ export default function ActivityGuard({ children }: { children: ReactNode }) {
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
       clearCountdown();
     };
-  }, [startInactivityTimer, clearCountdown]);
+  }, [timeoutEnabled, startInactivityTimer, clearCountdown]);
 
   // Geometría del countdown circular.
   const SIZE = 132;

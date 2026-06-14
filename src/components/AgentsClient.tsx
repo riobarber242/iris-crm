@@ -15,6 +15,8 @@ type Agent = {
   system_prompt: string | null;
   can_see_top_clients: boolean;
   can_see_campaigns: boolean;
+  session_timeout_enabled: boolean;
+  session_timeout_minutes: number;
   created_at: string;
 };
 
@@ -36,7 +38,7 @@ export default function AgentsClient() {
   const [error,   setError]   = useState('');
 
   // create form
-  const [nu, setNu] = useState({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false });
+  const [nu, setNu] = useState({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
   const [creating, setCreating] = useState(false);
 
   // inline edit
@@ -67,7 +69,7 @@ export default function AgentsClient() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false });
+        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
         fetchAgents();
       } else {
         setError(d.error ?? 'No se pudo crear');
@@ -78,7 +80,7 @@ export default function AgentsClient() {
 
   function startEdit(a: Agent) {
     setEditId(a.id);
-    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '', can_see_top_clients: a.can_see_top_clients, can_see_campaigns: a.can_see_campaigns });
+    setDraft({ name: a.name, email: a.email ?? '', role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '', can_see_top_clients: a.can_see_top_clients, can_see_campaigns: a.can_see_campaigns, session_timeout_enabled: a.session_timeout_enabled, session_timeout_minutes: a.session_timeout_minutes });
   }
 
   async function deleteAgent(a: Agent) {
@@ -152,6 +154,19 @@ export default function AgentsClient() {
             </span>
           </Field>
         )}
+        {nu.role === 'operator' && (
+          <Field label="Cierre por inactividad">
+            <span style={{ display: 'flex', gap: '10px', alignItems: 'center', height: '34px' }}>
+              <PermCheck label="Activado" checked={nu.session_timeout_enabled} onChange={v => setNu({ ...nu, session_timeout_enabled: v })} />
+              {nu.session_timeout_enabled && (
+                <>
+                  <input style={{ ...inputStyle, width: '64px' }} type="number" min={1} max={1440} value={nu.session_timeout_minutes} onChange={e => setNu({ ...nu, session_timeout_minutes: Number(e.target.value) })} />
+                  <span style={{ fontSize: '12px', color: '#888' }}>min</span>
+                </>
+              )}
+            </span>
+          </Field>
+        )}
         <button type="submit" disabled={creating} style={{ ...btn('#C8FF00', '#000'), padding: '10px 18px', fontSize: '13px' }}>
           {creating ? 'Creando…' : '+ Crear agente'}
         </button>
@@ -194,10 +209,11 @@ export default function AgentsClient() {
                     </select>
                   : <span style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : a.role === 'operator' ? 'Operador' : 'Agente'}</span>
-                      {a.role === 'operator' && (a.can_see_top_clients || a.can_see_campaigns) && (
+                      {a.role === 'operator' && (
                         <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
                           {a.can_see_top_clients && <PermPill label="Top" />}
                           {a.can_see_campaigns && <PermPill label="Camp" />}
+                          <PermPill label={a.session_timeout_enabled ? `⏱ ${a.session_timeout_minutes}m` : '⏱ off'} />
                         </span>
                       )}
                     </span>}
@@ -249,6 +265,20 @@ export default function AgentsClient() {
                     <span style={{ display: 'flex', gap: '18px', alignItems: 'center' }}>
                       <PermCheck label="Ver Top Clientes" checked={!!draft.can_see_top_clients} onChange={v => setDraft({ ...draft, can_see_top_clients: v })} />
                       <PermCheck label="Ver Campañas" checked={!!draft.can_see_campaigns} onChange={v => setDraft({ ...draft, can_see_campaigns: v })} />
+                    </span>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '6px' }}>
+                      Cierre de sesión por inactividad
+                    </label>
+                    <span style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <PermCheck label="Activado" checked={draft.session_timeout_enabled ?? true} onChange={v => setDraft({ ...draft, session_timeout_enabled: v })} />
+                      {(draft.session_timeout_enabled ?? true) ? (
+                        <>
+                          <input style={{ ...inputStyle, width: '70px' }} type="number" min={1} max={1440} value={draft.session_timeout_minutes ?? 20} onChange={e => setDraft({ ...draft, session_timeout_minutes: Number(e.target.value) })} />
+                          <span style={{ fontSize: '12px', color: '#888' }}>minutos sin actividad</span>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: '#888' }}>La sesión de este operador no expira nunca.</span>
+                      )}
                     </span>
                   </div>
                 )}

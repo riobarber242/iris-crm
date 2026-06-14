@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, created_at';
 
 // PATCH /api/agents/[id] — editar agente (admin)
 // Campos permitidos: name, email, role, active, schedule_start, schedule_end,
-// system_prompt, can_see_top_clients, can_see_campaigns.
+// system_prompt, can_see_top_clients, can_see_campaigns,
+// session_timeout_enabled, session_timeout_minutes.
 // (username inmutable; password se cambia en /api/agents/[id]/password)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const admin = await requireAdmin();
@@ -26,6 +27,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.system_prompt !== undefined)  updates.system_prompt  = String(body.system_prompt);
   if (body.can_see_top_clients !== undefined) updates.can_see_top_clients = !!body.can_see_top_clients;
   if (body.can_see_campaigns !== undefined)   updates.can_see_campaigns   = !!body.can_see_campaigns;
+  if (body.session_timeout_enabled !== undefined) updates.session_timeout_enabled = !!body.session_timeout_enabled;
+  if (body.session_timeout_minutes !== undefined) {
+    const n = Number(body.session_timeout_minutes);
+    if (!Number.isInteger(n) || n < 1 || n > 1440) {
+      return NextResponse.json({ error: 'Los minutos de cierre de sesión deben ser un entero entre 1 y 1440' }, { status: 400 });
+    }
+    updates.session_timeout_minutes = n;
+  }
 
   // Si se cambia el rol a algo que no es 'operator', limpiamos los permisos
   // opcionales (admin/agent ya ven todo; no tiene sentido dejar flags colgados).

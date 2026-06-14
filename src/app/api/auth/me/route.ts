@@ -13,7 +13,7 @@ export async function GET() {
   // Re-validate against DB so deactivation / deletion takes effect immediately
   const { data: agent } = await supabaseAdmin
     .from('agents')
-    .select('id, name, role, active, can_see_top_clients, can_see_campaigns, avatar_url, phone')
+    .select('id, name, role, active, can_see_top_clients, can_see_campaigns, avatar_url, phone, session_timeout_enabled, session_timeout_minutes')
     .eq('id', session.sub)
     .maybeSingle();
 
@@ -29,5 +29,7 @@ export async function GET() {
     can_see_campaigns:   !!agent.can_see_campaigns,
     avatar_url: agent.avatar_url ?? null,
     phone:      agent.phone ?? null,
+    session_timeout_enabled: agent.session_timeout_enabled ?? true,
+    session_timeout_minutes: agent.session_timeout_minutes ?? 20,
   });
 }
