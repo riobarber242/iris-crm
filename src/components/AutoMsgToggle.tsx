@@ -5,12 +5,14 @@ import React, { useEffect, useState } from 'react';
 export default function AutoMsgToggle() {
   const [enabled,  setEnabled]  = useState<boolean>(false);
   const [loading,  setLoading]  = useState(false);
+  const [ready,    setReady]    = useState(false); // GET inicial resuelto
 
   useEffect(() => {
     fetch('/api/settings/auto-verificacion')
       .then((r) => r.json())
       .then((d) => setEnabled(d.enabled))
-      .catch(() => {}); // si falla, queda en false por defecto
+      .catch(() => {})           // si falla, queda en false por defecto
+      .finally(() => setReady(true));
   }, []);
 
   async function toggle() {
@@ -39,26 +41,28 @@ export default function AutoMsgToggle() {
           Notificación automática al verificar
         </p>
         <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
-          {enabled
+          {!ready
+            ? 'Cargando configuración…'
+            : enabled
             ? 'Al verificar un comprobante se envía "Tu recarga de $X fue confirmada ✅" por WhatsApp.'
             : 'La notificación automática está desactivada. El cliente no recibe mensaje al verificar.'}
         </p>
       </div>
       <button
         onClick={toggle}
-        disabled={loading}
+        disabled={loading || !ready}
         style={{
-          background: enabled ? '#C8FF00' : '#1a1a1a',
-          color:      enabled ? '#000'    : '#fff',
+          background: !ready ? '#EAEAEA' : enabled ? '#C8FF00' : '#1a1a1a',
+          color:      !ready ? '#999'    : enabled ? '#000'    : '#fff',
           fontWeight: 800, fontSize: '14px', border: 'none',
           borderRadius: '999px', padding: '10px 20px',
-          cursor: loading ? 'not-allowed' : 'pointer',
+          cursor: loading || !ready ? 'not-allowed' : 'pointer',
           opacity: loading ? 0.6 : 1, transition: 'all 0.2s',
           minWidth: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
         }}
       >
-        <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: enabled ? '#3a7a00' : '#888', display: 'inline-block', flexShrink: 0 }} />
-        {loading ? '...' : enabled ? 'Activado' : 'Desactivado'}
+        <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: !ready ? '#bbb' : enabled ? '#3a7a00' : '#888', display: 'inline-block', flexShrink: 0 }} />
+        {!ready ? '…' : loading ? '...' : enabled ? 'Activado' : 'Desactivado'}
       </button>
     </div>
   );
