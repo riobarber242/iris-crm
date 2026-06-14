@@ -179,3 +179,263 @@ export async function recargarFichas(session: SessionPayload, cantidad: number):
     return { ok: false, error: err?.message ?? 'Error al recargar fichas' };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Etapa 3 — enganche con el flujo de verificar/editar comprobantes.
+//
+// Red de seguridad: el descuento solo corre si el flag `caja_enabled` del tenant
+// está en 'true' (arranca APAGADO). Apagado o sin migración → no descuenta y la
+// verificación sigue como siempre. Encendido + sin fichas → bloquea la verif.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAJA_FLAG_KEY = 'caja_enabled';
+
+// Lee el flag por tenant. Default OFF (sin fila, error o valor != 'true' → false).
+export async function isCajaEnabled(session: SessionPayload): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings').select('value')
+      .eq('key', CAJA_FLAG_KEY).eq('tenant_id', session.tenant_id).maybeSingle();
+    if (error) return false;
+    return data?.value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+// applied=false  → no correspondía cobrar (caja apagada, sin migración, tipo !=
+//                  carga, monto<=0, o YA cobrado): el caller verifica normal.
+// ok=false       → error de negocio real (ej. fichas insuficientes): el caller
+//                  NO debe verificar (consistencia: o pasan los dos o ninguno).
+export type VerifyCajaResult =
+  | { ok: true;  applied: boolean }
+  | { ok: false; error: string };
+
+// Descuenta una carga al verificar el comprobante. Guard anti-doble-cobro: si ya
+// existe un movimiento para ese comprobante, no vuelve a cobrar (applied=false).
+export async function aplicarCargaComprobante(
+  session: SessionPayload,
+  p: { comprobanteId: string; tipo?: string | null; monto: number; bono?: number | null },
+): Promise<VerifyCajaResult> {
+  if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
+
+  const tipo = p.tipo ?? 'carga';
+  if (tipo !== 'carga') return { ok: true, applied: false };
+
+  const monto = Math.trunc(Number(p.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: true, applied: false };
+
+  // Guard anti-doble-cobro: un comprobante tiene UN solo movimiento asociado.
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('movimientos').select('id')
+      .eq('tenant_id', session.tenant_id).eq('comprobante_id', p.comprobanteId)
+      .limit(1).maybeSingle();
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: true, applied: false };
+      return { ok: false, error: error.message };
+    }
+    if (data) return { ok: true, applied: false }; // ya cobrado antes
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: true, applied: false };
+    return { ok: false, error: err?.message ?? 'Error verificando movimientos' };
+  }
+
+  const r = await aplicarMovimiento(session, {
+    operadorId:    session.sub,
+    tipo:          'carga',
+    monto,
+    bono:          p.bono ?? null,
+    comprobanteId: p.comprobanteId,
+  });
+  if (r.ok) return { ok: true, applied: true };
+  if (r.degraded) return { ok: true, applied: false };
+  return { ok: false, error: r.error };
+}
+
+export type EditMovimientoResult =
+  | { ok: true;  applied: boolean }
+  | { ok: false; error: string };
+
+// Reedita el movimiento del comprobante: revierte el anterior y reaplica con los
+// valores nuevos SOBRE LA MISMA fila (un solo movimiento neto por comprobante).
+// Si no había movimiento (histórico / caja apagada al verificar), no crea ninguno.
+export async function editarMovimientoComprobante(
+  session: SessionPayload,
+  p: { comprobanteId: string; monto: number; bono?: number | null },
+): Promise<EditMovimientoResult> {
+  if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
+
+  const monto = Math.trunc(Number(p.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto inválido' };
+  const bono = p.bono != null && Number(p.bono) > 0 ? Math.trunc(Number(p.bono)) : 0;
+  const { fichas_delta, billetera_delta } = computeDeltas('carga', monto, bono);
+
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_editar_movimiento_comprobante', {
+      p_tenant:              session.tenant_id,
+      p_comprobante:         p.comprobanteId,
+      p_tipo:                'carga',
+      p_monto:               monto,
+      p_bono:                bono > 0 ? bono : null,
+      p_new_fichas_delta:    fichas_delta,
+      p_new_billetera_delta: billetera_delta,
+      p_editor:              session.sub,
+      p_editor_name:         session.name,
+    });
+
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: true, applied: false };
+      return { ok: false, error: error.message };
+    }
+
+    const res = data as { applied: boolean; movimiento_id?: string; stock_actual?: number; saldo_actual?: number };
+    if (res?.applied) {
+      await logActivity({
+        session,
+        action:     ACTIVITY.MOVIMIENTO_CAJA,
+        objectType: 'movimiento',
+        objectId:   res.movimiento_id ?? p.comprobanteId,
+        details: {
+          tipo: 'carga', edicion: true, monto, bono,
+          comprobante_id: p.comprobanteId,
+          stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
+        },
+      });
+    }
+    return { ok: true, applied: !!res?.applied };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: true, applied: false };
+    return { ok: false, error: err?.message ?? 'Error al reeditar el movimiento' };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Etapa 3 — Parte 4: control manual del agente (modo prueba / mantenimiento).
+//
+// TODAS estas funciones son SOLO admin/agent: el operator es lectura pura sobre
+// la caja. El chequeo de rol va acá (server-side, defensa en profundidad además
+// del middleware y el requireStaff del endpoint). Los overrides NO aplican el
+// guard de negativo a propósito ("control total"): el front avisa si un ajuste
+// deja stock/billetera en negativo, pero no bloquea.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isStaff(session: SessionPayload): boolean {
+  return session.role === 'admin' || session.role === 'agent';
+}
+
+export type ManualResult =
+  | { ok: true;  stock?: number; saldo?: number; info?: Record<string, any> }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Setea el pozo a un valor exacto (override). Permite cualquier entero (incluso
+// negativo: el front avisa). Registra antes/después en activity_log.
+export async function setStock(session: SessionPayload, nuevo: number): Promise<ManualResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  const v = Math.trunc(Number(nuevo));
+  if (!Number.isFinite(v)) return { ok: false, error: 'Valor inválido' };
+  const tid = session.tenant_id;
+
+  try {
+    const { data: prev } = await supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle();
+    const { error } = await supabaseAdmin
+      .from('fichas_stock')
+      .upsert({ tenant_id: tid, stock_actual: v, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id' });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    await logActivity({
+      session, action: ACTIVITY.CAJA_AJUSTE_MANUAL, objectType: 'fichas_stock', objectId: tid,
+      details: { campo: 'stock', antes: Number(prev?.stock_actual ?? 0), despues: v },
+    });
+    return { ok: true, stock: v };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al ajustar el stock' };
+  }
+}
+
+// Setea la billetera de un operador a un valor exacto (override). `nuevo`=0 sirve
+// también como "resetear a cero". Permite negativo (el front avisa).
+export async function setBilletera(session: SessionPayload, operadorId: string, nuevo: number): Promise<ManualResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  if (!operadorId) return { ok: false, error: 'Falta el operador' };
+  const v = Math.trunc(Number(nuevo));
+  if (!Number.isFinite(v)) return { ok: false, error: 'Valor inválido' };
+  const tid = session.tenant_id;
+
+  try {
+    const { data: prev } = await supabaseAdmin
+      .from('operador_billetera').select('saldo_actual').eq('tenant_id', tid).eq('operador_id', operadorId).maybeSingle();
+    const { error } = await supabaseAdmin
+      .from('operador_billetera')
+      .upsert({ tenant_id: tid, operador_id: operadorId, saldo_actual: v, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id,operador_id' });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    await logActivity({
+      session, action: ACTIVITY.CAJA_AJUSTE_MANUAL, objectType: 'operador_billetera', objectId: operadorId,
+      details: { campo: 'billetera', operador_id: operadorId, antes: Number(prev?.saldo_actual ?? 0), despues: v },
+    });
+    return { ok: true, saldo: v };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al ajustar la billetera' };
+  }
+}
+
+// Borra un movimiento y revierte su efecto en pozo + billetera (atómico en SQL).
+export async function borrarMovimiento(session: SessionPayload, movimientoId: string): Promise<ManualResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  if (!movimientoId) return { ok: false, error: 'Falta el movimiento' };
+
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_borrar_movimiento', {
+      p_tenant: session.tenant_id,
+      p_mov_id: movimientoId,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    const res = data as { found: boolean; stock_actual?: number; saldo_actual?: number };
+    if (!res?.found) return { ok: false, error: 'El movimiento ya no existe' };
+
+    await logActivity({
+      session, action: ACTIVITY.CAJA_AJUSTE_MANUAL, objectType: 'movimiento', objectId: movimientoId,
+      details: { campo: 'borrar_movimiento', stock_actual: res.stock_actual, saldo_actual: res.saldo_actual },
+    });
+    return { ok: true, stock: res.stock_actual, saldo: res.saldo_actual };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al borrar el movimiento' };
+  }
+}
+
+// Reset total de la caja (modo prueba): pozo 0, billeteras 0, borra movimientos y
+// cierres. Comprobantes solo si borrarComprobantes=true. Atómico en SQL.
+export async function resetTotal(session: SessionPayload, borrarComprobantes: boolean): Promise<ManualResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_reset_total', {
+      p_tenant: session.tenant_id,
+      p_borrar_comprobantes: !!borrarComprobantes,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    const info = data as Record<string, any>;
+    await logActivity({
+      session, action: ACTIVITY.CAJA_RESET, objectType: 'caja', objectId: session.tenant_id,
+      details: { borrar_comprobantes: !!borrarComprobantes, ...info },
+    });
+    return { ok: true, info };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error en el reset' };
+  }
+}

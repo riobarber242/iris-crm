@@ -32,6 +32,8 @@ const STAFF_PREFIXES = [
   '/api/dashboard_metric',
   '/agentes',
   '/api/agents',
+  '/fichas',          // caja de fichas: admin + agent (el operator no entra)
+  '/api/fichas',
   '/configuracion',
   '/mi-bot',
   '/api/settings/offline-msg',

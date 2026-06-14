@@ -1,0 +1,383 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pantalla de Caja de fichas (solo admin/agent). Parte 2: stock del pozo,
+// encender/apagar la caja, recargar fichas e historial de movimientos.
+// Los controles manuales/destructivos del agente llegan en la Parte 4.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Billetera = {
+  operador_id: string; name: string; role: string | null; saldo: number; turno_abierto: boolean;
+};
+type Movimiento = {
+  id: string; tipo: string; monto: number; bono: number | null;
+  fichas_delta: number; billetera_delta: number;
+  operador_id: string | null; operador_name: string; creado_por_name: string | null;
+  comprobante_id: string | null; editado: boolean; created_at: string;
+};
+type Resumen = {
+  caja_enabled: boolean; degraded?: boolean; stock: number; total_billeteras: number;
+  billeteras: Billetera[]; movimientos: Movimiento[];
+};
+
+const fmt = (n: number) => n.toLocaleString('es-AR');
+
+function formatFecha(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const fecha = d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' }).replace(/\.$/, '');
+  const hora  = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return `${fecha} ${hora}`;
+}
+
+const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
+  carga:    { bg: '#e8fff0', fg: '#1a7a3a' },
+  pago:     { bg: '#fff0f0', fg: '#c0392b' },
+  descarga: { bg: '#fff7e6', fg: '#b8860b' },
+  sueldo:   { bg: '#f0eaff', fg: '#6b3fb0' },
+  traspaso: { bg: '#e6f4ff', fg: '#1d6fb8' },
+};
+
+const btn = (bg: string, fg: string): React.CSSProperties => ({
+  background: bg, color: fg, fontWeight: 700, fontSize: '13px', border: 'none',
+  borderRadius: '10px', padding: '10px 18px', cursor: 'pointer',
+});
+
+export default function FichasClient() {
+  const [data, setData]       = useState<Resumen | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
+
+  const [cargar, setCargar]   = useState('');
+  const [busy, setBusy]       = useState(false);
+
+  // ── Parte 4: controles manuales (overrides del agente) ──
+  const [editStock, setEditStock]   = useState(false);
+  const [stockVal,  setStockVal]    = useState('');
+  const [editBillId, setEditBillId] = useState<string | null>(null);
+  const [billVal,    setBillVal]    = useState('');
+  const [resetOpen,  setResetOpen]  = useState(false);
+  const [resetText,  setResetText]  = useState('');
+  const [resetComps, setResetComps] = useState(false);
+
+  async function fetchResumen() {
+    try {
+      const res = await fetch('/api/fichas');
+      if (!res.ok) { setError(await res.text().catch(() => '') || 'No se pudo cargar la caja'); return; }
+      setData(await res.json());
+      setError('');
+    } catch {
+      setError('Error de red');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { fetchResumen(); }, []);
+
+  async function post(payload: Record<string, any>): Promise<boolean> {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/fichas', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) { setError(await res.text().catch(() => '') || 'No se pudo completar la acción'); return false; }
+      await fetchResumen();
+      return true;
+    } catch {
+      setError('Error de red');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recargar() {
+    const n = parseInt(cargar.replace(/\D/g, ''), 10);
+    if (!Number.isInteger(n) || n <= 0) { setError('Ingresá una cantidad mayor a 0'); return; }
+    const ok = await post({ action: 'recargar', cantidad: n });
+    if (ok) setCargar('');
+  }
+
+  async function toggleCaja() {
+    if (!data) return;
+    await post({ action: 'set_caja_enabled', enabled: !data.caja_enabled });
+  }
+
+  // Avisa (no bloquea) si un override deja un valor en negativo.
+  function confirmNegativo(label: string, val: number): boolean {
+    if (val >= 0) return true;
+    return window.confirm(`⚠️ Esto deja ${label} en ${fmt(val)} (NEGATIVO). ¿Seguro que querés continuar?`);
+  }
+
+  function parseEntero(s: string): number | null {
+    const t = s.trim();
+    if (t === '' || t === '-') return null;
+    const n = parseInt(t, 10);
+    return Number.isInteger(n) ? n : null;
+  }
+
+  async function saveStock() {
+    const n = parseEntero(stockVal);
+    if (n === null) { setError('Ingresá un número entero válido'); return; }
+    if (!confirmNegativo('el stock', n)) return;
+    const ok = await post({ action: 'set_stock', stock: n });
+    if (ok) setEditStock(false);
+  }
+
+  async function saveBilletera(operadorId: string) {
+    const n = parseEntero(billVal);
+    if (n === null) { setError('Ingresá un número entero válido'); return; }
+    if (!confirmNegativo('la billetera', n)) return;
+    const ok = await post({ action: 'set_billetera', operadorId, saldo: n });
+    if (ok) setEditBillId(null);
+  }
+
+  async function resetBilletera(operadorId: string, name: string) {
+    if (!window.confirm(`Resetear la billetera de ${name} a 0?`)) return;
+    await post({ action: 'reset_billetera', operadorId });
+  }
+
+  async function borrarMov(id: string) {
+    if (!window.confirm('Borrar este movimiento y revertir su efecto en stock y billetera?')) return;
+    await post({ action: 'borrar_movimiento', movimientoId: id });
+  }
+
+  async function doResetTotal() {
+    if (resetText !== 'RESET') { setError('Escribí RESET para confirmar'); return; }
+    const extra = resetComps ? '\n\n⚠️ También se borrarán TODOS los comprobantes.' : '';
+    if (!window.confirm(`Reset total de la caja: pozo a 0, billeteras a 0, borra movimientos y cierres.${extra}\n\n¿Confirmás?`)) return;
+    const ok = await post({ action: 'reset_total', confirm: 'RESET', borrar_comprobantes: resetComps });
+    if (ok) { setResetOpen(false); setResetText(''); setResetComps(false); }
+  }
+
+  if (loading) {
+    return <p style={{ textAlign: 'center', color: '#999', fontSize: '14px', padding: '20px' }}>Cargando caja…</p>;
+  }
+
+  const enabled = !!data?.caja_enabled;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+      {error && (
+        <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
+
+      {data?.degraded && (
+        <div style={{ background: '#FFF6E0', color: '#9a6b00', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
+          La caja no está inicializada en la base. Corré <code>supabase-caja-fichas.sql</code> en Supabase para empezar a usarla.
+        </div>
+      )}
+
+      {/* Stock del pozo */}
+      <div style={{ background: '#0a0a0a', borderRadius: '18px', padding: '24px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <p style={{ margin: 0, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#aaff00' }}>
+            Stock del pozo
+          </p>
+          <p style={{ margin: '6px 0 0', fontSize: '44px', fontWeight: 900, color: '#fff', lineHeight: 1 }}>
+            {fmt(data?.stock ?? 0)}
+          </p>
+          <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#888' }}>
+            fichas disponibles · billeteras: {fmt(data?.total_billeteras ?? 0)}
+          </p>
+          {/* Ajuste manual del stock (override del agente). */}
+          {editStock ? (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '10px' }}>
+              <input
+                type="number" step="1" value={stockVal}
+                onChange={(e) => setStockVal(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveStock(); if (e.key === 'Escape') setEditStock(false); }}
+                placeholder="nuevo stock" autoFocus
+                style={{ width: '130px', padding: '6px 10px', border: '2px solid #555', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#1a1a1a', color: '#fff' }}
+              />
+              <button onClick={saveStock} disabled={busy} style={{ ...btn('#C8FF00', '#000'), padding: '6px 12px' }}>OK</button>
+              <button onClick={() => setEditStock(false)} style={{ ...btn('#3a3a3a', '#ccc'), padding: '6px 12px' }}>✕</button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setEditStock(true); setStockVal(String(data?.stock ?? 0)); }}
+              style={{ ...btn('transparent', '#888'), padding: '4px 0', fontSize: '11px', textDecoration: 'underline' }}
+            >
+              ✎ Ajustar stock a mano
+            </button>
+          )}
+        </div>
+
+        {/* On/off de la caja */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <span style={{
+            fontSize: '12px', fontWeight: 800, padding: '4px 12px', borderRadius: '999px',
+            background: enabled ? '#1a7a3a' : '#333', color: enabled ? '#C8FF00' : '#bbb',
+          }}>
+            {enabled ? '● Caja ACTIVA' : '○ Caja apagada'}
+          </span>
+          <button onClick={toggleCaja} disabled={busy} style={btn(enabled ? '#3a3a3a' : '#C8FF00', enabled ? '#fff' : '#000')}>
+            {enabled ? 'Apagar caja' : 'Activar caja'}
+          </button>
+          <span style={{ fontSize: '11px', color: '#777', maxWidth: '220px', textAlign: 'right', lineHeight: 1.4 }}>
+            {enabled
+              ? 'Verificar una carga descuenta fichas del pozo.'
+              : 'Apagada: verificar NO descuenta fichas (modo seguro).'}
+          </span>
+        </div>
+      </div>
+
+      {/* Cargar fichas al pozo */}
+      <div style={{ background: '#fff', borderRadius: '16px', padding: '18px 20px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Cargar fichas</p>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="number" min="1" step="1" value={cargar}
+            onChange={(e) => setCargar(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') recargar(); }}
+            placeholder="Cantidad de fichas"
+            style={{ flex: 1, minWidth: '180px', padding: '10px 12px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 700, outline: 'none', background: '#F7F7F7' }}
+          />
+          <button onClick={recargar} disabled={busy} style={btn('#C8FF00', '#000')}>
+            {busy ? '…' : '+ Sumar al pozo'}
+          </button>
+        </div>
+      </div>
+
+      {/* Billeteras por operador (con controles manuales del agente) */}
+      {(data?.billeteras.length ?? 0) > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Billeteras por operador</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {data!.billeteras.map((b) => {
+              const editing = editBillId === b.operador_id;
+              return (
+                <div key={b.operador_id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>
+                    {b.name}
+                    {b.role && b.role !== 'operator' && (
+                      <span style={{ fontSize: '10px', fontWeight: 700, color: '#aaa', marginLeft: '6px', textTransform: 'uppercase' }}>{b.role}</span>
+                    )}
+                  </span>
+                  {editing ? (
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        type="number" step="1" value={billVal}
+                        onChange={(e) => setBillVal(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveBilletera(b.operador_id); if (e.key === 'Escape') setEditBillId(null); }}
+                        placeholder="nuevo saldo" autoFocus
+                        style={{ width: '120px', padding: '5px 8px', border: '2px solid #C8FF00', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#f9ffe0' }}
+                      />
+                      <button onClick={() => saveBilletera(b.operador_id)} disabled={busy} style={{ ...btn('#C8FF00', '#000'), padding: '5px 10px', fontSize: '12px' }}>OK</button>
+                      <button onClick={() => setEditBillId(null)} style={{ ...btn('#F0F0F0', '#888'), padding: '5px 10px', fontSize: '12px' }}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '15px', fontWeight: 800, color: b.saldo < 0 ? '#c0392b' : '#111' }}>{fmt(b.saldo)}</span>
+                      <button onClick={() => { setEditBillId(b.operador_id); setBillVal(String(b.saldo)); }} style={{ ...btn('#F0F0F0', '#333'), padding: '4px 10px', fontSize: '11px' }}>Editar</button>
+                      <button onClick={() => resetBilletera(b.operador_id, b.name)} style={{ ...btn('#FFF0F0', '#c0392b'), padding: '4px 10px', fontSize: '11px' }}>Reset 0</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Historial de movimientos */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Movimientos recientes</p>
+        {(data?.movimientos.length ?? 0) === 0 ? (
+          <p style={{ color: '#bbb', fontSize: '14px', padding: '16px 0', textAlign: 'center' }}>Todavía no hay movimientos.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {data!.movimientos.map((m) => {
+              const ts = TIPO_STYLE[m.tipo] ?? { bg: '#eee', fg: '#555' };
+              return (
+                <div key={m.id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '3px 10px', borderRadius: '999px', background: ts.bg, color: ts.fg }}>
+                      {m.tipo}
+                    </span>
+                    <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>${fmt(m.monto)}</span>
+                    {!!m.bono && m.bono > 0 && (
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#7a5a00' }}>🎁 {fmt(m.bono)}</span>
+                    )}
+                    {m.editado && (
+                      <span style={{ fontSize: '10px', fontWeight: 700, color: '#b58900', background: '#fff7e6', borderRadius: '6px', padding: '2px 6px' }}>editado</span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#888' }}>
+                    <span style={{ color: m.fichas_delta < 0 ? '#c0392b' : m.fichas_delta > 0 ? '#1a7a3a' : '#aaa', fontWeight: 700 }}>
+                      {m.fichas_delta > 0 ? '+' : ''}{fmt(m.fichas_delta)} fichas
+                    </span>
+                    <span>{m.operador_name}</span>
+                    <span>{formatFecha(m.created_at)}</span>
+                    <button
+                      onClick={() => borrarMov(m.id)}
+                      title="Borrar movimiento y revertir su efecto"
+                      style={{ ...btn('transparent', '#c0392b'), padding: '2px 6px', fontSize: '14px', lineHeight: 1 }}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── ZONA DE PELIGRO ──────────────────────────────────────────────── */}
+      <div style={{ marginTop: '12px', border: '2px solid #f0b0b0', background: '#fff7f7', borderRadius: '16px', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '16px' }}>⚠️</span>
+          <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 900, color: '#c0392b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Zona de peligro
+          </h3>
+        </div>
+        <p style={{ margin: 0, fontSize: '13px', color: '#a05050', lineHeight: 1.5 }}>
+          El reset total pone el pozo en 0, todas las billeteras en 0 y borra movimientos y cierres de turno.
+          Los comprobantes NO se borran salvo que tildes la opción. Esto no se puede deshacer.
+        </p>
+
+        {!resetOpen ? (
+          <button onClick={() => setResetOpen(true)} style={{ ...btn('#c0392b', '#fff'), alignSelf: 'flex-start' }}>
+            Reset total de la caja
+          </button>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#fff', border: '1px solid #f0c0c0', borderRadius: '12px', padding: '14px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#a05050' }}>
+              <input type="checkbox" checked={resetComps} onChange={(e) => setResetComps(e.target.checked)} />
+              Borrar también todos los comprobantes de prueba
+            </label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#333' }}>Escribí <b>RESET</b> para confirmar:</span>
+              <input
+                value={resetText}
+                onChange={(e) => setResetText(e.target.value)}
+                placeholder="RESET"
+                style={{ width: '120px', padding: '8px 10px', border: '2px solid #c0392b', borderRadius: '8px', fontSize: '13px', fontWeight: 800, outline: 'none', letterSpacing: '0.1em' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={doResetTotal}
+                disabled={busy || resetText !== 'RESET'}
+                style={{ ...btn(resetText === 'RESET' ? '#c0392b' : '#e0a0a0', '#fff'), cursor: resetText === 'RESET' ? 'pointer' : 'not-allowed' }}
+              >
+                {busy ? '…' : 'Ejecutar reset total'}
+              </button>
+              <button onClick={() => { setResetOpen(false); setResetText(''); setResetComps(false); }} style={btn('#F0F0F0', '#666')}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

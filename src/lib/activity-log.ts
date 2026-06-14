@@ -15,6 +15,8 @@ export const ACTIVITY = {
   COMPROBANTE_EDITADO:    'editar_comprobante',     // editó monto/bono de un comprobante ya resuelto
   RECARGA_FICHAS:         'recarga_fichas',         // agente/admin recargó el pozo de fichas
   MOVIMIENTO_CAJA:        'movimiento_caja',        // movimiento de caja (carga/pago/descarga/sueldo/traspaso)
+  CAJA_AJUSTE_MANUAL:     'caja_ajuste_manual',     // override del agente (set stock/billetera, borrar movimiento)
+  CAJA_RESET:             'caja_reset',             // reset total de la caja (modo prueba)
 
   MESSAGE_SENT:           'message_sent',          // respondió una conversación
   CONVERSATION_ATTENDED:  'conversation_attended', // atendió (abrió chat con mensajes sin leer)

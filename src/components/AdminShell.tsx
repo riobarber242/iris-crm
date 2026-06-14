@@ -16,6 +16,7 @@ const navLabels: Record<string, string> = {
   conversaciones: 'Conversaciones',
   contactos:      'Contactos',
   comprobantes:   'Comprobantes',
+  fichas:         'Fichas',
   'top-clientes': 'Top Clientes',
   campanas:       'Campañas',
   agentes:        'Operadores',
@@ -45,13 +46,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (!roleReady) {
     items = []; // rol no confirmado → sidebar sin opciones (skeleton)
   } else if (agent?.role === 'admin') {
-    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'fichas', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
   } else if (agent?.role === 'operator') {
     // Operador: solo Conversaciones, Contactos, Comprobantes.
     items = ['conversaciones', 'contactos', 'comprobantes'];
   } else {
     // Agente: todo menos Operadores y Tenants (administración global).
-    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'fichas', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);

@@ -5,6 +5,7 @@ import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { aplicarCargaComprobante, editarMovimientoComprobante } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
@@ -86,7 +87,12 @@ export async function PATCH(request: Request) {
       return new NextResponse('No tenés permiso para editar este comprobante', { status: 403 });
     }
 
-    // TODO Etapa 2: al editar, recalcular stock de fichas
+    // Etapa 3: un comprobante tiene UN solo movimiento neto. Al editar,
+    // revertimos el anterior y reaplicamos con los valores nuevos (no se crea
+    // un segundo movimiento). Consistencia: si el reajuste falla (ej. sin
+    // fichas), abortamos y NO persistimos la edición.
+    const movEdit = await editarMovimientoComprobante(session, { comprobanteId, monto, bono });
+    if (!movEdit.ok) return new NextResponse(movEdit.error, { status: 400 });
 
     const editPayload: Record<string, any> = {
       monto,
@@ -159,6 +165,23 @@ export async function PATCH(request: Request) {
   updatePayload.resolved_by_name = session.name;
   updatePayload.resolved_at      = new Date().toISOString();
 
+  // Monto/bono efectivos que quedarán guardados (input del operador o lo previo).
+  const efectiveMonto = updatePayload.monto ?? comprobante.monto;
+  const efectiveBono  = updatePayload.bono !== undefined ? updatePayload.bono : (comprobante.bono ?? null);
+
+  // Etapa 3: si la caja está activa, descontar la carga del pozo y sumarla a la
+  // billetera del operador ANTES de marcar verificado. Consistencia: si el
+  // movimiento falla (ej. "No hay fichas suficientes"), NO se verifica.
+  if (estado === 'verificado') {
+    const movRes = await aplicarCargaComprobante(session, {
+      comprobanteId,
+      tipo:  comprobante.tipo,
+      monto: Number(efectiveMonto ?? 0),
+      bono:  efectiveBono,
+    });
+    if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
+  }
+
   let { data, error } = await supabaseAdmin
     .from('comprobantes').update(updatePayload).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
 
@@ -176,8 +199,6 @@ export async function PATCH(request: Request) {
   // ── Reconciliar status del contacto con la regla de 3 estados ──
   // (nuevo / cliente_activo este mes / inactivo). Misma lógica que el cron.
   await reconcileContactStatus(comprobante.contact_id);
-
-  const efectiveMonto = updatePayload.monto ?? comprobante.monto;
 
   // Registro de actividad (al costado; no traba la respuesta).
   await logActivity({
