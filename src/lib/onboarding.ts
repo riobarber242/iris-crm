@@ -27,7 +27,7 @@ export type OnboardingInput = {
   business:  { name: string; email?: string | null };
   agent:     { username: string; password: string };
   systemPrompt?: string | null;
-  whatsapp?: { phoneId?: string | null; wabaId?: string | null; displayNumber?: string | null };
+  whatsapp?: { phoneId?: string | null; wabaId?: string | null; displayNumber?: string | null; accessToken?: string | null };
   operators?: OnboardingOperatorInput[];
 };
 
@@ -82,7 +82,7 @@ export function validateOnboarding(input: OnboardingInput): {
   agentUsername: string;
   agentPassword: string;
   systemPrompt: string;
-  whatsapp: { phoneId: string | null; wabaId: string | null; displayNumber: string | null };
+  whatsapp: { phoneId: string | null; wabaId: string | null; displayNumber: string | null; accessToken: string | null };
   operators: { username: string; password: string; name: string }[];
 } {
   const businessName = String(input.business?.name ?? '').trim();
@@ -107,6 +107,7 @@ export function validateOnboarding(input: OnboardingInput): {
     phoneId:       String(input.whatsapp?.phoneId ?? '').trim() || null,
     wabaId:        String(input.whatsapp?.wabaId ?? '').trim() || null,
     displayNumber: String(input.whatsapp?.displayNumber ?? '').trim() || null,
+    accessToken:   String(input.whatsapp?.accessToken ?? '').trim() || null,
   };
 
   const operators: { username: string; password: string; name: string }[] = [];
@@ -167,7 +168,9 @@ export async function createAgentOnboarding(input: OnboardingInput): Promise<Onb
   // Intentamos con las columnas de WhatsApp; si la migración no corrió, las
   // omitimos y avisamos (degradación elegante, sin romper el alta).
   const tenantBase: Record<string, any> = { name: v.businessName };
-  if (v.whatsapp.phoneId) tenantBase.whatsapp_phone_id = v.whatsapp.phoneId;
+  if (v.whatsapp.phoneId)     tenantBase.whatsapp_phone_id     = v.whatsapp.phoneId;
+  // whatsapp_access_token existe desde la migración inicial (no degrada).
+  if (v.whatsapp.accessToken) tenantBase.whatsapp_access_token = v.whatsapp.accessToken;
   const tenantFull: Record<string, any> = { ...tenantBase };
   if (v.whatsapp.wabaId)        tenantFull.whatsapp_waba_id        = v.whatsapp.wabaId;
   if (v.whatsapp.displayNumber) tenantFull.whatsapp_display_number = v.whatsapp.displayNumber;

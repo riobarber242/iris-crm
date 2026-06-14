@@ -55,6 +55,7 @@ export default function OnboardingWizard({ onClose, onCreated }: { onClose: () =
   const [waPhoneId, setWaPhoneId] = useState('');
   const [waWabaId, setWaWabaId] = useState('');
   const [waDisplay, setWaDisplay] = useState('');
+  const [waAccessToken, setWaAccessToken] = useState('');
   const [operators, setOperators] = useState<OperatorDraft[]>([]);
 
   const emailValid = !businessEmail.trim() || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(businessEmail.trim());
@@ -108,7 +109,7 @@ export default function OnboardingWizard({ onClose, onCreated }: { onClose: () =
         business:  { name: businessName.trim(), email: businessEmail.trim() || null },
         agent:     { username: agentUsername.trim(), password: agentPassword },
         systemPrompt,
-        whatsapp:  { phoneId: waPhoneId.trim() || null, wabaId: waWabaId.trim() || null, displayNumber: waDisplay.trim() || null },
+        whatsapp:  { phoneId: waPhoneId.trim() || null, wabaId: waWabaId.trim() || null, displayNumber: waDisplay.trim() || null, accessToken: waAccessToken.trim() || null },
         operators: filledOperators.map(o => ({ username: o.username.trim(), name: o.name.trim() || undefined, password: o.password })),
       };
       const res = await fetch('/api/admin/onboarding', {
@@ -191,6 +192,9 @@ export default function OnboardingWizard({ onClose, onCreated }: { onClose: () =
                   </Field>
                   <Field label="Número visible">
                     <input style={inputStyle} value={waDisplay} onChange={e => setWaDisplay(e.target.value)} placeholder="+54 9 11 1234-5678" />
+                  </Field>
+                  <Field label="Access Token">
+                    <input style={inputStyle} value={waAccessToken} onChange={e => setWaAccessToken(e.target.value)} placeholder="dejar vacío = usa token global de la plataforma" />
                   </Field>
                 </Section>
               )}
