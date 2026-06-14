@@ -11,12 +11,18 @@ type ComprobanteItem = {
   contact_id: string;
   image_url: string | null;
   monto: number | null;
+  bono: number | null;
   estado: 'pendiente' | 'verificado' | 'rechazado';
   created_at: string;
   // Quién resolvió (verificó/rechazó) el comprobante y cuándo. Pueden faltar en
   // comprobantes resueltos antes de que existiera el registro → no se muestran.
   resolved_by_name: string | null;
   resolved_at: string | null;
+  // Última edición (botón "Editar" sobre un verificado). Null si nunca se editó.
+  edited_by_name: string | null;
+  edited_at: string | null;
+  // El backend marca si esta sesión puede editar este comprobante.
+  can_edit?: boolean;
   contacts: { name: string | null; phone: string; casino_username: string | null } | null;
 };
 
@@ -51,11 +57,13 @@ export default function ComprobantesClient() {
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [lightbox, setLightbox]               = useState<string | null>(null);
+  // Form inline único: sirve para verificar un pendiente y para editar un
+  // verificado (monto + bono). `confirmingId` = id del comprobante con el form
+  // abierto; la acción real se decide por el estado del item.
   const [confirmingId, setConfirmingId]       = useState<string | null>(null);
   const [montoInput, setMontoInput]           = useState('');
+  const [bonoInput, setBonoInput]             = useState('');
   const [montoError, setMontoError]           = useState('');
-  const [editingMontoId, setEditingMontoId]   = useState<string | null>(null);
-  const [editMontoInput, setEditMontoInput]   = useState('');
   const [aiLoading,      setAiLoading]        = useState(false);
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
@@ -93,10 +101,20 @@ export default function ComprobantesClient() {
     fetchComprobantes(f);
   }
 
-  async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number) {
+  // Bono del input → number|null. Vacío = sin bono; el backend revalida (0 e
+  // inválidos quedan en null).
+  function parseBono(): number | null {
+    const raw = bonoInput.trim();
+    if (raw === '') return null;
+    const n = parseInt(raw, 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number, bono?: number | null) {
     try {
       const body: Record<string, any> = { comprobanteId: id, action };
       if (monto !== undefined) body.monto = monto;
+      if (bono  !== undefined) body.bono  = bono;
       const res = await fetch('/api/comprobantes', {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -109,33 +127,49 @@ export default function ComprobantesClient() {
     }
   }
 
-  async function confirmVerify(id: string) {
+  // Abre el form inline. Para pendiente precarga el monto detectado si lo hubiera;
+  // para verificado (editar) precarga monto y bono guardados.
+  function openForm(item: ComprobanteItem) {
+    setConfirmingId(item.id);
+    setMontoInput(item.monto && item.monto > 0 ? String(item.monto) : '');
+    setBonoInput(item.bono && item.bono > 0 ? String(item.bono) : '');
+    setMontoError('');
+  }
+
+  function closeForm() {
+    setConfirmingId(null);
+    setMontoInput('');
+    setBonoInput('');
+    setMontoError('');
+  }
+
+  // ✓ OK del form: verifica (si estaba pendiente) o edita (si ya estaba resuelto).
+  async function confirmForm(item: ComprobanteItem) {
     const monto = parseFloat(montoInput.replace(',', '.'));
     if (!monto || monto <= 0) {
       setMontoError('Ingresá el monto antes de confirmar');
       return;
     }
-    setMontoError('');
-    setConfirmingId(null);
-    setMontoInput('');
-    await updateComprobante(id, 'verificar', monto);
+    const bono = parseBono();
+    closeForm();
+    if (item.estado === 'pendiente') {
+      await updateComprobante(item.id, 'verificar', monto, bono);
+    } else {
+      await editComprobante(item.id, monto, bono);
+    }
   }
 
-  async function saveMonto(id: string) {
-    const monto = parseFloat(editMontoInput.replace(',', '.'));
-    if (!monto || monto <= 0) return;
+  async function editComprobante(id: string, monto: number, bono: number | null) {
     try {
       const res = await fetch('/api/comprobantes', {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ comprobanteId: id, action: 'update_monto', monto }),
+        body:    JSON.stringify({ comprobanteId: id, action: 'editar', monto, bono }),
       });
       if (!res.ok) throw new Error(await res.text());
-      setEditingMontoId(null);
-      setEditMontoInput('');
       await fetchSilent();
     } catch {
-      setError('No se pudo actualizar el monto.');
+      setError('No se pudo editar el comprobante.');
     }
   }
 
@@ -380,39 +414,24 @@ export default function ComprobantesClient() {
                   </div>
                 </div>
 
-                {/* Row 2: fecha + monto + editar monto para verificados sin monto */}
+                {/* Row 2: fecha + monto + bono */}
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px', color: '#888' }} title={new Date(item.created_at).toLocaleString('es-AR')}>
                     {formatRelativeTime(item.created_at)}
                   </span>
-                  {editingMontoId === item.id ? (
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <input
-                        type="number" min="0.01" step="0.01"
-                        value={editMontoInput}
-                        onChange={(e) => setEditMontoInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') saveMonto(item.id); if (e.key === 'Escape') setEditingMontoId(null); }}
-                        placeholder="Monto $" autoFocus
-                        style={{ width: '110px', padding: '4px 8px', border: '2px solid #C8FF00', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#f9ffe0' }}
-                      />
-                      <button onClick={() => saveMonto(item.id)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '11px', border: 'none', borderRadius: '8px', padding: '4px 10px', cursor: 'pointer' }}>✓</button>
-                      <button onClick={() => setEditingMontoId(null)} style={{ background: 'transparent', color: '#888', fontWeight: 600, fontSize: '11px', border: '1px solid #ddd', borderRadius: '8px', padding: '4px 8px', cursor: 'pointer' }}>✕</button>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '15px', fontWeight: 900, color: (!item.monto || item.monto === 0) ? '#E53935' : '#111' }}>
-                        ${item.monto ?? 0}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '15px', fontWeight: 900, color: (!item.monto || item.monto === 0) ? '#E53935' : '#111' }}>
+                      ${item.monto ?? 0}
+                    </span>
+                    {!!item.bono && item.bono > 0 && (
+                      <span
+                        title="Bono en fichas"
+                        style={{ fontSize: '12px', fontWeight: 800, color: '#7a5a00', background: '#fff3cd', border: '1px solid #ffe08a', borderRadius: '8px', padding: '2px 8px' }}
+                      >
+                        🎁 {item.bono}
                       </span>
-                      {item.estado === 'verificado' && (!item.monto || item.monto === 0) && (
-                        <button
-                          onClick={() => { setEditingMontoId(item.id); setEditMontoInput(''); }}
-                          style={{ background: '#fff3cd', color: '#856404', fontWeight: 700, fontSize: '11px', border: '1px solid #ffc107', borderRadius: '8px', padding: '3px 8px', cursor: 'pointer' }}
-                        >
-                          ✏ Editar monto
-                        </button>
-                      )}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Quién resolvió el comprobante (solo si el dato existe). */}
@@ -423,88 +442,122 @@ export default function ComprobantesClient() {
                   </p>
                 )}
 
-                {/* Row 3: action buttons (only for pending) */}
-                {item.estado === 'pendiente' && (
-                  confirmingId === item.id ? (
-                    /* Inline monto input before confirming */
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
-                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <input
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          value={montoInput}
-                          onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
-                          onKeyDown={(e) => { if (e.key === 'Enter') confirmVerify(item.id); if (e.key === 'Escape') { setConfirmingId(null); setMontoError(''); } }}
-                          placeholder="Monto $"
-                          autoFocus
-                          style={{
-                            width: '120px', padding: '5px 10px',
-                            border: `2px solid ${montoError ? '#E53935' : '#C8FF00'}`,
-                            borderRadius: '8px', fontSize: '13px', fontWeight: 700,
-                            outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
-                          }}
-                        />
-                        {item.image_url && (
-                          <button
-                            type="button"
-                            onClick={() => detectMonto(item.id)}
-                            disabled={aiLoading}
-                            title="Detectar monto con IA"
-                            style={{
-                              background: aiLoading ? '#e0e0e0' : '#1a1a1a',
-                              color: aiLoading ? '#888' : '#C8FF00',
-                              fontWeight: 700, fontSize: '12px',
-                              border: 'none', borderRadius: '8px',
-                              padding: '5px 10px', cursor: aiLoading ? 'not-allowed' : 'pointer',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {aiLoading ? '...' : '✨ IA'}
-                          </button>
-                        )}
-                        <button onClick={() => confirmVerify(item.id)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>
-                          ✓ OK
-                        </button>
-                        <button onClick={() => { setConfirmingId(null); setMontoError(''); }} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '12px', border: '1px solid #ddd', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>
-                          Cancelar
-                        </button>
-                      </div>
-                      {montoError && (
-                        <p style={{ margin: 0, fontSize: '11px', color: '#E53935', fontWeight: 600 }}>
-                          {montoError}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
-                      <button
-                        onClick={() => { setConfirmingId(item.id); setMontoInput(item.monto && item.monto > 0 ? String(item.monto) : ''); }}
-                        style={{
-                          background: '#C8FF00', color: '#000',
-                          fontWeight: 700, fontSize: '12px',
-                          border: 'none', borderRadius: '8px',
-                          padding: '5px 14px', cursor: 'pointer',
-                          boxShadow: '0 2px 0 #8ab000',
-                        }}
-                      >
-                        ✓ Verificar
-                      </button>
-                      <button
-                        onClick={() => updateComprobante(item.id, 'rechazar')}
-                        style={{
-                          background: '#1a1a1a', color: '#fff',
-                          fontWeight: 700, fontSize: '12px',
-                          border: 'none', borderRadius: '8px',
-                          padding: '5px 14px', cursor: 'pointer',
-                          boxShadow: '0 2px 0 #000',
-                        }}
-                      >
-                        ✕ Rechazar
-                      </button>
-                    </div>
-                  )
+                {/* Última edición (monto/bono), si la hubo. */}
+                {item.edited_at && item.edited_by_name && (
+                  <p style={{ margin: 0, fontSize: '11px', color: '#b58900' }}>
+                    Editado por {item.edited_by_name} · {formatResolvedAt(item.edited_at)}
+                  </p>
                 )}
+
+                {/* Row 3: form inline (verificar pendiente / editar verificado) o botones */}
+                {confirmingId === item.id ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={montoInput}
+                        onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
+                        placeholder="Monto $"
+                        autoFocus
+                        style={{
+                          width: '120px', padding: '5px 10px',
+                          border: `2px solid ${montoError ? '#E53935' : '#C8FF00'}`,
+                          borderRadius: '8px', fontSize: '13px', fontWeight: 700,
+                          outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
+                        }}
+                      />
+                      {/* Bono en fichas: opcional, solo enteros positivos. La IA no lo toca. */}
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={bonoInput}
+                        onChange={(e) => setBonoInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
+                        placeholder="Bono (fichas)"
+                        style={{
+                          width: '120px', padding: '5px 10px',
+                          border: '2px solid #ffe08a',
+                          borderRadius: '8px', fontSize: '13px', fontWeight: 700,
+                          outline: 'none', background: '#fffaf0',
+                        }}
+                      />
+                      {item.image_url && (
+                        <button
+                          type="button"
+                          onClick={() => detectMonto(item.id)}
+                          disabled={aiLoading}
+                          title="Detectar monto con IA (no afecta el bono)"
+                          style={{
+                            background: aiLoading ? '#e0e0e0' : '#1a1a1a',
+                            color: aiLoading ? '#888' : '#C8FF00',
+                            fontWeight: 700, fontSize: '12px',
+                            border: 'none', borderRadius: '8px',
+                            padding: '5px 10px', cursor: aiLoading ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {aiLoading ? '...' : '✨ IA'}
+                        </button>
+                      )}
+                      <button onClick={() => confirmForm(item)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>
+                        ✓ OK
+                      </button>
+                      <button onClick={closeForm} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '12px', border: '1px solid #ddd', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>
+                        Cancelar
+                      </button>
+                    </div>
+                    {montoError && (
+                      <p style={{ margin: 0, fontSize: '11px', color: '#E53935', fontWeight: 600 }}>
+                        {montoError}
+                      </p>
+                    )}
+                  </div>
+                ) : item.estado === 'pendiente' ? (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                    <button
+                      onClick={() => openForm(item)}
+                      style={{
+                        background: '#C8FF00', color: '#000',
+                        fontWeight: 700, fontSize: '12px',
+                        border: 'none', borderRadius: '8px',
+                        padding: '5px 14px', cursor: 'pointer',
+                        boxShadow: '0 2px 0 #8ab000',
+                      }}
+                    >
+                      ✓ Verificar
+                    </button>
+                    <button
+                      onClick={() => updateComprobante(item.id, 'rechazar')}
+                      style={{
+                        background: '#1a1a1a', color: '#fff',
+                        fontWeight: 700, fontSize: '12px',
+                        border: 'none', borderRadius: '8px',
+                        padding: '5px 14px', cursor: 'pointer',
+                        boxShadow: '0 2px 0 #000',
+                      }}
+                    >
+                      ✕ Rechazar
+                    </button>
+                  </div>
+                ) : item.estado === 'verificado' && item.can_edit ? (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                    <button
+                      onClick={() => openForm(item)}
+                      style={{
+                        background: '#fff3cd', color: '#856404',
+                        fontWeight: 700, fontSize: '12px',
+                        border: '1px solid #ffc107', borderRadius: '8px',
+                        padding: '5px 14px', cursor: 'pointer',
+                      }}
+                    >
+                      ✏ Editar
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           );

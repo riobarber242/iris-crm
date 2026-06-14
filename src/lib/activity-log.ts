@@ -12,6 +12,8 @@ import type { SessionPayload } from './session';
 export const ACTIVITY = {
   COMPROBANTE_VERIFICADO: 'comprobante_verificado',
   COMPROBANTE_RECHAZADO:  'comprobante_rechazado',
+  COMPROBANTE_EDITADO:    'editar_comprobante',     // editó monto/bono de un comprobante ya resuelto
+
   MESSAGE_SENT:           'message_sent',          // respondió una conversación
   CONVERSATION_ATTENDED:  'conversation_attended', // atendió (abrió chat con mensajes sin leer)
   SESSION_LOGIN:          'session_login',

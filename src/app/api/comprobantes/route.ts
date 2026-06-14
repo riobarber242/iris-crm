@@ -5,6 +5,23 @@ import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import type { SessionPayload } from '@/lib/session';
+
+// Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
+// null ("0 no se guarda como bono"); entero > 0 → ese valor.
+function normalizeBono(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return n;
+}
+
+// ¿Esta sesión puede editar este comprobante? admin/agent: cualquiera de su
+// tenant; operator: solo el que él mismo resolvió (resolved_by === su id).
+function canEditComprobante(session: SessionPayload, resolvedBy: string | null | undefined): boolean {
+  if (session.role === 'admin' || session.role === 'agent') return true;
+  return !!resolvedBy && resolvedBy === session.sub;
+}
 
 export async function GET(request: Request) {
   const session = await getSessionAgent();
@@ -27,7 +44,14 @@ export async function GET(request: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  // can_edit por item: el front decide mostrar el botón "Editar" sin conocer el
+  // rol; el backend sigue siendo la fuente de verdad (revalida en la acción).
+  const withPerms = (data ?? []).map((c: any) => ({
+    ...c,
+    can_edit: canEditComprobante(session, c.resolved_by),
+  }));
+
+  return NextResponse.json(withPerms);
 }
 
 export async function PATCH(request: Request) {
@@ -38,8 +62,65 @@ export async function PATCH(request: Request) {
   const comprobanteId = body.comprobanteId;
   const action = body.action;
 
-  if (!comprobanteId || !['verificar', 'rechazar', 'update_monto'].includes(action)) {
+  if (!comprobanteId || !['verificar', 'rechazar', 'update_monto', 'editar'].includes(action)) {
     return new NextResponse('Faltan comprobanteId o acción válida', { status: 400 });
+  }
+
+  // editar: cambia monto y/o bono de un comprobante ya resuelto (botón "Editar").
+  // No toca estado ni la atribución de verificación; sí registra quién editó.
+  if (action === 'editar') {
+    const monto = Number(body.monto);
+    if (isNaN(monto) || monto <= 0) {
+      return new NextResponse('Monto inválido', { status: 400 });
+    }
+    const bono = normalizeBono(body.bono);
+
+    const { data: prev, error: prevErr } = await supabaseAdmin
+      .from('comprobantes').select('*').eq('id', comprobanteId).eq('tenant_id', session.tenant_id).single();
+    if (prevErr || !prev) {
+      return new NextResponse('Comprobante no encontrado', { status: 404 });
+    }
+
+    // Permiso: admin/agent cualquiera; operator solo el que él resolvió.
+    if (!canEditComprobante(session, prev.resolved_by)) {
+      return new NextResponse('No tenés permiso para editar este comprobante', { status: 403 });
+    }
+
+    // TODO Etapa 2: al editar, recalcular stock de fichas
+
+    const editPayload: Record<string, any> = {
+      monto,
+      bono,
+      edited_by:      session.sub,
+      edited_by_name: session.name,
+      edited_at:      new Date().toISOString(),
+    };
+
+    let { data, error } = await supabaseAdmin
+      .from('comprobantes').update(editPayload).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
+
+    // Degradación elegante: si faltan columnas nuevas (bono/edited_*) porque la
+    // migración supabase-bono-comprobante.sql no se corrió, reintentamos solo
+    // con monto para no romper la edición.
+    if (error && /bono|edited_by|edited_at|column|schema cache/i.test(error.message)) {
+      ({ data, error } = await supabaseAdmin
+        .from('comprobantes').update({ monto }).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single());
+    }
+    if (error) return new NextResponse(error.message, { status: 500 });
+
+    await logActivity({
+      session,
+      action:     ACTIVITY.COMPROBANTE_EDITADO,
+      objectType: 'comprobante',
+      objectId:   comprobanteId,
+      details: {
+        antes:   { monto: prev.monto ?? null, bono: prev.bono ?? null },
+        despues: { monto, bono },
+        contact_id: prev.contact_id,
+      },
+    });
+
+    return NextResponse.json(data);
   }
 
   // update_monto: only update monto, no estado change
@@ -67,6 +148,10 @@ export async function PATCH(request: Request) {
   if (body.monto !== undefined) {
     const parsed = Number(body.monto);
     if (!isNaN(parsed) && parsed >= 0) updatePayload.monto = parsed;
+  }
+  // Bono (fichas) cargado a mano al verificar. Solo dato en Etapa 1.
+  if (action === 'verificar' && body.bono !== undefined) {
+    updatePayload.bono = normalizeBono(body.bono);
   }
 
   // Atribución permanente: quién resolvió (verificó/rechazó) este comprobante.
