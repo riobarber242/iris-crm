@@ -10,7 +10,7 @@ import { irisSystemPrompt } from '@/lib/system-prompt';
 const KEY = 'system_prompt';
 const MAX_LEN = 4000;
 
-// El operador no administra el bot (igual que /api/settings/system-prompt).
+// El operador no administra el bot: solo admin + agent editan el system prompt.
 async function requireStaff() {
   const session = await getSessionAgent();
   if (!session) return { error: new NextResponse('No autenticado', { status: 401 }) };

@@ -2,24 +2,35 @@ export const dynamic = 'force-dynamic';
 
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
+import BotToggle from '@/components/BotToggle';
 import BotConfigEditor from '@/components/BotConfigEditor';
-import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
+import OfflineConfig from '@/components/OfflineConfig';
 
-// Panel self-service del agente para editar el system prompt de su bot,
-// sin pasar por el admin. El acceso (admin + agent, sin operator) lo controla
-// el middleware vía /configuracion en STAFF_PREFIXES. La sección de números
-// de WhatsApp se auto-oculta para no-admin (y su API exige rol admin).
+// "Mi Bot": todo lo del bot del agente (on/off, system prompt, modo offline).
+// El acceso (admin + agent, sin operator) lo controla el middleware vía
+// /configuracion en STAFF_PREFIXES. La administración de la cuenta (números de
+// WhatsApp, etc.) vive en /settings ("Configuración").
 export default function ConfiguracionPage() {
   return (
     <AdminShell>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <SectionCard title="Control del bot" description="Activá o pausá el bot automático de WhatsApp.">
+          <BotToggle />
+        </SectionCard>
+
         <SectionCard
           title="System Prompt de tu Bot"
           description="Configurá la personalidad y las reglas de tu asistente automático de WhatsApp. El bot usa este texto como base cuando responde a tus clientes."
         >
           <BotConfigEditor />
         </SectionCard>
-        <WhatsAppNumbersManager />
+
+        <SectionCard
+          title="Modo offline"
+          description="Cuando lo activás, el bot deja de atender y responde a todos los clientes con un único mensaje fijo."
+        >
+          <OfflineConfig />
+        </SectionCard>
       </div>
     </AdminShell>
   );

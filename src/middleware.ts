@@ -20,10 +20,11 @@ const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin
 // Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
 //  - Dashboard y sus métricas.
 //  - Gestión de operadores (/agentes + /api/agents).
-//  - Configuración del sistema y el system prompt del bot.
+//  - Configuración de la cuenta (/settings) y del bot (/configuracion).
 // Nota: /api/settings/bot-enabled y /api/settings/offline-mode quedan FUERA
 // a propósito porque el header los lee para todos los roles; solo bloqueamos
-// la página /settings y el endpoint del system-prompt.
+// las páginas /settings y /configuracion y los endpoints de edición del bot
+// (/api/agent/config, /api/settings/offline-msg).
 const STAFF_PREFIXES = [
   '/dashboard',
   '/api/dashboard_stats',
@@ -33,7 +34,7 @@ const STAFF_PREFIXES = [
   '/api/agents',
   '/settings',
   '/configuracion',
-  '/api/settings/system-prompt',
+  '/api/settings/offline-msg',
   '/api/agent/config',
 ];
 

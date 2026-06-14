@@ -84,9 +84,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
     }
     window.addEventListener('bot-status-changed', handleBotChange);
 
+    // Instant sync when OfflineConfig in Mi Bot toggles offline mode
+    function handleOfflineChange(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (typeof detail?.offline === 'boolean') setOfflineMode(detail.offline);
+    }
+    window.addEventListener('offline-mode-changed', handleOfflineChange);
+
     return () => {
       clearInterval(timer);
       window.removeEventListener('bot-status-changed', handleBotChange);
+      window.removeEventListener('offline-mode-changed', handleOfflineChange);
     };
   }, []);
 
