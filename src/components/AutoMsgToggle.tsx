@@ -3,18 +3,18 @@
 import React, { useEffect, useState } from 'react';
 
 export default function AutoMsgToggle() {
-  const [enabled,  setEnabled]  = useState<boolean | null>(null);
+  const [enabled,  setEnabled]  = useState<boolean>(false);
   const [loading,  setLoading]  = useState(false);
 
   useEffect(() => {
     fetch('/api/settings/auto-verificacion')
       .then((r) => r.json())
       .then((d) => setEnabled(d.enabled))
-      .catch(() => setEnabled(true));
+      .catch(() => {}); // si falla, queda en false por defecto
   }, []);
 
   async function toggle() {
-    if (enabled === null || loading) return;
+    if (loading) return;
     setLoading(true);
     const next = !enabled;
     try {
@@ -27,10 +27,6 @@ export default function AutoMsgToggle() {
     } catch {}
     setLoading(false);
   }
-
-  if (enabled === null) return (
-    <div style={{ padding: '16px', color: '#bbb', fontSize: '14px' }}>Cargando...</div>
-  );
 
   return (
     <div style={{
