@@ -231,3 +231,53 @@ button, input, textarea, select {
 
   .chat-input-row { gap: 6px !important; }
 }
+
+/* ── Tabla de contactos: grid en desktop, tarjeta apilada en mobile ───────── */
+.contact-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr 100px 130px 44px;
+  gap: 12px;
+  align-items: center;
+}
+
+.contact-header {
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.contact-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 12px 16px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* El teléfono es un string de dígitos sin espacios: sin esto fuerza el ancho
+   de su columna 1fr. Truncar lo mantiene contenido en cualquier breakpoint. */
+.c-phone { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-user  { min-width: 0; }
+
+/* Mobile: tarjeta de una línea. avatar | usuario · teléfono | 💬.
+   El botón de conversación queda SIEMPRE visible y tocable; estado y fecha
+   se ocultan porque no entran en una sola línea. */
+@media (max-width: 639px) {
+  .contact-header { display: none; }
+
+  .contact-card {
+    grid-template-columns: 44px 1fr auto auto;
+    grid-template-areas: "avatar user phone chat";
+    column-gap: 10px;
+    padding: 12px 14px;
+  }
+  .c-avatar { grid-area: avatar; }
+  .c-user   { grid-area: user; }
+  .c-phone  { grid-area: phone; }
+  .c-chat   { grid-area: chat; }
+  .c-status, .c-date { display: none; }
+
+  .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }
+}

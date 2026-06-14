@@ -294,17 +294,7 @@ export default function ContactsClient() {
       {/* Table header */}
       {filtered.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '44px 1fr 1fr 100px 130px 44px',
-            gap: '12px',
-            padding: '8px 16px',
-            fontSize: '11px',
-            fontWeight: 700,
-            color: '#aaa',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-          }}>
+          <div className="contact-row contact-header">
             <span />
             <span>Usuario casino</span>
             <span>Teléfono</span>
@@ -317,18 +307,9 @@ export default function ContactsClient() {
             const initial = (c.casino_username || c.phone).charAt(0).toUpperCase();
             const sc      = STATUS_COLOR[c.status] ?? STATUS_COLOR.nuevo;
             return (
-              <div key={c.id} style={{
-                display: 'grid',
-                gridTemplateColumns: '44px 1fr 1fr 100px 130px 44px',
-                gap: '12px',
-                alignItems: 'center',
-                background: '#fff',
-                borderRadius: '14px',
-                padding: '12px 16px',
-                boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
-              }}>
+              <div key={c.id} className="contact-row contact-card">
                 {/* Avatar */}
-                <div style={{
+                <div className="c-avatar" style={{
                   width: '36px', height: '36px', borderRadius: '50%',
                   background: '#C8FF00', display: 'flex', alignItems: 'center',
                   justifyContent: 'center', fontWeight: 800, fontSize: '15px', color: '#000',
@@ -337,15 +318,15 @@ export default function ContactsClient() {
                 </div>
 
                 {/* Usuario casino */}
-                <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <p className="c-user" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   🎰 {c.casino_username}
                 </p>
 
                 {/* Teléfono */}
-                <p style={{ margin: 0, fontSize: '13px', color: '#666' }}>{c.phone}</p>
+                <p className="c-phone" style={{ margin: 0, fontSize: '13px', color: '#666' }}>{c.phone}</p>
 
                 {/* Estado */}
-                <span style={{
+                <span className="c-status" style={{
                   ...sc,
                   borderRadius: '999px',
                   padding: '4px 10px',
@@ -360,12 +341,12 @@ export default function ContactsClient() {
                 </span>
 
                 {/* Fecha */}
-                <p style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>
+                <p className="c-date" style={{ margin: 0, fontSize: '12px', color: '#aaa' }}>
                   {new Date(c.created_at).toLocaleDateString('es-AR')}
                 </p>
 
                 {/* Botón conversación */}
-                <Link href={`/conversations/${c.id}`} style={{ textDecoration: 'none' }}>
+                <Link href={`/conversations/${c.id}`} className="c-chat" style={{ textDecoration: 'none' }}>
                   <div style={{
                     width: '32px', height: '32px', borderRadius: '8px',
                     background: '#1a1a1a', display: 'flex', alignItems: 'center',
