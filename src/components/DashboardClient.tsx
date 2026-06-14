@@ -316,7 +316,7 @@ export default function DashboardClient() {
           ? '0 4px 12px rgba(220,40,40,0.6), inset 0 -3px 6px rgba(0,0,0,0.2)'
           : '0 4px 12px rgba(255,120,0,0.6), inset 0 -3px 6px rgba(0,0,0,0.2)';
         return (
-          <Link href="/conversations" style={{ textDecoration: 'none', display: 'block' }}>
+          <Link href="/conversaciones" style={{ textDecoration: 'none', display: 'block' }}>
             <div
               className={hasPending ? 'card-3d-lime' : 'card-3d'}
               style={{
@@ -367,30 +367,30 @@ export default function DashboardClient() {
       case 'conversaciones':
         return (
           <Column title={w.label} icon="💬">
-            <MetricCard label="Hoy"          value={fmt(s.convToday)}     highlight={s.convToday > 0} href="/conversations" />
-            <MetricCard label="Esta semana"  value={fmt(s.convWeek)}                                  href="/conversations" />
-            <MetricCard label="Este mes"     value={fmt(s.convMonth)}                                 href="/conversations" />
-            <MetricCard label="Mes anterior" value={fmt(s.convPrevMonth)}                             href="/conversations" />
+            <MetricCard label="Hoy"          value={fmt(s.convToday)}     highlight={s.convToday > 0} href="/conversaciones" />
+            <MetricCard label="Esta semana"  value={fmt(s.convWeek)}                                  href="/conversaciones" />
+            <MetricCard label="Este mes"     value={fmt(s.convMonth)}                                 href="/conversaciones" />
+            <MetricCard label="Mes anterior" value={fmt(s.convPrevMonth)}                             href="/conversaciones" />
           </Column>
         );
 
       case 'contactos_nuevos':
         return (
           <Column title={w.label} icon="👤">
-            <MetricCard label="Hoy"          value={fmt(s.newToday)}     href="/conversations" />
-            <MetricCard label="Esta semana"  value={fmt(s.newWeek)}      href="/conversations" />
-            <MetricCard label="Este mes"     value={fmt(s.newMonth)}     href="/conversations" />
-            <MetricCard label="Mes anterior" value={fmt(s.newPrevMonth)} href="/conversations" />
+            <MetricCard label="Hoy"          value={fmt(s.newToday)}     href="/conversaciones" />
+            <MetricCard label="Esta semana"  value={fmt(s.newWeek)}      href="/conversaciones" />
+            <MetricCard label="Este mes"     value={fmt(s.newMonth)}     href="/conversaciones" />
+            <MetricCard label="Mes anterior" value={fmt(s.newPrevMonth)} href="/conversaciones" />
           </Column>
         );
 
       case 'embudo_conversion':
         return (
           <Column title={w.label} icon="📊">
-            <MetricCard label="Tasa de conversión" value={pct(s.conversionRate)}     highlight={s.conversionRate > 0}     href="/contacts" />
-            <MetricCard label="Cliente activo"     value={fmt(s.clienteActivoTotal)} highlight={s.clienteActivoTotal > 0} href="/conversations" />
-            <MetricCard label="Inactivo"           value={fmt(s.inactivoTotal)}                                           href="/conversations" />
-            <MetricCard label="Nuevo"              value={fmt(s.nuevoTotal)}                                              href="/conversations" />
+            <MetricCard label="Tasa de conversión" value={pct(s.conversionRate)}     highlight={s.conversionRate > 0}     href="/contactos" />
+            <MetricCard label="Cliente activo"     value={fmt(s.clienteActivoTotal)} highlight={s.clienteActivoTotal > 0} href="/conversaciones" />
+            <MetricCard label="Inactivo"           value={fmt(s.inactivoTotal)}                                           href="/conversaciones" />
+            <MetricCard label="Nuevo"              value={fmt(s.nuevoTotal)}                                              href="/conversaciones" />
           </Column>
         );
 
@@ -409,7 +409,7 @@ export default function DashboardClient() {
         // estado='verificado' (la API ya excluye pendientes/rechazados).
         return (
           <Column title={w.label} icon="⚡">
-            <MetricCard label="Tiempo 1ra respuesta"        value={mins(s.avgFirstHumanResponseMin)}                  href="/conversations" />
+            <MetricCard label="Tiempo 1ra respuesta"        value={mins(s.avgFirstHumanResponseMin)}                  href="/conversaciones" />
             <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/comprobantes" />
             <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/comprobantes" />
             <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/comprobantes" />

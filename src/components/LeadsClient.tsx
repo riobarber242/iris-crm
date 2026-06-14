@@ -380,7 +380,7 @@ export default function LeadsClient() {
                   <p style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#000' }}>
                     ${c.monto_total.toLocaleString('es-AR')}
                   </p>
-                  <Link href={`/conversations/${c.contact_id}`} style={{ textDecoration: 'none' }}>
+                  <Link href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', cursor: 'pointer' }} title="Ir a conversación">
                       💬
                     </div>

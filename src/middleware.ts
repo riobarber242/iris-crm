@@ -20,10 +20,10 @@ const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin
 // Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
 //  - Dashboard y sus métricas.
 //  - Gestión de operadores (/agentes + /api/agents).
-//  - Configuración de la cuenta (/settings) y del bot (/configuracion).
+//  - Configuración de la cuenta (/configuracion) y del bot (/mi-bot).
 // Nota: /api/settings/bot-enabled y /api/settings/offline-mode quedan FUERA
 // a propósito porque el header los lee para todos los roles; solo bloqueamos
-// las páginas /settings y /configuracion y los endpoints de edición del bot
+// las páginas /configuracion y /mi-bot y los endpoints de edición del bot
 // (/api/agent/config, /api/settings/offline-msg).
 const STAFF_PREFIXES = [
   '/dashboard',
@@ -32,8 +32,8 @@ const STAFF_PREFIXES = [
   '/api/dashboard_metric',
   '/agentes',
   '/api/agents',
-  '/settings',
   '/configuracion',
+  '/mi-bot',
   '/api/settings/offline-msg',
   '/api/agent/config',
 ];
@@ -42,7 +42,7 @@ const STAFF_PREFIXES = [
 const CAMPAIGNS_PREFIXES = ['/campanas', '/api/campaigns'];
 
 // Top Clientes: admin + agent siempre; operator solo con can_see_top_clients.
-const LEADS_PREFIXES = ['/leads'];
+const LEADS_PREFIXES = ['/top-clientes'];
 
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'));
@@ -50,7 +50,7 @@ function matchesPrefix(pathname: string, prefixes: string[]): boolean {
 
 // Página de aterrizaje por rol (los operators no tienen dashboard).
 function homeFor(role: string): string {
-  return role === 'operator' ? '/conversations' : '/dashboard';
+  return role === 'operator' ? '/conversaciones' : '/dashboard';
 }
 
 export async function middleware(req: NextRequest) {

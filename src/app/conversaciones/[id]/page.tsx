@@ -65,7 +65,7 @@ export default async function ConversationPage({ params }: any) {
         {/* Back button */}
         <div>
           <Link
-            href="/conversations"
+            href="/conversaciones"
             style={{
               display: 'inline-flex',
               alignItems: 'center',

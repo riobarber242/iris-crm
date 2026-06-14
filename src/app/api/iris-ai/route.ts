@@ -52,7 +52,7 @@ Además, ayudalo activamente en su trabajo diario (siempre dentro de su alcance)
 type Tool = Anthropic.Tool;
 
 // Top Clientes se declara aparte: staff siempre; operador SOLO si su agente le
-// habilitó el permiso "Top Clientes" (mismo flag que gatea la página /leads).
+// habilitó el permiso "Top Clientes" (mismo flag que gatea la página /top-clientes).
 const TOP_CLIENTS_TOOL: Tool = {
   name: 'list_top_clients',
   description:

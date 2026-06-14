@@ -21,6 +21,17 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Rutas del panel unificadas a español. Redirects 308 para no romper links
+  // viejos. NO se redirige /configuracion: con el swap pasó a ser una ruta viva
+  // (la antigua Configuración); redirigirla taparía esa página.
+  async redirects() {
+    return [
+      { source: '/conversations/:path*', destination: '/conversaciones/:path*', permanent: true },
+      { source: '/contacts/:path*',      destination: '/contactos/:path*',      permanent: true },
+      { source: '/leads/:path*',         destination: '/top-clientes/:path*',   permanent: true },
+      { source: '/settings/:path*',      destination: '/configuracion/:path*',  permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

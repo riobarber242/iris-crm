@@ -2,35 +2,33 @@ export const dynamic = 'force-dynamic';
 
 import { AdminShell } from '@/components/AdminShell';
 import { SectionCard } from '@/components/ui/SectionCard';
-import BotToggle from '@/components/BotToggle';
-import BotConfigEditor from '@/components/BotConfigEditor';
-import OfflineConfig from '@/components/OfflineConfig';
+import CronRunner from '@/components/CronRunner';
+import AutoMsgToggle from '@/components/AutoMsgToggle';
+import QuickRepliesManager from '@/components/QuickRepliesManager';
+import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
 
-// "Mi Bot": todo lo del bot del agente (on/off, system prompt, modo offline).
-// El acceso (admin + agent, sin operator) lo controla el middleware vía
-// /configuracion en STAFF_PREFIXES. La administración de la cuenta (números de
-// WhatsApp, etc.) vive en /settings ("Configuración").
+// "Configuración": todo lo de la cuenta (números de WhatsApp, notificación de
+// recarga, clasificación de contactos, respuestas rápidas). El control del bot
+// (on/off, system prompt, modo offline) vive en /mi-bot ("Mi Bot").
 export default function ConfiguracionPage() {
   return (
     <AdminShell>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        <SectionCard title="Control del bot" description="Activá o pausá el bot automático de WhatsApp.">
-          <BotToggle />
+
+        <SectionCard title="Notificación de recarga verificada" description='Envía "Tu recarga de $X fue confirmada ✅" automáticamente al verificar un comprobante.'>
+          <AutoMsgToggle />
         </SectionCard>
 
-        <SectionCard
-          title="System Prompt de tu Bot"
-          description="Configurá la personalidad y las reglas de tu asistente automático de WhatsApp. El bot usa este texto como base cuando responde a tus clientes."
-        >
-          <BotConfigEditor />
+        <SectionCard title="Clasificación de contactos" description="Forzá la actualización de estados sin esperar el cron diario.">
+          <CronRunner />
         </SectionCard>
 
-        <SectionCard
-          title="Modo offline"
-          description="Cuando lo activás, el bot deja de atender y responde a todos los clientes con un único mensaje fijo."
-        >
-          <OfflineConfig />
+        <SectionCard title="Respuestas rápidas" description="Plantillas de mensajes predefinidas. Usalas desde el chat con el botón ⚡.">
+          <QuickRepliesManager />
         </SectionCard>
+
+        <WhatsAppNumbersManager />
+
       </div>
     </AdminShell>
   );

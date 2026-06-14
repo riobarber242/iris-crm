@@ -366,7 +366,7 @@ export default function ComprobantesClient() {
                       {item.estado}
                     </span>
                     <Link
-                      href={`/conversations/${item.contact_id}`}
+                      href={`/conversaciones/${item.contact_id}`}
                       title="Ver chat"
                       style={{
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

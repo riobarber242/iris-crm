@@ -424,7 +424,7 @@ async function processMessage(
     await notifyContactAgents(contact.assigned_agent_id ?? null, tenantId, {
       title: 'IRIS',
       body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
-      url: `/conversations/${contact.id}`,
+      url: `/conversaciones/${contact.id}`,
     });
   } catch (err) {
     console.warn('[webhook] notifyContactAgents falló (ignorado):', err);

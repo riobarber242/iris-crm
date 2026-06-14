@@ -12,17 +12,17 @@ import ActivityGuard from './ActivityGuard';
 import ProfileCard from './ProfileCard';
 
 const navLabels: Record<string, string> = {
-  dashboard:     'Dashboard',
-  conversations: 'Conversaciones',
-  contacts:      'Contactos',
-  comprobantes:  'Comprobantes',
-  leads:         'Top Clientes',
-  campanas:      'Campañas',
-  agentes:       'Operadores',
-  tenants:       'Agentes',
-  servicios:     'Servicios',
-  configuracion: 'Mi Bot',
-  settings:      'Configuración',
+  dashboard:      'Dashboard',
+  conversaciones: 'Conversaciones',
+  contactos:      'Contactos',
+  comprobantes:   'Comprobantes',
+  'top-clientes': 'Top Clientes',
+  campanas:       'Campañas',
+  agentes:        'Operadores',
+  tenants:        'Agentes',
+  servicios:      'Servicios',
+  'mi-bot':       'Mi Bot',
+  configuracion:  'Configuración',
 };
 
 const BANNER_H = 80;
@@ -45,13 +45,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (!roleReady) {
     items = []; // rol no confirmado → sidebar sin opciones (skeleton)
   } else if (agent?.role === 'admin') {
-    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'agentes', 'tenants', 'servicios', 'configuracion', 'settings'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
   } else if (agent?.role === 'operator') {
     // Operador: solo Conversaciones, Contactos, Comprobantes.
-    items = ['conversations', 'contacts', 'comprobantes'];
+    items = ['conversaciones', 'contactos', 'comprobantes'];
   } else {
     // Agente: todo menos Operadores y Tenants (administración global).
-    items = ['dashboard', 'conversations', 'contacts', 'comprobantes', 'leads', 'campanas', 'configuracion', 'settings'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);

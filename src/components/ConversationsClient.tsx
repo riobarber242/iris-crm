@@ -313,7 +313,7 @@ export default function ConversationsClient() {
         return (
           <Link
             key={contact.id}
-            href={`/conversations/${contact.id}`}
+            href={`/conversaciones/${contact.id}`}
             style={{ textDecoration: 'none' }}
             onClick={() => markRead(contact.id)}
           >

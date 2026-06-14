@@ -36,7 +36,7 @@ export default function LoginPage() {
         // esto la sidebar/header quedaban en esqueleto hasta un F5.
         await refresh();
         // Los operators no tienen dashboard → van directo a Conversaciones.
-        router.push(d.role === 'operator' ? '/conversations' : '/dashboard');
+        router.push(d.role === 'operator' ? '/conversaciones' : '/dashboard');
         router.refresh();
       } else {
         const d = await res.json().catch(() => ({}));

@@ -374,7 +374,7 @@ export default function ContactsClient() {
                 </p>
 
                 {/* Botón conversación */}
-                <Link href={`/conversations/${c.id}`} className="c-chat" style={{ textDecoration: 'none' }}>
+                <Link href={`/conversaciones/${c.id}`} className="c-chat" style={{ textDecoration: 'none' }}>
                   <div style={{
                     width: '32px', height: '32px', borderRadius: '8px',
                     background: '#1a1a1a', display: 'flex', alignItems: 'center',
