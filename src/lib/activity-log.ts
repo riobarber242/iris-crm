@@ -13,6 +13,8 @@ export const ACTIVITY = {
   COMPROBANTE_VERIFICADO: 'comprobante_verificado',
   COMPROBANTE_RECHAZADO:  'comprobante_rechazado',
   COMPROBANTE_EDITADO:    'editar_comprobante',     // editó monto/bono de un comprobante ya resuelto
+  RECARGA_FICHAS:         'recarga_fichas',         // agente/admin recargó el pozo de fichas
+  MOVIMIENTO_CAJA:        'movimiento_caja',        // movimiento de caja (carga/pago/descarga/sueldo/traspaso)
 
   MESSAGE_SENT:           'message_sent',          // respondió una conversación
   CONVERSATION_ATTENDED:  'conversation_attended', // atendió (abrió chat con mensajes sin leer)
