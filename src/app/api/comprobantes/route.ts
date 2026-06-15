@@ -5,7 +5,7 @@ import { sendMetaPurchaseEvent } from '@/lib/meta/conversions';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
-import { aplicarCargaComprobante, editarMovimientoComprobante } from '@/lib/caja';
+import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
@@ -29,7 +29,9 @@ export async function GET(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const url = new URL(request.url);
-  const estado = url.searchParams.get('estado');
+  const estado    = url.searchParams.get('estado');
+  const tipo      = url.searchParams.get('tipo');      // 'carga' | 'pago' | null (todos)
+  const contactId = url.searchParams.get('contactId'); // filtrar por contacto (chat)
 
   let query = supabaseAdmin
     .from('comprobantes')
@@ -38,8 +40,29 @@ export async function GET(request: Request) {
   if (estado && estado !== 'all') {
     query = query.eq('estado', estado);
   }
+  if (contactId) {
+    query = query.eq('contact_id', contactId);
+  }
+  // Filtro por tipo (Cargas vs Pagos). Los comprobantes históricos tienen
+  // tipo='carga' por el default de la columna, así que /cargas los sigue viendo.
+  if (tipo === 'carga' || tipo === 'pago') {
+    query = query.eq('tipo', tipo);
+  }
 
-  const { data, error } = await query.order('created_at', { ascending: false });
+  let { data, error } = await query.order('created_at', { ascending: false });
+
+  // Degradación elegante: si la columna `tipo` aún no existe (migración sin
+  // correr) y se pidió filtrar por tipo, reintentamos sin el filtro para no
+  // romper la bandeja.
+  if (error && tipo && /tipo|column|schema cache/i.test(error.message)) {
+    let retry = supabaseAdmin
+      .from('comprobantes')
+      .select('*, contacts(phone, name, casino_username)')
+      .eq('tenant_id', session.tenant_id);
+    if (estado && estado !== 'all') retry = retry.eq('estado', estado);
+    if (contactId) retry = retry.eq('contact_id', contactId);
+    ({ data, error } = await retry.order('created_at', { ascending: false }));
+  }
 
   if (error) {
     return new NextResponse(error.message, { status: 500 });
@@ -53,6 +76,100 @@ export async function GET(request: Request) {
   }));
 
   return NextResponse.json(withPerms);
+}
+
+// Extrae la URL de imagen del contenido de un mensaje. Cubre el formato media
+// JSON ({_type:'image', url}) y los mensajes viejos guardados como URL pelada.
+function imageUrlFromMessage(content: string | null): string | null {
+  const c = (content ?? '').trim();
+  if (!c) return null;
+  try {
+    const p = JSON.parse(c);
+    if (p?._type === 'image' && typeof p.url === 'string') return p.url;
+  } catch {}
+  if (/^https?:\/\//i.test(c) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(c)) return c;
+  return null;
+}
+
+// POST: "Enviar a verificar" desde la conversación. Crea un comprobante a partir
+// de un mensaje con imagen del chat. El tipo se deriva del rol del mensaje:
+//   entrante (role 'user', la mandó el cliente)        → 'carga'  (bandeja Cargas)
+//   saliente (role 'human'/'assistant', la mandamos)   → 'pago'   (bandeja Pagos)
+// Anti-duplicado: un mensaje genera UN solo comprobante (source_message_id único).
+export async function POST(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const body = await request.json().catch(() => ({}));
+  const messageId = body.messageId;
+  if (!messageId) return new NextResponse('Falta messageId', { status: 400 });
+
+  // El mensaje debe ser de este tenant (defensa server-side).
+  const { data: msg, error: msgErr } = await supabaseAdmin
+    .from('messages')
+    .select('id, contact_id, role, content')
+    .eq('id', messageId)
+    .eq('tenant_id', session.tenant_id)
+    .single();
+  if (msgErr || !msg) return new NextResponse('Mensaje no encontrado', { status: 404 });
+
+  const imageUrl = imageUrlFromMessage(msg.content);
+  if (!imageUrl) return new NextResponse('El mensaje no tiene una imagen para verificar', { status: 400 });
+
+  // Tipo según quién mandó la imagen (defensa server-side, espeja el front):
+  //   cliente (role 'user')          → carga  (bandeja Cargas)
+  //   staff   (role 'human')         → pago   (bandeja Pagos)
+  //   bot     (role 'assistant')/otro → no se puede mandar a verificar.
+  let tipo: 'carga' | 'pago';
+  if (msg.role === 'user') tipo = 'carga';
+  else if (msg.role === 'human') tipo = 'pago';
+  else return new NextResponse('Solo se pueden verificar imágenes del cliente o del equipo', { status: 400 });
+
+  // Anti-duplicado: si ya se mandó a verificar este mensaje, devolvemos el
+  // comprobante existente (idempotente; el front muestra "En verificación").
+  {
+    const { data: existing } = await supabaseAdmin
+      .from('comprobantes')
+      .select('*')
+      .eq('tenant_id', session.tenant_id)
+      .eq('source_message_id', messageId)
+      .maybeSingle();
+    if (existing) return NextResponse.json({ ...existing, duplicate: true });
+  }
+
+  const insertPayload: Record<string, any> = {
+    contact_id:        msg.contact_id,
+    image_url:         imageUrl,
+    monto:             0,
+    estado:            'pendiente',
+    tipo,
+    source_message_id: messageId,
+    tenant_id:         session.tenant_id,
+  };
+
+  let { data, error } = await supabaseAdmin
+    .from('comprobantes').insert(insertPayload).select('*').single();
+
+  // Degradación elegante: si faltan columnas nuevas (tipo/source_message_id)
+  // porque las migraciones no se corrieron, reintentamos sin ellas. Sin
+  // source_message_id NO hay anti-duplicado persistente, pero no rompemos.
+  if (error && /tipo|source_message_id|column|schema cache/i.test(error.message)) {
+    ({ data, error } = await supabaseAdmin
+      .from('comprobantes')
+      .insert({ contact_id: msg.contact_id, image_url: imageUrl, monto: 0, estado: 'pendiente', tenant_id: session.tenant_id })
+      .select('*').single());
+  }
+  if (error) return new NextResponse(error.message, { status: 500 });
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.COMPROBANTE_ENVIADO,
+    objectType: 'comprobante',
+    objectId:   data.id,
+    details:    { tipo, contact_id: msg.contact_id, source_message_id: messageId },
+  });
+
+  return NextResponse.json(data, { status: 201 });
 }
 
 export async function PATCH(request: Request) {
@@ -90,8 +207,13 @@ export async function PATCH(request: Request) {
     // Etapa 3: un comprobante tiene UN solo movimiento neto. Al editar,
     // revertimos el anterior y reaplicamos con los valores nuevos (no se crea
     // un segundo movimiento). Consistencia: si el reajuste falla (ej. sin
-    // fichas), abortamos y NO persistimos la edición.
-    const movEdit = await editarMovimientoComprobante(session, { comprobanteId, monto, bono });
+    // fichas), abortamos y NO persistimos la edición. El tipo/pago_agente del
+    // comprobante decide los deltas (carga con bono, pago, o pago del agente).
+    const movEdit = await editarMovimientoComprobante(session, {
+      comprobanteId, monto, bono,
+      tipo:       prev.tipo === 'pago' ? 'pago' : 'carga',
+      pagoAgente: !!prev.pago_agente,
+    });
     if (!movEdit.ok) return new NextResponse(movEdit.error, { status: 400 });
 
     const editPayload: Record<string, any> = {
@@ -169,16 +291,26 @@ export async function PATCH(request: Request) {
   const efectiveMonto = updatePayload.monto ?? comprobante.monto;
   const efectiveBono  = updatePayload.bono !== undefined ? updatePayload.bono : (comprobante.bono ?? null);
 
-  // Etapa 3: si la caja está activa, descontar la carga del pozo y sumarla a la
-  // billetera del operador ANTES de marcar verificado. Consistencia: si el
-  // movimiento falla (ej. "No hay fichas suficientes"), NO se verifica.
+  // Etapa 3/4a: si la caja está activa, aplicar el movimiento ANTES de marcar
+  // verificado. Consistencia: si el movimiento falla (sin fichas / sin saldo en
+  // billetera), NO se verifica. Branch por tipo:
+  //   carga → fichas -(monto+bono), billetera del verificador +monto.
+  //   pago  → fichas +monto, billetera del verificador -monto (guard de saldo).
+  //           Si es pago del agente (pago_agente), la billetera no se toca.
   if (estado === 'verificado') {
-    const movRes = await aplicarCargaComprobante(session, {
-      comprobanteId,
-      tipo:  comprobante.tipo,
-      monto: Number(efectiveMonto ?? 0),
-      bono:  efectiveBono,
-    });
+    const esPago = comprobante.tipo === 'pago';
+    const movRes = esPago
+      ? await aplicarPagoComprobante(session, {
+          comprobanteId,
+          monto:      Number(efectiveMonto ?? 0),
+          pagoAgente: !!comprobante.pago_agente,
+        })
+      : await aplicarCargaComprobante(session, {
+          comprobanteId,
+          tipo:  comprobante.tipo,
+          monto: Number(efectiveMonto ?? 0),
+          bono:  efectiveBono,
+        });
     if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
   }
 
@@ -198,7 +330,10 @@ export async function PATCH(request: Request) {
 
   // ── Reconciliar status del contacto con la regla de 3 estados ──
   // (nuevo / cliente_activo este mes / inactivo). Misma lógica que el cron.
-  await reconcileContactStatus(comprobante.contact_id);
+  // El pago manual del agente puede no tener contacto → se omite.
+  if (comprobante.contact_id) {
+    await reconcileContactStatus(comprobante.contact_id);
+  }
 
   // Registro de actividad (al costado; no traba la respuesta).
   await logActivity({
@@ -209,7 +344,10 @@ export async function PATCH(request: Request) {
     details:    { estado, monto: efectiveMonto ?? null, contact_id: comprobante.contact_id },
   });
 
-  if (estado === 'verificado' && efectiveMonto) {
+  // Pixel de compra + aviso "Tu recarga fue confirmada": SOLO para cargas (es una
+  // recarga del cliente). Los pagos son salidas hacia el cliente/agente: no
+  // disparan evento de compra ni el mensaje de recarga.
+  if (estado === 'verificado' && efectiveMonto && comprobante.tipo !== 'pago' && comprobante.contact_id) {
     const { data: contact, error: contactError } = await supabaseAdmin
       .from('contacts').select('phone, whatsapp_number_id').eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).single();
     if (!contactError && contact?.phone) {

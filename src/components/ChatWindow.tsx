@@ -171,6 +171,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [reactBarFor, setReactBarFor] = useState<string | null>(null); // id del mensaje con barra de reacciones abierta
   const [emojiQuery, setEmojiQuery] = useState('');
+  // "Enviar a verificar": ids de mensajes que ya generaron un comprobante
+  // (para no duplicar) y el id en vuelo mientras se crea.
+  const [verifSentIds, setVerifSentIds] = useState<Set<string>>(new Set());
+  const [verifSendingId, setVerifSendingId] = useState<string | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reactBarLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -202,6 +206,43 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       setLoadError(true);
     }
   }, [contactId]);
+
+  // Carga qué mensajes de este contacto ya fueron enviados a verificar, para
+  // marcar el botón. Usa source_message_id de los comprobantes del contacto.
+  const fetchVerifSent = useCallback(async () => {
+    try {
+      const res = await fetchWithTimeout(`/api/comprobantes?contactId=${contactId}`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (!Array.isArray(rows)) return;
+      const ids = rows.map((c: any) => c.source_message_id).filter(Boolean) as string[];
+      setVerifSentIds(new Set(ids));
+    } catch {}
+  }, [contactId]);
+
+  // "Enviar a verificar": crea un comprobante (carga si es del cliente, pago si
+  // lo mandamos nosotros) a partir del mensaje. Optimista + reconciliación.
+  async function sendToVerify(msg: Message) {
+    if (!msg.id || verifSendingId || verifSentIds.has(msg.id)) return;
+    setVerifSendingId(msg.id);
+    // Marca optimista (se confirma al volver; se revierte si falla).
+    setVerifSentIds((s) => new Set(s).add(msg.id!));
+    try {
+      const res = await fetchWithTimeout('/api/comprobantes', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messageId: msg.id }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await fetchVerifSent();
+    } catch {
+      // Revertir la marca optimista si no se pudo crear.
+      setVerifSentIds((s) => { const n = new Set(s); n.delete(msg.id!); return n; });
+      setSendError('No se pudo enviar a verificar. Probá de nuevo.');
+    } finally {
+      setVerifSendingId(null);
+    }
+  }
 
   useEffect(() => {
     fetch('/api/quick-replies')
@@ -247,11 +288,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
 
   useEffect(() => {
     fetchMessages();
+    fetchVerifSent();
 
     // A1 — Polling de respaldo: aunque Realtime ande, refrescamos cada 8s para
     // no perder mensajes si el websocket se cae en silencio (tab en background,
     // token vencido, blip de red). El merge conserva las burbujas optimistas.
-    const poll = setInterval(() => fetchMessages(), 8000);
+    const poll = setInterval(() => { fetchMessages(); fetchVerifSent(); }, 8000);
 
     const client = getSupabaseBrowser();
     if (!client) return () => clearInterval(poll);
@@ -316,7 +358,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       try { if (channelRef.current) client.removeChannel(channelRef.current); } catch (err) { console.warn('[chat realtime] removeChannel (cleanup) falló:', err); }
     };
-  }, [contactId, fetchMessages]);
+  }, [contactId, fetchMessages, fetchVerifSent]);
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -609,6 +651,15 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
           const media = parseMedia(m.content);
           // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
           const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
+          // "Enviar a verificar": solo en mensajes con imagen ya guardados (con id).
+          //   entrante (cliente, role 'user')  → Cargas
+          //   saliente del staff (role 'human', operador/agente) → Pagos
+          // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
+          // un pago lo origina una imagen que mandó una persona del equipo.
+          const hasImage   = media?._type === 'image' || classifyBody(m.content).kind === 'image';
+          const canVerify  = hasImage && !!m.id && (m.role === 'user' || m.role === 'human');
+          const verifSent  = !!m.id && verifSentIds.has(m.id);
+          const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
           return (
             <div
               key={m.id ?? i}
@@ -683,6 +734,40 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
                 return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>;
               })()}
+
+              {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →
+                  Cargas; saliente → Pagos. Si ya se envió, queda marcado. */}
+              {canVerify && (
+                <div style={{ marginTop: '8px' }}>
+                  {verifSent ? (
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                      fontSize: '12px', fontWeight: 700,
+                      color: isBot || isHuman ? '#3a7a00' : '#C8FF00',
+                      background: isBot || isHuman ? '#eaffd0' : '#2a2a2a',
+                      borderRadius: '8px', padding: '5px 10px',
+                    }}>
+                      ✓ En verificación · {verifDest}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => sendToVerify(m)}
+                      disabled={verifSendingId === m.id}
+                      title={`Mandar esta imagen a la bandeja de ${verifDest}`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '6px',
+                        fontSize: '12px', fontWeight: 800, cursor: verifSendingId === m.id ? 'wait' : 'pointer',
+                        color: '#000', background: '#C8FF00',
+                        border: 'none', borderRadius: '8px', padding: '6px 12px',
+                        boxShadow: '0 2px 0 #8ab000',
+                      }}
+                    >
+                      {verifSendingId === m.id ? 'Enviando…' : `📤 Enviar a verificar`}
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Hora + ticks (ticks solo en salientes) */}
               <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-start' : 'flex-end' }}

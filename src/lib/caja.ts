@@ -253,6 +253,94 @@ export async function aplicarCargaComprobante(
   return { ok: false, error: r.error };
 }
 
+// Aplica un PAGO al verificar el comprobante: sube fichas al pozo (+monto) y baja
+// la billetera del operador que verifica (-monto). Sin bono. Mismo guard
+// anti-doble-cobro que las cargas (un comprobante = un movimiento).
+//
+//   pagoAgente=false → billetera del verificador -monto. Si no alcanza, el SQL
+//                      aborta ("Saldo insuficiente en billetera") y NO se verifica.
+//   pagoAgente=true  → pago manual del agente: fichas +monto, billetera intacta
+//                      (no se descuenta a ningún operador).
+export async function aplicarPagoComprobante(
+  session: SessionPayload,
+  p: { comprobanteId: string; monto: number; pagoAgente?: boolean },
+): Promise<VerifyCajaResult> {
+  if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
+
+  const monto = Math.trunc(Number(p.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: true, applied: false };
+
+  // Guard anti-doble-cobro: un comprobante tiene UN solo movimiento asociado.
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('movimientos').select('id')
+      .eq('tenant_id', session.tenant_id).eq('comprobante_id', p.comprobanteId)
+      .limit(1).maybeSingle();
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: true, applied: false };
+      return { ok: false, error: error.message };
+    }
+    if (data) return { ok: true, applied: false }; // ya cobrado antes
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: true, applied: false };
+    return { ok: false, error: err?.message ?? 'Error verificando movimientos' };
+  }
+
+  // Pago del agente: las fichas suben igual, pero la billetera no se toca.
+  // Lo modelamos pasando los deltas manualmente (fichas +monto, billetera 0)
+  // a través de aplicarMovimiento, que ya calcularía -monto para 'pago'. Por eso
+  // para el caso agente usamos un atajo con billetera_delta=0 vía la RPC directa.
+  if (p.pagoAgente) {
+    try {
+      const { data, error } = await supabaseAdmin.rpc('fn_aplicar_movimiento', {
+        p_tenant:          session.tenant_id,
+        p_operador:        session.sub,
+        p_tipo:            'pago',
+        p_monto:           monto,
+        p_bono:            null,
+        p_fichas_delta:    monto, // sube fichas
+        p_billetera_delta: 0,     // billetera intacta (pago del agente)
+        p_comprobante:     p.comprobanteId,
+        p_contraparte:     null,
+        p_creado_por:      session.sub,
+        p_creado_por_name: session.name,
+      });
+      if (error) {
+        if (isMissingCajaError(error)) return { ok: true, applied: false };
+        return { ok: false, error: error.message };
+      }
+      const res = data as { movimiento_id: string; stock_actual: number; saldo_actual: number };
+      await logActivity({
+        session,
+        action:     ACTIVITY.MOVIMIENTO_CAJA,
+        objectType: 'movimiento',
+        objectId:   res.movimiento_id,
+        details: {
+          tipo: 'pago', pago_agente: true, monto,
+          fichas_delta: monto, billetera_delta: 0,
+          comprobante_id: p.comprobanteId,
+          stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
+        },
+      });
+      return { ok: true, applied: true };
+    } catch (err: any) {
+      if (isMissingCajaError(err)) return { ok: true, applied: false };
+      return { ok: false, error: err?.message ?? 'Error al aplicar el pago del agente' };
+    }
+  }
+
+  // Pago normal: lo paga el operador que verifica (billetera -monto, con guard).
+  const r = await aplicarMovimiento(session, {
+    operadorId:    session.sub,
+    tipo:          'pago',
+    monto,
+    comprobanteId: p.comprobanteId,
+  });
+  if (r.ok) return { ok: true, applied: true };
+  if (r.degraded) return { ok: true, applied: false };
+  return { ok: false, error: r.error };
+}
+
 export type EditMovimientoResult =
   | { ok: true;  applied: boolean }
   | { ok: false; error: string };
@@ -260,22 +348,31 @@ export type EditMovimientoResult =
 // Reedita el movimiento del comprobante: revierte el anterior y reaplica con los
 // valores nuevos SOBRE LA MISMA fila (un solo movimiento neto por comprobante).
 // Si no había movimiento (histórico / caja apagada al verificar), no crea ninguno.
+//
+// Genérico por `tipo`:
+//   carga → deltas de carga (con bono).
+//   pago  → deltas de pago, SIN bono. Si pagoAgente=true (pago manual del agente),
+//           la billetera no se mueve (billetera_delta=0): suben solo las fichas.
 export async function editarMovimientoComprobante(
   session: SessionPayload,
-  p: { comprobanteId: string; monto: number; bono?: number | null },
+  p: { comprobanteId: string; monto: number; bono?: number | null; tipo?: MovimientoTipo; pagoAgente?: boolean },
 ): Promise<EditMovimientoResult> {
   if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
 
+  const tipo: MovimientoTipo = p.tipo === 'pago' ? 'pago' : 'carga';
   const monto = Math.trunc(Number(p.monto));
   if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto inválido' };
-  const bono = p.bono != null && Number(p.bono) > 0 ? Math.trunc(Number(p.bono)) : 0;
-  const { fichas_delta, billetera_delta } = computeDeltas('carga', monto, bono);
+  // El bono solo aplica a cargas; en pagos se ignora.
+  const bono = tipo === 'carga' && p.bono != null && Number(p.bono) > 0 ? Math.trunc(Number(p.bono)) : 0;
+  let { fichas_delta, billetera_delta } = computeDeltas(tipo, monto, bono);
+  // Pago del agente: las fichas suben igual, pero ninguna billetera se toca.
+  if (tipo === 'pago' && p.pagoAgente) billetera_delta = 0;
 
   try {
     const { data, error } = await supabaseAdmin.rpc('fn_editar_movimiento_comprobante', {
       p_tenant:              session.tenant_id,
       p_comprobante:         p.comprobanteId,
-      p_tipo:                'carga',
+      p_tipo:                tipo,
       p_monto:               monto,
       p_bono:                bono > 0 ? bono : null,
       p_new_fichas_delta:    fichas_delta,
@@ -297,7 +394,7 @@ export async function editarMovimientoComprobante(
         objectType: 'movimiento',
         objectId:   res.movimiento_id ?? p.comprobanteId,
         details: {
-          tipo: 'carga', edicion: true, monto, bono,
+          tipo, edicion: true, monto, bono, pago_agente: !!p.pagoAgente,
           comprobante_id: p.comprobanteId,
           stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
         },

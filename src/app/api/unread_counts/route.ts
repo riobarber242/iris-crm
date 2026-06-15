@@ -63,23 +63,40 @@ export async function GET() {
       else if (level === 'orange') newPending++;
     }
 
-    // 4. Comprobantes pendientes (para agentes, solo los de sus contactos).
-    let comprobantesQuery = supabaseAdmin
-      .from('comprobantes')
-      .select('id', { count: 'exact', head: true })
-      .eq('estado', 'pendiente')
-      .eq('tenant_id', session.tenant_id);
-    if (isAgent) {
-      const ownedIds = Array.from(contactMap.keys());
-      comprobantesQuery = comprobantesQuery.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);
+    // 4. Pendientes de la bandeja, separados por tipo (cargas / pagos). Para
+    //    agentes, solo los de sus contactos. `tipoFilter`=null → no filtra por
+    //    tipo (degradación si la columna `tipo` aún no existe).
+    const ownedIds = Array.from(contactMap.keys());
+    async function countPendientes(tipoFilter: 'carga' | 'pago' | null): Promise<number | null> {
+      let q = supabaseAdmin
+        .from('comprobantes')
+        .select('id', { count: 'exact', head: true })
+        .eq('estado', 'pendiente')
+        .eq('tenant_id', session!.tenant_id);
+      if (tipoFilter) q = q.eq('tipo', tipoFilter);
+      if (isAgent) q = q.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);
+      const { count, error } = await q;
+      if (error) return null; // columna ausente u otro error → degradar
+      return count ?? 0;
     }
-    const { count: comprobantesPending } = await comprobantesQuery;
+
+    let cargasPending = await countPendientes('carga');
+    let pagosPending  = await countPendientes('pago');
+    // Si filtrar por tipo falló (migración sin correr), contamos todo como cargas.
+    if (cargasPending === null) {
+      cargasPending = (await countPendientes(null)) ?? 0;
+      pagosPending  = 0;
+    }
+    pagosPending = pagosPending ?? 0;
 
     return NextResponse.json({
       total:               newPending + recurringPending,
       newPending,
       recurringPending,
-      comprobantesPending: comprobantesPending ?? 0,
+      // `comprobantesPending` se mantiene como alias de cargas para compat.
+      comprobantesPending: cargasPending,
+      cargasPending,
+      pagosPending,
     });
   } catch (err: any) {
     return new NextResponse(String(err?.message ?? err), { status: 500 });

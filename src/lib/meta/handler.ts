@@ -182,11 +182,15 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   return publicUrl;
 }
 
-// Sube la imagen a Storage y la guarda como comprobante (estado pendiente).
-// Se llama SIEMPRE que entra una imagen/documento, sin importar el estado del bot.
-// Sube la imagen a Storage, la guarda como comprobante y devuelve la URL pública
-// (o null si no se pudo). Se llama SIEMPRE que entra una imagen/documento.
-async function persistComprobanteImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
+// Sube la imagen/documento entrante a Storage y devuelve su URL pública (o null
+// si no se pudo). Se llama SIEMPRE que entra una imagen/documento, para que el
+// mensaje se renderice como media en el chat del CRM.
+//
+// Etapa 4a: este paso YA NO crea un comprobante automáticamente. A partir de
+// ahora nada entra solo a la bandeja de Cargas: el operador decide qué imágenes
+// mandar a verificar con el botón "Enviar a verificar" desde la conversación
+// (ver POST /api/comprobantes). Acá solo persistimos la imagen.
+async function saveInboundImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
   const mediaId = message.image?.id ?? message.document?.id ?? null;
   // El media solo puede descargarse con el token del número que lo recibió.
   let waToken: string | null = null;
@@ -194,27 +198,13 @@ async function persistComprobanteImage(message: any, contactId: string, tenantId
     try {
       waToken = (await resolveCreds(tenantId, numberId)).token;
     } catch (err) {
-      console.error('[persistComprobanteImage] No se pudo resolver token de WhatsApp:', err);
+      console.error('[saveInboundImage] No se pudo resolver token de WhatsApp:', err);
     }
   }
   const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId, waToken) : null;
 
   if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
-  if (!supabaseImageUrl) console.warn('[image] Upload falló — comprobante se guarda sin imagen');
-
-  try {
-    const { error } = await supabaseAdmin.from('comprobantes').insert({
-      contact_id: contactId,
-      image_url:  supabaseImageUrl,
-      monto:      0,
-      estado:     'pendiente',
-      tenant_id:  tenantId,
-    });
-    if (error) console.error('[image] Error guardando comprobante en DB:', error.message);
-    else       console.log('[image] Comprobante guardado OK');
-  } catch (err) {
-    console.error('[image] Excepción guardando comprobante:', err);
-  }
+  if (!supabaseImageUrl) console.warn('[image] Upload falló — la imagen no se pudo guardar');
 
   return supabaseImageUrl;
 }
@@ -371,13 +361,13 @@ async function processMessage(
     }
   }
 
-  // ── Comprobantes/imágenes: subir ANTES de guardar el mensaje, para que el
+  // ── Imágenes/documentos: subir ANTES de guardar el mensaje, para que el
   //    mensaje entrante de tipo image se guarde como media (no como texto "image")
-  //    y se renderice como imagen en el chat del CRM. La imagen también se guarda
-  //    como comprobante (operador la necesita).
+  //    y se renderice como imagen en el chat del CRM. Etapa 4a: NO se crea
+  //    comprobante automático; el operador lo manda a verificar con el botón.
   let inboundImageUrl: string | null = null;
   if (type === 'image' || type === 'document') {
-    inboundImageUrl = await persistComprobanteImage(message, contact.id, tenantId, numberId);
+    inboundImageUrl = await saveInboundImage(message, contact.id, tenantId, numberId);
   }
 
   // Contenido del mensaje del usuario.

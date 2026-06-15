@@ -23,6 +23,8 @@ type ComprobanteItem = {
   edited_at: string | null;
   // El backend marca si esta sesión puede editar este comprobante.
   can_edit?: boolean;
+  // Pago manual del agente (sin contacto): se muestra distinto en la lista.
+  pago_agente?: boolean | null;
   contacts: { name: string | null; phone: string; casino_username: string | null } | null;
 };
 
@@ -50,7 +52,12 @@ const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
   { key: 'rechazado', label: 'Rechazado' },
 ];
 
-export default function ComprobantesClient() {
+// `tipo` decide qué bandeja es: 'carga' (Cargas) o 'pago' (Pagos). Filtra el
+// fetch al backend; si se omite, trae todo (compat). `canManualPago` (solo en
+// Pagos, para admin/agent) habilita el botón "Cargar pago manual".
+export default function ComprobantesClient(
+  { tipo, canManualPago = false }: { tipo?: 'carga' | 'pago'; canManualPago?: boolean } = {},
+) {
   const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
   const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
   const [query,        setQuery]              = useState('');
@@ -65,11 +72,29 @@ export default function ComprobantesClient() {
   const [bonoInput, setBonoInput]             = useState('');
   const [montoError, setMontoError]           = useState('');
   const [aiLoading,      setAiLoading]        = useState(false);
+  // Modal "Cargar pago manual" (solo Pagos · admin/agent).
+  const [manualOpen,   setManualOpen]         = useState(false);
+  const [manualMonto,  setManualMonto]        = useState('');
+  const [manualFile,   setManualFile]         = useState<File | null>(null);
+  const [manualError,  setManualError]        = useState('');
+  const [manualSaving, setManualSaving]       = useState(false);
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
 
+  // Sustantivo de la bandeja para los textos (vacío/errores), según el tipo.
+  // `artS` = artículo singular, `fem` = concuerda en femenino (cargas).
+  const NOUN = tipo === 'pago'
+    ? { sing: 'pago', plur: 'pagos', artS: 'el', fem: false }
+    : tipo === 'carga'
+      ? { sing: 'carga', plur: 'cargas', artS: 'la', fem: true }
+      : { sing: 'comprobante', plur: 'comprobantes', artS: 'el', fem: false };
+
   function estadoUrl(f: EstadoFilter) {
-    return f === 'all' ? '/api/comprobantes' : `/api/comprobantes?estado=${f}`;
+    const params = new URLSearchParams();
+    if (f !== 'all') params.set('estado', f);
+    if (tipo) params.set('tipo', tipo);
+    const qs = params.toString();
+    return qs ? `/api/comprobantes?${qs}` : '/api/comprobantes';
   }
 
   // Full fetch — shows spinner (initial load only)
@@ -81,7 +106,7 @@ export default function ComprobantesClient() {
       if (!res.ok) throw new Error(res.statusText);
       setComprobantes(await res.json());
     } catch {
-      setError('No se pudieron cargar los comprobantes.');
+      setError('No se pudo cargar la bandeja.');
     } finally {
       setLoading(false);
     }
@@ -123,7 +148,7 @@ export default function ComprobantesClient() {
       if (!res.ok) throw new Error(await res.text());
       await fetchSilent();
     } catch {
-      setError('No se pudo actualizar el comprobante.');
+      setError(`No se pudo actualizar ${NOUN.artS} ${NOUN.sing}.`);
     }
   }
 
@@ -169,7 +194,39 @@ export default function ComprobantesClient() {
       if (!res.ok) throw new Error(await res.text());
       await fetchSilent();
     } catch {
-      setError('No se pudo editar el comprobante.');
+      setError(`No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
+    }
+  }
+
+  function closeManual() {
+    setManualOpen(false);
+    setManualMonto('');
+    setManualFile(null);
+    setManualError('');
+  }
+
+  // Crea un pago manual del agente (premio pagado por afuera). Sube imagen
+  // opcional + monto; entra como pago pendiente para verificar en esta bandeja.
+  async function submitManual() {
+    const monto = parseFloat(manualMonto.replace(',', '.'));
+    if (!monto || monto <= 0) {
+      setManualError('Ingresá el monto del pago');
+      return;
+    }
+    setManualSaving(true);
+    setManualError('');
+    try {
+      const fd = new FormData();
+      fd.append('monto', String(Math.trunc(monto)));
+      if (manualFile) fd.append('file', manualFile);
+      const res = await fetch('/api/comprobantes/pago-manual', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(await res.text());
+      closeManual();
+      await fetchSilent();
+    } catch (e: any) {
+      setManualError(e?.message ? String(e.message).slice(0, 140) : 'No se pudo cargar el pago.');
+    } finally {
+      setManualSaving(false);
     }
   }
 
@@ -212,9 +269,77 @@ export default function ComprobantesClient() {
     };
   }, []);
 
+  // Botón + modal de carga manual de pago (solo Pagos · admin/agent). Se definen
+  // acá para reusarlos en la vista vacía y en la vista con datos.
+  const manualBtn = canManualPago && tipo === 'pago' ? (
+    <button
+      onClick={() => setManualOpen(true)}
+      style={{
+        background: '#1a7a3a', color: '#fff', fontWeight: 700, fontSize: '13px',
+        border: 'none', borderRadius: '999px', padding: '6px 16px', cursor: 'pointer',
+        boxShadow: '0 2px 0 #0f5527', whiteSpace: 'nowrap',
+      }}
+    >
+      + Cargar pago manual
+    </button>
+  ) : null;
+
+  const manualModal = manualOpen ? (
+    <div
+      onClick={closeManual}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '380px', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
+      >
+        <h3 style={{ margin: '0 0 4px 0', fontSize: '17px', fontWeight: 800, color: '#111' }}>Cargar pago manual</h3>
+        <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#777' }}>
+          Para premios pagados por afuera. Al verificarlo suben las fichas al pozo; no descuenta billetera de ningún operador.
+        </p>
+
+        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#555', marginBottom: '4px' }}>Monto $</label>
+        <input
+          type="number" min="1" step="1" value={manualMonto}
+          onChange={(e) => { setManualMonto(e.target.value); setManualError(''); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') submitManual(); if (e.key === 'Escape') closeManual(); }}
+          placeholder="Monto del pago" autoFocus
+          style={{
+            width: '100%', padding: '9px 12px', boxSizing: 'border-box',
+            border: `2px solid ${manualError ? '#E53935' : '#1a7a3a'}`, borderRadius: '10px',
+            fontSize: '15px', fontWeight: 700, outline: 'none', marginBottom: '12px',
+          }}
+        />
+
+        <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#555', marginBottom: '4px' }}>Comprobante (imagen, opcional)</label>
+        <input
+          type="file" accept="image/*"
+          onChange={(e) => setManualFile(e.target.files?.[0] ?? null)}
+          style={{ width: '100%', fontSize: '13px', marginBottom: '14px' }}
+        />
+
+        {manualError && (
+          <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#E53935', fontWeight: 600 }}>{manualError}</p>
+        )}
+
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <button onClick={closeManual} disabled={manualSaving} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '13px', border: '1px solid #ddd', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
+            Cancelar
+          </button>
+          <button onClick={submitManual} disabled={manualSaving} style={{ background: '#1a7a3a', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '8px 18px', cursor: manualSaving ? 'wait' : 'pointer', boxShadow: '0 2px 0 #0f5527' }}>
+            {manualSaving ? 'Guardando…' : 'Cargar pago'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (loading) return (
     <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
-      Cargando comprobantes...
+      Cargando {NOUN.plur}...
     </div>
   );
   if (error) return (
@@ -223,27 +348,36 @@ export default function ComprobantesClient() {
     </div>
   );
   if (comprobantes.length === 0) {
+    const estadoAdj = estadoFilter === 'pendiente'
+      ? 'pendientes'
+      : estadoFilter === 'verificado'
+        ? (NOUN.fem ? 'verificadas' : 'verificados')
+        : (NOUN.fem ? 'rechazadas' : 'rechazados');
     const emptyMsg = estadoFilter === 'all'
-      ? 'No hay comprobantes cargados.'
-      : `No hay comprobantes ${estadoFilter === 'pendiente' ? 'pendientes' : estadoFilter === 'verificado' ? 'verificados' : 'rechazados'}.`;
+      ? `No hay ${NOUN.plur} ${NOUN.fem ? 'registradas' : 'registrados'}.`
+      : `No hay ${NOUN.plur} ${estadoAdj}.`;
     return (
       <>
+        {manualModal}
         {/* ── Filter bar ── */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-          {ESTADO_FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => handleFilterChange(key)}
-              style={{
-                background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
-                color:        estadoFilter === key ? '#000'    : '#888',
-                border:       'none', borderRadius: '999px',
-                padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {ESTADO_FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => handleFilterChange(key)}
+                style={{
+                  background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
+                  color:        estadoFilter === key ? '#000'    : '#888',
+                  border:       'none', borderRadius: '999px',
+                  padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {manualBtn}
         </div>
         <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
           {emptyMsg}
@@ -254,23 +388,27 @@ export default function ComprobantesClient() {
 
   return (
     <>
+      {manualModal}
       {/* ── Filter bar + search ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '4px' }}>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {ESTADO_FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => handleFilterChange(key)}
-              style={{
-                background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
-                color:        estadoFilter === key ? '#000'    : '#888',
-                border:       'none', borderRadius: '999px',
-                padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {ESTADO_FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => handleFilterChange(key)}
+                style={{
+                  background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
+                  color:        estadoFilter === key ? '#000'    : '#888',
+                  border:       'none', borderRadius: '999px',
+                  padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {manualBtn}
         </div>
         <input
           value={query}
@@ -331,7 +469,9 @@ export default function ComprobantesClient() {
           return name.includes(q) || ph.includes(q);
         }).map((item) => {
           const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
-          const displayName = item.contacts?.casino_username || item.contacts?.phone || '—';
+          const displayName = item.pago_agente
+            ? '💸 Pago del agente'
+            : (item.contacts?.casino_username || item.contacts?.phone || '—');
           const phone       = item.contacts?.phone;
 
           return (
@@ -399,18 +539,20 @@ export default function ComprobantesClient() {
                     }}>
                       {item.estado}
                     </span>
-                    <Link
-                      href={`/conversaciones/${item.contact_id}`}
-                      title="Ver chat"
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        width: '28px', height: '28px', borderRadius: '8px',
-                        background: '#1a1a1a', textDecoration: 'none', fontSize: '14px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      💬
-                    </Link>
+                    {item.contact_id && (
+                      <Link
+                        href={`/conversaciones/${item.contact_id}`}
+                        title="Ver chat"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: '28px', height: '28px', borderRadius: '8px',
+                          background: '#1a1a1a', textDecoration: 'none', fontSize: '14px',
+                          flexShrink: 0,
+                        }}
+                      >
+                        💬
+                      </Link>
+                    )}
                   </div>
                 </div>
 
@@ -469,22 +611,25 @@ export default function ComprobantesClient() {
                           outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
                         }}
                       />
-                      {/* Bono en fichas: opcional, solo enteros positivos. La IA no lo toca. */}
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={bonoInput}
-                        onChange={(e) => setBonoInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
-                        placeholder="Bono (fichas)"
-                        style={{
-                          width: '120px', padding: '5px 10px',
-                          border: '2px solid #ffe08a',
-                          borderRadius: '8px', fontSize: '13px', fontWeight: 700,
-                          outline: 'none', background: '#fffaf0',
-                        }}
-                      />
+                      {/* Bono en fichas: opcional, solo enteros positivos. La IA
+                          no lo toca. Los pagos no llevan bono → se oculta. */}
+                      {tipo !== 'pago' && (
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={bonoInput}
+                          onChange={(e) => setBonoInput(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
+                          placeholder="Bono (fichas)"
+                          style={{
+                            width: '120px', padding: '5px 10px',
+                            border: '2px solid #ffe08a',
+                            borderRadius: '8px', fontSize: '13px', fontWeight: 700,
+                            outline: 'none', background: '#fffaf0',
+                          }}
+                        />
+                      )}
                       {item.image_url && (
                         <button
                           type="button"

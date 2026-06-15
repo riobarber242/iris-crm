@@ -28,15 +28,26 @@ Importar desde CSV: botón "⬆ Importar CSV". Antes de elegir el archivo config
 Columnas del CSV: phone (obligatoria), casino_username y name (opcionales). También se acepta el export de Google Contacts directo (usa "First Name" y "Phone 1 - Value" automáticamente). Los teléfonos se normalizan solos (+54, espacios y guiones no molestan). Al terminar, un cartel muestra el resultado: insertados, actualizados y sin cambios.`,
   },
 
-  comprobantes: {
-    titulo: 'Comprobantes (verificar recargas)',
-    contenido: `Arriba están los filtros por estado (chips: Pendientes, Verificados, Rechazados, Todos) y un buscador por usuario de casino o teléfono. Clic en la imagen del comprobante para verla en grande (clic afuera para cerrar).
+  cargas: {
+    titulo: 'Cargas (verificar recargas)',
+    contenido: `Las cargas YA NO entran solas. Cada comprobante llega a esta bandeja porque alguien tocó "📤 Enviar a verificar" sobre una imagen del cliente en la conversación. Si una recarga no aparece acá, andá al chat y mandala a verificar desde ahí.
+
+Arriba están los filtros por estado (chips: Pendientes, Verificados, Rechazados, Todos) y un buscador por usuario de casino o teléfono. Clic en la imagen del comprobante para verla en grande (clic afuera para cerrar).
 
 Para VERIFICAR un comprobante pendiente: 1) Tocá "✓ Verificar". 2) Ingresá el monto en el campo "Monto $" — o tocá "✨ IA" para que lo detecte automáticamente de la imagen (revisalo igual). 3) Confirmá con "✓ OK" (o "Cancelar" para volver). Si la notificación automática está activada en Configuración, el cliente recibe "Tu recarga de $X fue confirmada ✅" por WhatsApp.
 
 Para RECHAZAR: botón "✕ Rechazar" (sin monto). En verificados que quedaron sin monto aparece "✏ Editar monto" para completarlo después. Cada comprobante resuelto muestra quién lo verificó o rechazó y cuándo.
 
 Si el comprobante es dudoso (imagen ilegible, monto que no coincide, posible duplicado): no lo verifiques — pedile al cliente por el chat una captura más clara, y ante la duda consultá con tu agente o admin antes de resolver.`,
+  },
+
+  pagos: {
+    titulo: 'Pagos (verificar pagos al cliente)',
+    contenido: `Bandeja hermana de Cargas, pero para los PAGOS que el equipo le hace al cliente (premios, retiros). Los pagos entran cuando alguien toca "📤 Enviar a verificar" sobre una imagen que MANDÓ el equipo en la conversación. Mismos filtros (Pendientes/Verificados/Rechazados/Todos) y buscador que Cargas.
+
+Verificar un pago hace lo contrario que una carga: SUBE fichas al pozo y BAJA tu billetera por ese monto (sin bono). Si el monto es mayor a lo que tenés en la billetera, no se verifica: aparece "Saldo insuficiente — este pago debe manejarlo el agente". En ese caso avisale al agente/admin.
+
+El agente/admin también puede cargar un "pago manual" (premio grande pagado por fuera): sube la imagen y el monto; al verificarlo suben las fichas al pozo pero NO baja la billetera de ningún operador.`,
   },
 
   top_clientes: {
@@ -95,14 +106,14 @@ export type HelpFlags = { top_clientes?: boolean; campanas?: boolean };
 // middleware). Operador: base reducida + extras solo con permiso explícito.
 export function helpSectionsForRole(role: string, flags: HelpFlags = {}): string[] {
   if (role === 'operator') {
-    const base = ['conversaciones', 'contactos', 'comprobantes'];
+    const base = ['conversaciones', 'contactos', 'cargas', 'pagos'];
     if (flags.top_clientes) base.push('top_clientes');
     if (flags.campanas) base.push('campanas');
     return base;
   }
   if (role === 'admin') {
-    return ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top_clientes', 'campanas', 'operadores', 'agentes', 'mi_bot', 'configuracion'];
+    return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'operadores', 'agentes', 'mi_bot', 'configuracion'];
   }
   // agente: todo menos administración global (Operadores, Agentes/tenants).
-  return ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'top_clientes', 'campanas', 'mi_bot', 'configuracion'];
+  return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'mi_bot', 'configuracion'];
 }

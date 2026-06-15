@@ -10,6 +10,7 @@ import type { SessionPayload } from './session';
 
 // Tipos de acción registrados. Mantener estable: la IA consulta sobre estos.
 export const ACTIVITY = {
+  COMPROBANTE_ENVIADO:    'comprobante_enviado',     // mandó una imagen del chat a verificar (Cargas/Pagos)
   COMPROBANTE_VERIFICADO: 'comprobante_verificado',
   COMPROBANTE_RECHAZADO:  'comprobante_rechazado',
   COMPROBANTE_EDITADO:    'editar_comprobante',     // editó monto/bono de un comprobante ya resuelto

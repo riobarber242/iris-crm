@@ -15,7 +15,8 @@ const navLabels: Record<string, string> = {
   dashboard:      'Dashboard',
   conversaciones: 'Conversaciones',
   contactos:      'Contactos',
-  comprobantes:   'Comprobantes',
+  cargas:         'Cargas',
+  pagos:          'Pagos',
   fichas:         'Fichas',
   'top-clientes': 'Top Clientes',
   campanas:       'Campañas',
@@ -46,19 +47,19 @@ export function AdminShell({ children }: { children: ReactNode }) {
   if (!roleReady) {
     items = []; // rol no confirmado → sidebar sin opciones (skeleton)
   } else if (agent?.role === 'admin') {
-    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'fichas', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
   } else if (agent?.role === 'operator') {
-    // Operador: solo Conversaciones, Contactos, Comprobantes.
-    items = ['conversaciones', 'contactos', 'comprobantes'];
+    // Operador: Conversaciones, Contactos, Cargas y Pagos (verifica los suyos).
+    items = ['conversaciones', 'contactos', 'cargas', 'pagos'];
   } else {
     // Agente: todo menos Operadores y Tenants (administración global).
-    items = ['dashboard', 'conversaciones', 'contactos', 'comprobantes', 'fichas', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0 });
+  const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0, cargasPending: 0, pagosPending: 0 });
   const unreadChannelRef            = useRef<any>(null);
   const unreadSupabaseRef           = useRef<any>(null);
 
@@ -129,6 +130,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
           newPending:          newP,
           recurringPending:    recP,
           comprobantesPending: data.comprobantesPending  ?? 0,
+          cargasPending:       data.cargasPending        ?? data.comprobantesPending ?? 0,
+          pagosPending:        data.pagosPending         ?? 0,
         });
       } catch {}
     }
@@ -414,14 +417,24 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 >
                   <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     {navLabels[item]}
-                    {item === 'comprobantes' && unread.comprobantesPending > 0 && (
+                    {item === 'cargas' && unread.cargasPending > 0 && (
                       <span style={{
                         background: '#b8860b', color: '#fff', borderRadius: '999px',
                         fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                         padding: '0 5px', lineHeight: 1,
                       }}>
-                        {unread.comprobantesPending > 99 ? '99+' : unread.comprobantesPending}
+                        {unread.cargasPending > 99 ? '99+' : unread.cargasPending}
+                      </span>
+                    )}
+                    {item === 'pagos' && unread.pagosPending > 0 && (
+                      <span style={{
+                        background: '#1a7a3a', color: '#fff', borderRadius: '999px',
+                        fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        padding: '0 5px', lineHeight: 1,
+                      }}>
+                        {unread.pagosPending > 99 ? '99+' : unread.pagosPending}
                       </span>
                     )}
                     {item === 'conversations' && (unread.newPending > 0 || unread.recurringPending > 0) && (

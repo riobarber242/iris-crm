@@ -397,10 +397,10 @@ export default function DashboardClient() {
       case 'finanzas':
         return (
           <Column title={w.label} icon="💰">
-            <MetricCard label="Recargas hoy"            value={fmt(s.recargasHoy)}         highlight={s.recargasHoy > 0}          href="/comprobantes" />
-            <MetricCard label="Recargas mes"            value={fmt(s.recargasMes)}                                                href="/comprobantes" />
-            <MetricCard label="Recargas mes anterior"   value={fmt(s.recargasMesAnterior)}                                        href="/comprobantes" />
-            <MetricCard label="Comprobantes pendientes" value={fmt(s.comprobantesPending)} highlight={s.comprobantesPending > 0}   href="/comprobantes" />
+            <MetricCard label="Recargas hoy"            value={fmt(s.recargasHoy)}         highlight={s.recargasHoy > 0}          href="/cargas" />
+            <MetricCard label="Recargas mes"            value={fmt(s.recargasMes)}                                                href="/cargas" />
+            <MetricCard label="Recargas mes anterior"   value={fmt(s.recargasMesAnterior)}                                        href="/cargas" />
+            <MetricCard label="Comprobantes pendientes" value={fmt(s.comprobantesPending)} highlight={s.comprobantesPending > 0}   href="/cargas" />
           </Column>
         );
 
@@ -410,9 +410,9 @@ export default function DashboardClient() {
         return (
           <Column title={w.label} icon="⚡">
             <MetricCard label="Tiempo 1ra respuesta"        value={mins(s.avgFirstHumanResponseMin)}                  href="/conversaciones" />
-            <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/comprobantes" />
-            <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/comprobantes" />
-            <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/comprobantes" />
+            <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/cargas" />
+            <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/cargas" />
+            <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/cargas" />
           </Column>
         );
 
