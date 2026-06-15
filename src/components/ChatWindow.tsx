@@ -382,13 +382,40 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   }, []);
 
   // ── Image ──────────────────────────────────────────────────────────────
+  // Acepta una imagen (del file-input o del portapapeles) y la deja lista para
+  // enviar con vista previa. Revoca el preview anterior para no filtrar URLs.
+  function acceptImageFile(file: File) {
+    clearAudio();
+    setImageFile(file);
+    setImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+  }
+
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
     if (!file) return;
-    clearAudio();
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    acceptImageFile(file);
     e.target.value = '';
+  }
+
+  // Pegar (Ctrl+V) una imagen del portapapeles en el chat: muestra la vista
+  // previa (NO envía); el usuario confirma con el botón enviar. Reusa el mismo
+  // flujo que adjuntar archivo. Si el portapapeles trae texto, no interfiere.
+  function handlePasteImage(e: React.ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const file = it.getAsFile();
+        if (file) {
+          e.preventDefault();
+          acceptImageFile(file);
+        }
+        return;
+      }
+    }
   }
 
   function clearImage() {
@@ -945,7 +972,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         {imagePreview && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#F5F5F5', borderRadius: '14px', padding: '10px 14px', marginBottom: '10px' }}>
             <img src={imagePreview} alt="preview" style={{ width: '56px', height: '56px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }} />
-            <p style={{ fontSize: '13px', color: '#555', margin: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageFile?.name}</p>
+            <p style={{ fontSize: '13px', color: '#555', margin: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageFile?.name || 'Imagen pegada'}</p>
             <button type="button" onClick={clearImage} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999', fontSize: '20px', lineHeight: 1, padding: '4px' }}>×</button>
           </div>
         )}
@@ -1013,8 +1040,9 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                onPaste={handlePasteImage}
                 onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'end' })}
-                placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje...'}
+                placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje... (podés pegar una imagen)'}
                 style={{
                   flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: `${TA_MAX_H}px`,
                   background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '11px 16px',

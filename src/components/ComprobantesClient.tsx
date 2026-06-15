@@ -147,8 +147,11 @@ export default function ComprobantesClient(
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchSilent();
-    } catch {
-      setError(`No se pudo actualizar ${NOUN.artS} ${NOUN.sing}.`);
+    } catch (e: any) {
+      // Mostramos el motivo real del backend (ej. "Saldo insuficiente en
+      // billetera" / "No hay fichas suficientes"); genérico solo si vino vacío.
+      const msg = String(e?.message ?? '').trim();
+      setError(msg || `No se pudo actualizar ${NOUN.artS} ${NOUN.sing}.`);
     }
   }
 
@@ -193,8 +196,10 @@ export default function ComprobantesClient(
       });
       if (!res.ok) throw new Error(await res.text());
       await fetchSilent();
-    } catch {
-      setError(`No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
+    } catch (e: any) {
+      // Motivo real del backend (ej. guard de saldo/fichas al reaplicar).
+      const msg = String(e?.message ?? '').trim();
+      setError(msg || `No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
     }
   }
 
@@ -689,7 +694,8 @@ export default function ComprobantesClient(
                     </button>
                   </div>
                 ) : item.estado === 'verificado' && item.can_edit ? (
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                  // Alineado a la derecha, en línea con el badge de estado.
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px', justifyContent: 'flex-end' }}>
                     <button
                       onClick={() => openForm(item)}
                       style={{
