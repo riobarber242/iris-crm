@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
-import { requireAdmin } from '@/lib/current-agent';
+import { requireAgentOrAdmin } from '@/lib/current-agent';
 
 const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
@@ -13,26 +13,38 @@ function parseTimeoutMinutes(raw: any): number | null {
   return n;
 }
 
-// GET /api/agents — lista de agentes (admin)
+// GET /api/agents — lista de agentes
+//  - admin: todos los agentes (alcance global del sistema).
+//  - agent: solo los operadores de SU tenant.
 export async function GET() {
-  if (!(await requireAdmin())) {
-    return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
+  const session = await requireAgentOrAdmin();
+  if (!session) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
   }
 
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('agents')
     .select(AGENT_FIELDS)
     .order('created_at', { ascending: true });
+
+  // El agente solo gestiona operadores de su propio tenant (filtrado server-side).
+  if (session.role === 'agent') {
+    query = query.eq('tenant_id', session.tenant_id).eq('role', 'operator');
+  }
+
+  const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data ?? []);
 }
 
-// POST /api/agents — crear agente (admin)
+// POST /api/agents — crear agente
+//  - admin: cualquier rol, en su tenant.
+//  - agent: solo operadores, en su propio tenant.
 export async function POST(request: Request) {
-  const admin = await requireAdmin();
-  if (!admin) {
-    return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
+  const session = await requireAgentOrAdmin();
+  if (!session) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
   }
 
   let body: any;
@@ -42,7 +54,10 @@ export async function POST(request: Request) {
   const name     = String(body.name ?? '').trim();
   const email    = String(body.email ?? '').trim() || null;
   const password = String(body.password ?? '');
-  const role     = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
+  // El agente solo puede crear operadores; el admin elige el rol libremente.
+  const role     = session.role === 'agent'
+    ? 'operator'
+    : (['admin', 'operator'].includes(body.role) ? body.role : 'agent');
   const schedule_start = body.schedule_start || null;
   const schedule_end   = body.schedule_end   || null;
   const system_prompt  = body.system_prompt != null ? String(body.system_prompt) : null;
@@ -81,8 +96,8 @@ export async function POST(request: Request) {
       can_see_campaigns,
       session_timeout_enabled,
       session_timeout_minutes: session_timeout_minutes ?? 20,
-      // Multi-tenant: el nuevo agente hereda el tenant del admin que lo crea.
-      tenant_id: admin.tenant_id,
+      // Multi-tenant: el nuevo usuario hereda el tenant de quien lo crea.
+      tenant_id: session.tenant_id,
     })
     .select(AGENT_FIELDS)
     .single();

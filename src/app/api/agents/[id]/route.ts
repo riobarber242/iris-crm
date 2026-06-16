@@ -1,8 +1,25 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-import { requireAdmin } from '@/lib/current-agent';
+import { requireAgentOrAdmin } from '@/lib/current-agent';
+import type { SessionPayload } from '@/lib/session';
 
 const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
+
+// El agente solo puede tocar operadores de SU tenant. Devuelve null si la
+// operación está permitida, o una respuesta de error si debe rechazarse.
+// El admin tiene alcance global, así que nunca se restringe.
+async function denyIfNotOwnOperator(session: SessionPayload, id: string): Promise<NextResponse | null> {
+  if (session.role !== 'agent') return null;
+  const { data: target } = await supabaseAdmin
+    .from('agents')
+    .select('id, role, tenant_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (!target || target.tenant_id !== session.tenant_id || target.role !== 'operator') {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+  }
+  return null;
+}
 
 // PATCH /api/agents/[id] — editar agente (admin)
 // Campos permitidos: name, email, role, active, schedule_start, schedule_end,
@@ -10,17 +27,25 @@ const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, s
 // session_timeout_enabled, session_timeout_minutes.
 // (username inmutable; password se cambia en /api/agents/[id]/password)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin();
-  if (!admin) return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
+  const session = await requireAgentOrAdmin();
+  if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 
   const { id } = await params;
+
+  // El agente solo edita operadores de su tenant; nunca otros agentes/admins.
+  const denied = await denyIfNotOwnOperator(session, id);
+  if (denied) return denied;
+
   let body: any;
   try { body = await request.json(); } catch { body = {}; }
 
   const updates: Record<string, any> = {};
   if (body.name !== undefined)           updates.name           = String(body.name).trim();
   if (body.email !== undefined)          updates.email          = String(body.email).trim() || null;
-  if (body.role !== undefined)           updates.role           = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
+  // Solo el admin puede cambiar roles. El agente no puede escalar privilegios
+  // ni convertir a sus operadores en agentes/admins.
+  if (body.role !== undefined && session.role === 'admin')
+    updates.role = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
   if (body.active !== undefined)         updates.active         = !!body.active;
   if (body.schedule_start !== undefined) updates.schedule_start = body.schedule_start || null;
   if (body.schedule_end !== undefined)   updates.schedule_end   = body.schedule_end   || null;
@@ -56,7 +81,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   // Salvaguarda anti-lockout: un admin no puede desactivarse ni quitarse el rol a sí mismo
-  if (id === admin.sub) {
+  if (id === session.sub) {
     if (updates.active === false) {
       return NextResponse.json({ error: 'No podés desactivar tu propia cuenta' }, { status: 400 });
     }
@@ -81,13 +106,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 // mensajes (messages.agent_id) quedan en null. El nombre del agente en cada
 // mensaje (agent_name) se conserva como snapshot histórico.
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const admin = await requireAdmin();
-  if (!admin) return NextResponse.json({ error: 'Requiere rol admin' }, { status: 403 });
+  const session = await requireAgentOrAdmin();
+  if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 
   const { id } = await params;
 
+  // El agente solo elimina operadores de su tenant.
+  const denied = await denyIfNotOwnOperator(session, id);
+  if (denied) return denied;
+
   // Salvaguarda anti-lockout: no podés borrarte a vos mismo
-  if (id === admin.sub) {
+  if (id === session.sub) {
     return NextResponse.json({ error: 'No podés eliminar tu propia cuenta' }, { status: 400 });
   }
 

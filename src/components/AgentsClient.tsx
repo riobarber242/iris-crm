@@ -33,6 +33,9 @@ function hhmm(t: string | null) { return t ? t.slice(0, 5) : ''; }
 
 export default function AgentsClient() {
   const { agent: me } = useAuth();
+  // Solo el admin elige el rol al crear/editar. El agente gestiona únicamente
+  // operadores de su tenant, así que el rol queda fijo en 'operator'.
+  const isAdmin = me?.role === 'admin';
   const [agents,  setAgents]  = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
@@ -59,6 +62,9 @@ export default function AgentsClient() {
 
   useEffect(() => { fetchAgents(); }, []);
 
+  // El agente solo crea operadores → fijamos el rol en cuanto conocemos el rol propio.
+  useEffect(() => { if (me && !isAdmin) setNu(n => ({ ...n, role: 'operator' })); }, [me, isAdmin]);
+
   async function createAgent(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -69,7 +75,7 @@ export default function AgentsClient() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNu({ username: '', name: '', email: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
+        setNu({ username: '', name: '', email: '', password: '', role: isAdmin ? 'agent' : 'operator', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
         fetchAgents();
       } else {
         setError(d.error ?? 'No se pudo crear');
@@ -137,13 +143,15 @@ export default function AgentsClient() {
         <Field label="Nombre"><input style={inputStyle} value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })} placeholder="Matías" /></Field>
         <Field label="Email"><input style={inputStyle} type="email" value={nu.email} onChange={e => setNu({ ...nu, email: e.target.value })} placeholder="matias@iris.com" /></Field>
         <Field label="Contraseña"><input style={inputStyle} type="password" value={nu.password} onChange={e => setNu({ ...nu, password: e.target.value })} placeholder="••••••" /></Field>
-        <Field label="Rol">
-          <select style={inputStyle} value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>
-            <option value="agent">Agente</option>
-            <option value="operator">Operador</option>
-            <option value="admin">Admin</option>
-          </select>
-        </Field>
+        {isAdmin && (
+          <Field label="Rol">
+            <select style={inputStyle} value={nu.role} onChange={e => setNu({ ...nu, role: e.target.value })}>
+              <option value="agent">Agente</option>
+              <option value="operator">Operador</option>
+              <option value="admin">Admin</option>
+            </select>
+          </Field>
+        )}
         <Field label="Desde"><input style={inputStyle} type="time" value={nu.schedule_start} onChange={e => setNu({ ...nu, schedule_start: e.target.value })} /></Field>
         <Field label="Hasta"><input style={inputStyle} type="time" value={nu.schedule_end} onChange={e => setNu({ ...nu, schedule_end: e.target.value })} /></Field>
         {nu.role === 'operator' && (
@@ -202,8 +210,8 @@ export default function AgentsClient() {
                   ? <input style={inputStyle} type="email" value={draft.email ?? ''} onChange={e => setDraft({ ...draft, email: e.target.value })} placeholder="email@iris.com" />
                   : <span style={{ fontSize: '12px', color: a.email ? '#555' : '#ccc' }}>{a.email || '—'}</span>}
 
-                {/* rol */}
-                {editing
+                {/* rol — el selector solo lo ve el admin; el agente gestiona operadores fijos */}
+                {editing && isAdmin
                   ? <select style={inputStyle} value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Agent['role'] })}>
                       <option value="agent">Agente</option><option value="operator">Operador</option><option value="admin">Admin</option>
                     </select>

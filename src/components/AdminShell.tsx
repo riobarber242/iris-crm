@@ -41,21 +41,22 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const roleReady = !!agent?.role;
 
   // Menú por rol:
-  //  - admin: todo + Operadores + Tenants.
-  //  - agent: todo, pero SIN Operadores ni Tenants (administración global).
-  //  - operator: base reducida (conversaciones, contactos, comprobantes).
+  //  - admin: gestiona agentes-clientes (Agentes/Tenants), NO operadores.
+  //  - agent: gestiona los operadores de su propio tenant (Operadores), no otros agentes.
+  //  - operator: base reducida + Configuración (solo para cambiar su contraseña).
   let items: string[] = [];
   if (!roleReady) {
     items = []; // rol no confirmado → sidebar sin opciones (skeleton)
   } else if (agent?.role === 'admin') {
-    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
   } else if (agent?.role === 'operator') {
-    // Operador: Conversaciones, Contactos, Cargas, Pagos (verifica los suyos) y
-    // Mi Caja (panel de caja propio, solo lectura — Etapa 4b).
-    items = ['conversaciones', 'contactos', 'cargas', 'pagos', 'mi-caja'];
+    // Operador: Conversaciones, Contactos, Cargas, Pagos (verifica los suyos),
+    // Mi Caja (panel de caja propio, solo lectura — Etapa 4b) y Configuración
+    // (solo expone "Cambiar contraseña" para este rol).
+    items = ['conversaciones', 'contactos', 'cargas', 'pagos', 'mi-caja', 'configuracion'];
   } else {
-    // Agente: todo menos Operadores y Tenants (administración global).
-    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
+    // Agente: todo + Operadores (gestiona los de su tenant). Sin Tenants/Agentes.
+    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'mi-bot', 'configuracion'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);

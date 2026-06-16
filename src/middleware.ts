@@ -20,11 +20,15 @@ const ADMIN_ONLY_PREFIXES = ['/admin', '/api/tenants', '/servicios', '/api/admin
 // Solo staff interno (admin + agent). El rol 'operator' NO entra acá:
 //  - Dashboard y sus métricas.
 //  - Gestión de operadores (/agentes + /api/agents).
-//  - Configuración de la cuenta (/configuracion) y del bot (/mi-bot).
+//  - Configuración del bot (/mi-bot).
 // Nota: /api/settings/bot-enabled y /api/settings/offline-mode quedan FUERA
 // a propósito porque el header los lee para todos los roles; solo bloqueamos
-// las páginas /configuracion y /mi-bot y los endpoints de edición del bot
+// la página /mi-bot y los endpoints de edición del bot
 // (/api/agent/config, /api/settings/offline-msg).
+//
+// /configuracion NO está acá a propósito: el operator puede entrar para usar
+// "Cambiar contraseña". La página oculta server-side las secciones de cuenta
+// para el operator, así que solo ve su tarjeta de contraseña.
 const STAFF_PREFIXES = [
   '/dashboard',
   '/api/dashboard_stats',
@@ -34,7 +38,6 @@ const STAFF_PREFIXES = [
   '/api/agents',
   '/fichas',          // caja de fichas: admin + agent (el operator no entra)
   '/api/fichas',
-  '/configuracion',
   '/mi-bot',
   '/api/settings/offline-msg',
   '/api/agent/config',

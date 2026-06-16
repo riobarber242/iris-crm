@@ -17,3 +17,10 @@ export async function requireAdmin(): Promise<SessionPayload | null> {
   const session = await getSessionAgent();
   return session && session.role === 'admin' ? session : null;
 }
+
+// Guard para gestión de operadores: lo usa admin (alcance global) y agent
+// (acotado a SU tenant y solo sobre operadores — el filtrado se aplica en cada ruta).
+export async function requireAgentOrAdmin(): Promise<SessionPayload | null> {
+  const session = await getSessionAgent();
+  return session && (session.role === 'admin' || session.role === 'agent') ? session : null;
+}
