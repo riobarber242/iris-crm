@@ -17,6 +17,7 @@ const navLabels: Record<string, string> = {
   contactos:      'Contactos',
   cargas:         'Cargas',
   pagos:          'Pagos',
+  'mi-caja':      'Mi Caja',
   fichas:         'Fichas',
   'top-clientes': 'Top Clientes',
   campanas:       'Campañas',
@@ -49,8 +50,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
   } else if (agent?.role === 'admin') {
     items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'tenants', 'servicios', 'mi-bot', 'configuracion'];
   } else if (agent?.role === 'operator') {
-    // Operador: Conversaciones, Contactos, Cargas y Pagos (verifica los suyos).
-    items = ['conversaciones', 'contactos', 'cargas', 'pagos'];
+    // Operador: Conversaciones, Contactos, Cargas, Pagos (verifica los suyos) y
+    // Mi Caja (panel de caja propio, solo lectura — Etapa 4b).
+    items = ['conversaciones', 'contactos', 'cargas', 'pagos', 'mi-caja'];
   } else {
     // Agente: todo menos Operadores y Tenants (administración global).
     items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'mi-bot', 'configuracion'];
