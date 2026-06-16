@@ -51,7 +51,10 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch { body = {}; }
 
   const username = String(body.username ?? '').trim().toLowerCase();
-  const name     = String(body.name ?? '').trim();
+  // name/email son opcionales. Como agents.name es NOT NULL y el nombre se usa
+  // en sesión/cabecera/chat, si no viene lo igualamos al usuario (evita nombres
+  // vacíos en toda la app). email queda nullable.
+  const name     = String(body.name ?? '').trim() || username;
   const email    = String(body.email ?? '').trim() || null;
   const password = String(body.password ?? '');
   // El agente solo puede crear operadores; el admin elige el rol libremente.
@@ -73,8 +76,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Los minutos de cierre de sesión deben ser un entero entre 1 y 1440' }, { status: 400 });
   }
 
-  if (!username || !name || !password) {
-    return NextResponse.json({ error: 'Faltan usuario, nombre o contraseña' }, { status: 400 });
+  if (!username || !password) {
+    return NextResponse.json({ error: 'Faltan usuario o contraseña' }, { status: 400 });
   }
   if (password.length < 6) {
     return NextResponse.json({ error: 'La contraseña debe tener al menos 6 caracteres' }, { status: 400 });

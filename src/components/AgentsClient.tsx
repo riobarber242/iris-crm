@@ -36,6 +36,9 @@ export default function AgentsClient() {
   // Solo el admin elige el rol al crear/editar. El agente gestiona únicamente
   // operadores de su tenant, así que el rol queda fijo en 'operator'.
   const isAdmin = me?.role === 'admin';
+  // Tabla: el admin ve todas las columnas; el agente solo Usuario · Rol · Estado · Acciones.
+  const gridCols      = isAdmin ? '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr' : '1.4fr 0.9fr 0.8fr 2fr';
+  const tableMinWidth = isAdmin ? '860px' : '520px';
   const [agents,  setAgents]  = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
@@ -140,8 +143,8 @@ export default function AgentsClient() {
       {/* Crear agente */}
       <form onSubmit={createAgent} style={{ background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
         <Field label="Usuario"><input style={inputStyle} value={nu.username} onChange={e => setNu({ ...nu, username: e.target.value })} placeholder="matias" /></Field>
-        <Field label="Nombre"><input style={inputStyle} value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })} placeholder="Matías" /></Field>
-        <Field label="Email"><input style={inputStyle} type="email" value={nu.email} onChange={e => setNu({ ...nu, email: e.target.value })} placeholder="matias@iris.com" /></Field>
+        {isAdmin && <Field label="Nombre"><input style={inputStyle} value={nu.name} onChange={e => setNu({ ...nu, name: e.target.value })} placeholder="Matías" /></Field>}
+        {isAdmin && <Field label="Email"><input style={inputStyle} type="email" value={nu.email} onChange={e => setNu({ ...nu, email: e.target.value })} placeholder="matias@iris.com" /></Field>}
         <Field label="Contraseña"><input style={inputStyle} type="password" value={nu.password} onChange={e => setNu({ ...nu, password: e.target.value })} placeholder="••••••" /></Field>
         {isAdmin && (
           <Field label="Rol">
@@ -152,9 +155,9 @@ export default function AgentsClient() {
             </select>
           </Field>
         )}
-        <Field label="Desde"><input style={inputStyle} type="time" value={nu.schedule_start} onChange={e => setNu({ ...nu, schedule_start: e.target.value })} /></Field>
-        <Field label="Hasta"><input style={inputStyle} type="time" value={nu.schedule_end} onChange={e => setNu({ ...nu, schedule_end: e.target.value })} /></Field>
-        {nu.role === 'operator' && (
+        {isAdmin && <Field label="Desde"><input style={inputStyle} type="time" value={nu.schedule_start} onChange={e => setNu({ ...nu, schedule_start: e.target.value })} /></Field>}
+        {isAdmin && <Field label="Hasta"><input style={inputStyle} type="time" value={nu.schedule_end} onChange={e => setNu({ ...nu, schedule_end: e.target.value })} /></Field>}
+        {isAdmin && nu.role === 'operator' && (
           <Field label="Permisos">
             <span style={{ display: 'flex', gap: '14px', alignItems: 'center', height: '34px' }}>
               <PermCheck label="Top Clientes" checked={nu.can_see_top_clients} onChange={v => setNu({ ...nu, can_see_top_clients: v })} />
@@ -162,7 +165,7 @@ export default function AgentsClient() {
             </span>
           </Field>
         )}
-        {nu.role === 'operator' && (
+        {isAdmin && nu.role === 'operator' && (
           <Field label="Cierre por inactividad">
             <span style={{ display: 'flex', gap: '10px', alignItems: 'center', height: '34px' }}>
               <PermCheck label="Activado" checked={nu.session_timeout_enabled} onChange={v => setNu({ ...nu, session_timeout_enabled: v })} />
@@ -176,7 +179,7 @@ export default function AgentsClient() {
           </Field>
         )}
         <button type="submit" disabled={creating} style={{ ...btn('#C8FF00', '#000'), padding: '10px 18px', fontSize: '13px' }}>
-          {creating ? 'Creando…' : '+ Crear agente'}
+          {creating ? 'Creando…' : (isAdmin ? '+ Crear agente' : '+ Crear operador')}
         </button>
       </form>
 
@@ -186,9 +189,13 @@ export default function AgentsClient() {
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando agentes…</p>
       ) : (
         <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <div className="agents-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '860px' }}>
-          <div className="agents-head" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            <span>Usuario</span><span>Nombre</span><span>Email</span><span>Rol</span><span>Horario</span><span>Estado</span><span>Acciones</span>
+        <div className="agents-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: tableMinWidth }}>
+          <div className="agents-head" style={{ display: 'grid', gridTemplateColumns: gridCols, gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <span>Usuario</span>
+            {isAdmin && <><span>Nombre</span><span>Email</span></>}
+            <span>Rol</span>
+            {isAdmin && <span>Horario</span>}
+            <span>Estado</span><span>Acciones</span>
           </div>
 
           {agents.map((a) => {
@@ -196,19 +203,18 @@ export default function AgentsClient() {
             // El system prompt solo lo edita un admin, o el propio operador sobre su perfil.
             const canEditPrompt = me?.role === 'admin' || me?.id === a.id;
             return (
-              <div key={a.id} className="agents-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr 0.7fr 1.1fr 0.7fr 1.7fr', gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
+              <div key={a.id} className="agents-row" style={{ display: 'grid', gridTemplateColumns: gridCols, gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)', opacity: a.active ? 1 : 0.55 }}>
                 {/* usuario */}
                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{a.username}</span>
 
-                {/* nombre */}
-                {editing
+                {/* nombre + email — solo admin */}
+                {isAdmin && (editing
                   ? <input style={inputStyle} value={draft.name ?? ''} onChange={e => setDraft({ ...draft, name: e.target.value })} />
-                  : <span style={{ fontSize: '13px', color: '#333' }}>{a.name}</span>}
+                  : <span style={{ fontSize: '13px', color: '#333' }}>{a.name}</span>)}
 
-                {/* email */}
-                {editing
+                {isAdmin && (editing
                   ? <input style={inputStyle} type="email" value={draft.email ?? ''} onChange={e => setDraft({ ...draft, email: e.target.value })} placeholder="email@iris.com" />
-                  : <span style={{ fontSize: '12px', color: a.email ? '#555' : '#ccc' }}>{a.email || '—'}</span>}
+                  : <span style={{ fontSize: '12px', color: a.email ? '#555' : '#ccc' }}>{a.email || '—'}</span>)}
 
                 {/* rol — el selector solo lo ve el admin; el agente gestiona operadores fijos */}
                 {editing && isAdmin
@@ -217,7 +223,8 @@ export default function AgentsClient() {
                     </select>
                   : <span style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.role === 'admin' ? '#7da000' : '#888' }}>{a.role === 'admin' ? 'Admin' : a.role === 'operator' ? 'Operador' : 'Agente'}</span>
-                      {a.role === 'operator' && (
+                      {/* pills de permisos/timeout: solo en la vista del admin */}
+                      {isAdmin && a.role === 'operator' && (
                         <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
                           {a.can_see_top_clients && <PermPill label="Top" />}
                           {a.can_see_campaigns && <PermPill label="Camp" />}
@@ -226,13 +233,13 @@ export default function AgentsClient() {
                       )}
                     </span>}
 
-                {/* horario */}
-                {editing
+                {/* horario — solo admin */}
+                {isAdmin && (editing
                   ? <span className="ag-horario" style={{ display: 'flex', gap: '4px' }}>
                       <input style={{ ...inputStyle, width: '70px' }} type="time" value={draft.schedule_start ?? ''} onChange={e => setDraft({ ...draft, schedule_start: e.target.value })} />
                       <input style={{ ...inputStyle, width: '70px' }} type="time" value={draft.schedule_end ?? ''} onChange={e => setDraft({ ...draft, schedule_end: e.target.value })} />
                     </span>
-                  : <span className="ag-horario" style={{ fontSize: '12px', color: '#666' }}>{a.schedule_start ? `${hhmm(a.schedule_start)}–${hhmm(a.schedule_end)}` : '—'}</span>}
+                  : <span className="ag-horario" style={{ fontSize: '12px', color: '#666' }}>{a.schedule_start ? `${hhmm(a.schedule_start)}–${hhmm(a.schedule_end)}` : '—'}</span>)}
 
                 {/* estado */}
                 <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: a.active ? '#1a8a1a' : '#bbb' }}>
@@ -254,7 +261,7 @@ export default function AgentsClient() {
                     </span>
                   ) : (
                     <>
-                      <button onClick={() => startEdit(a)} style={btn('#F0F0F0', '#333')}>Editar</button>
+                      {isAdmin && <button onClick={() => startEdit(a)} style={btn('#F0F0F0', '#333')}>Editar</button>}
                       <button onClick={() => toggleActive(a)} style={btn(a.active ? '#FFE5E5' : '#E8F5E9', a.active ? '#CC3333' : '#1a8a1a')}>
                         {a.active ? 'Desactivar' : 'Activar'}
                       </button>
