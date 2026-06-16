@@ -24,12 +24,38 @@ function fechaCorta(iso: string): string {
 }
 
 const TIPO_LABEL: Record<string, string> = {
-  carga: 'Carga', pago: 'Pago', descarga: 'Descarga', sueldo: 'Sueldo', traspaso: 'Traspaso',
+  carga: 'Carga', pago: 'Pago', descarga: 'Descarga', sueldo: 'Sueldo', traspaso: 'Traspaso', pago_agente: 'Pago agente',
 };
+
+// Colores por tipo de movimiento (unificado con FichasClient):
+//   carga→verde · pago→rojo · sueldo→azul · descarga→naranja · pago_agente→violeta.
+const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
+  carga:       { bg: '#e8fff0', fg: '#1a7a3a' },
+  pago:        { bg: '#fff0f0', fg: '#c0392b' },
+  sueldo:      { bg: '#e6f0ff', fg: '#1d4ed8' },
+  descarga:    { bg: '#fff3e0', fg: '#d97706' },
+  pago_agente: { bg: '#f0eaff', fg: '#6b3fb0' },
+  traspaso:    { bg: '#e6f4ff', fg: '#1d6fb8' },
+};
+
+// Chip de etiqueta de tipo con su color. `tipo` puede venir como 'pago' con la
+// marca pago_agente: el caller decide qué clave usar.
+function TipoChip({ tipo }: { tipo: string }) {
+  const s = TIPO_STYLE[tipo] ?? { bg: '#eee', fg: '#555' };
+  return (
+    <span style={{
+      fontSize: '11px', fontWeight: 800, padding: '2px 9px', borderRadius: '999px',
+      background: s.bg, color: s.fg, whiteSpace: 'nowrap',
+    }}>
+      {TIPO_LABEL[tipo] ?? tipo}
+    </span>
+  );
+}
 
 type Resumen = {
   caja_enabled: boolean; degraded?: boolean;
   mi_saldo: number; pozo: number; mov_hoy_count: number; pendientes_count: number;
+  sueldo_diario: number; whatsapp_agente: string; operador_name: string;
 };
 type Vista = 'resumen' | 'billetera' | 'pozo' | 'hoy' | 'pendientes';
 
@@ -158,8 +184,8 @@ function BilleteraDetalle({ onOpenComp }: { onOpenComp: (id: string) => void }) 
     <div>
       {rows.map((m) => (
         <div key={m.id} onClick={() => m.comprobante_id && onOpenComp(m.comprobante_id)} style={{ ...rowBase, cursor: m.comprobante_id ? 'pointer' : 'default' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>{TIPO_LABEL[m.tipo] ?? m.tipo}</div>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+            <TipoChip tipo={m.tipo} />
             <div style={{ fontSize: '11px', color: '#999' }}>{fechaCorta(m.created_at)}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -183,8 +209,8 @@ function PozoDetalle() {
     <div>
       {rows.map((m) => (
         <div key={m.id} style={rowBase}>
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>{TIPO_LABEL[m.tipo] ?? m.tipo}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+            <TipoChip tipo={m.tipo} />
             <div style={{ fontSize: '11px', color: '#999' }}>{fechaCorta(m.created_at)}</div>
           </div>
           <div style={{ fontSize: '14px', fontWeight: 800, color: deltaColor(m.fichas_delta) }}>{deltaTxt(m.fichas_delta)}</div>
@@ -205,10 +231,10 @@ function HoyDetalle({ onOpenComp }: { onOpenComp: (id: string) => void }) {
     <div>
       {rows.map((m) => (
         <div key={m.id} onClick={() => m.comprobante_id && onOpenComp(m.comprobante_id)} style={{ ...rowBase, cursor: m.comprobante_id ? 'pointer' : 'default' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>
-              {TIPO_LABEL[m.tipo] ?? m.tipo}
-              {m.comprobante_id && <span style={{ fontSize: '11px', color: '#1d6fb8', marginLeft: '8px' }}>ver comprobante →</span>}
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TipoChip tipo={m.tipo} />
+              {m.comprobante_id && <span style={{ fontSize: '11px', color: '#1d6fb8' }}>ver comprobante →</span>}
             </div>
             <div style={{ fontSize: '11px', color: '#999' }}>{fechaCorta(m.created_at)} · monto {fmt(m.monto)}</div>
           </div>
@@ -233,10 +259,10 @@ function PendientesDetalle() {
     <div>
       {rows.map((c) => (
         <Link key={c.id} href={c.tipo === 'pago' ? '/pagos' : '/cargas'} style={{ ...rowBase, textDecoration: 'none', color: 'inherit' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>
-              {TIPO_LABEL[c.tipo] ?? c.tipo}
-              <span style={{ fontSize: '11px', color: '#1d6fb8', marginLeft: '8px' }}>verificar en {c.tipo === 'pago' ? 'Pagos' : 'Cargas'} →</span>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TipoChip tipo={c.tipo} />
+              <span style={{ fontSize: '11px', color: '#1d6fb8' }}>verificar en {c.tipo === 'pago' ? 'Pagos' : 'Cargas'} →</span>
             </div>
             <div style={{ fontSize: '11px', color: '#999' }}>{c.contacto ?? '—'} · {fechaCorta(c.created_at)}</div>
           </div>
@@ -247,11 +273,124 @@ function PendientesDetalle() {
   );
 }
 
+// ── Acciones del operador (Etapa 5): sueldo + descarga ──────────────────────────
+
+// Normaliza el WhatsApp del agente a formato internacional para wa.me. El número
+// se guarda sin "+"; si no empieza con 54 (Argentina) se lo anteponemos, así
+// funciona tanto si cargan "1112345678" como "5491112345678".
+function waLink(numeroRaw: string, nombre: string, monto: number): string {
+  const digits = String(numeroRaw).replace(/\D/g, '');
+  const full   = digits.startsWith('54') ? digits : `54${digits}`;
+  const fecha  = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const text   = `Descarga de ${nombre} $${fmt(monto)} ${fecha}`;
+  return `https://wa.me/${full}?text=${encodeURIComponent(text)}`;
+}
+
+const modalOverlay: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+};
+const modalCard: React.CSSProperties = {
+  background: '#fff', borderRadius: '16px', maxWidth: '380px', width: '100%', padding: '22px',
+  display: 'flex', flexDirection: 'column', gap: '14px',
+};
+const btnPrimary: React.CSSProperties = {
+  background: '#C8FF00', color: '#000', fontWeight: 800, fontSize: '14px', border: 'none',
+  borderRadius: '10px', padding: '11px 18px', cursor: 'pointer', flex: 1,
+};
+const btnGhost: React.CSSProperties = {
+  background: '#F0F0F0', color: '#666', fontWeight: 700, fontSize: '14px', border: 'none',
+  borderRadius: '10px', padding: '11px 18px', cursor: 'pointer', flex: 1,
+};
+
+// Modal de confirmación de cobro de sueldo.
+function SueldoModal({ monto, busy, error, onConfirm, onClose }: {
+  monto: number; busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
+}) {
+  return (
+    <div onClick={busy ? undefined : onClose} style={modalOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+        <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Cobrar sueldo</h3>
+        <p style={{ margin: 0, fontSize: '14px', color: '#444', lineHeight: 1.5 }}>
+          ¿Confirmar cobro de sueldo por <strong>${fmt(monto)}</strong>? Se descontará de tu billetera.
+        </p>
+        {error && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: 600 }}>{error}</div>}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={onClose} disabled={busy} style={btnGhost}>Cancelar</button>
+          <button onClick={onConfirm} disabled={busy} style={btnPrimary}>{busy ? '…' : 'Confirmar'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal de descarga: el operador ingresa el monto; al confirmar abrimos el wa.me
+// y creamos el comprobante pendiente. Si el agente no configuró su WhatsApp, no
+// se puede continuar.
+function DescargaModal({ whatsappAgente, operadorName, busy, error, done, onConfirm, onClose }: {
+  whatsappAgente: string; operadorName: string; busy: boolean; error: string | null; done: boolean;
+  onConfirm: (monto: number) => void; onClose: () => void;
+}) {
+  const [montoStr, setMontoStr] = useState('');
+  const sinWhatsapp = !whatsappAgente;
+  const monto = parseInt(montoStr.replace(/\D/g, ''), 10);
+  const montoValido = Number.isInteger(monto) && monto > 0;
+
+  return (
+    <div onClick={busy ? undefined : onClose} style={modalOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+        <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Descargar al agente</h3>
+
+        {sinWhatsapp ? (
+          <div style={{ background: '#FFF6E0', color: '#9a6b00', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 600, lineHeight: 1.5 }}>
+            El agente no configuró su número de WhatsApp todavía.
+          </div>
+        ) : done ? (
+          <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
+            Comprobante enviado, esperando verificación del agente.
+          </div>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontSize: '14px', color: '#444', lineHeight: 1.5 }}>
+              Ingresá el monto a descargar. Se abrirá el WhatsApp del agente y se creará el comprobante pendiente.
+            </p>
+            <input
+              type="number" min="1" step="1" value={montoStr} autoFocus
+              onChange={(e) => setMontoStr(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && montoValido && !busy) onConfirm(monto); }}
+              placeholder="Monto a descargar"
+              style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '15px', fontWeight: 700, outline: 'none', background: '#F7F7F7' }}
+            />
+            {error && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: 600 }}>{error}</div>}
+          </>
+        )}
+
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={onClose} disabled={busy} style={btnGhost}>{done ? 'Cerrar' : 'Cancelar'}</button>
+          {!sinWhatsapp && !done && (
+            <button onClick={() => montoValido && onConfirm(monto)} disabled={busy || !montoValido} style={{ ...btnPrimary, opacity: montoValido ? 1 : 0.5, cursor: montoValido && !busy ? 'pointer' : 'not-allowed' }}>
+              {busy ? '…' : 'Confirmar'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Componente principal ───────────────────────────────────────────────────────
 export default function MiCajaClient() {
   const [data, setData]   = useState<Resumen | null>(null);
   const [vista, setVista] = useState<Vista>('resumen');
   const [compId, setCompId] = useState<string | null>(null);
+
+  // Acciones Etapa 5: sueldo y descarga.
+  const [sueldoOpen, setSueldoOpen]   = useState(false);
+  const [descargaOpen, setDescargaOpen] = useState(false);
+  const [actionBusy, setActionBusy]   = useState(false);
+  const [actionErr, setActionErr]     = useState<string | null>(null);
+  const [descargaDone, setDescargaDone] = useState(false);
+  const [toast, setToast]             = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -260,6 +399,47 @@ export default function MiCajaClient() {
       setData(await res.json());
     } catch {}
   }, []);
+
+  async function confirmarSueldo() {
+    setActionBusy(true); setActionErr(null);
+    try {
+      const res = await fetch('/api/caja/operador?accion=sueldo', { method: 'POST' });
+      if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo cobrar el sueldo'); return; }
+      const r = await res.json();
+      setSueldoOpen(false);
+      setToast(`Sueldo de $${fmt(Number(r.monto))} cobrado.`);
+      await load();
+    } catch {
+      setActionErr('Error de red');
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function confirmarDescarga(monto: number) {
+    if (!data) return;
+    setActionBusy(true); setActionErr(null);
+    try {
+      // (a) Abrir el WhatsApp del agente en una pestaña nueva.
+      window.open(waLink(data.whatsapp_agente, data.operador_name, monto), '_blank', 'noopener');
+      // (b) Crear el comprobante de descarga pendiente.
+      const res = await fetch('/api/caja/operador?accion=descarga', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto }),
+      });
+      if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo crear la descarga'); return; }
+      // (c) Confirmación dentro del modal.
+      setDescargaDone(true);
+      await load();
+    } catch {
+      setActionErr('Error de red');
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function closeDescarga() {
+    setDescargaOpen(false); setDescargaDone(false); setActionErr(null);
+  }
 
   useEffect(() => {
     load();
@@ -305,6 +485,53 @@ export default function MiCajaClient() {
         <Card label="Mis movimientos de hoy" value={fmt(data.mov_hoy_count)} sub="registrados hoy" off={off} onClick={() => setVista('hoy')} />
         <Card label="Pendientes" value={fmt(data.pendientes_count)} sub="comprobantes por verificar" off={off} onClick={() => setVista('pendientes')} badge={data.pendientes_count} />
       </div>
+
+      {/* Acciones del operador (Etapa 5). Solo con la caja encendida. */}
+      {!off && (
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '2px' }}>
+          <button
+            onClick={() => { setActionErr(null); setSueldoOpen(true); }}
+            style={{ flex: 1, minWidth: '180px', background: '#e6f0ff', color: '#1d4ed8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            className="nav-3d"
+          >
+            Cobrar sueldo (${fmt(data.sueldo_diario)})
+          </button>
+          <button
+            onClick={() => { setActionErr(null); setDescargaDone(false); setDescargaOpen(true); }}
+            style={{ flex: 1, minWidth: '180px', background: '#fff3e0', color: '#d97706', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            className="nav-3d"
+          >
+            Descargar al agente
+          </button>
+        </div>
+      )}
+
+      {toast && (
+        <div onClick={() => setToast(null)} style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '12px', padding: '12px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+          ✓ {toast}
+        </div>
+      )}
+
+      {sueldoOpen && (
+        <SueldoModal
+          monto={data.sueldo_diario}
+          busy={actionBusy}
+          error={actionErr}
+          onConfirm={confirmarSueldo}
+          onClose={() => { if (!actionBusy) { setSueldoOpen(false); setActionErr(null); } }}
+        />
+      )}
+      {descargaOpen && (
+        <DescargaModal
+          whatsappAgente={data.whatsapp_agente}
+          operadorName={data.operador_name}
+          busy={actionBusy}
+          error={actionErr}
+          done={descargaDone}
+          onConfirm={confirmarDescarga}
+          onClose={() => { if (!actionBusy) closeDescarga(); }}
+        />
+      )}
     </div>
   );
 }

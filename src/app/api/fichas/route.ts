@@ -5,6 +5,7 @@ import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import {
   recargarFichas, isCajaEnabled,
   setStock, setBilletera, borrarMovimiento, resetTotal,
+  verificarDescarga,
 } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
@@ -33,26 +34,37 @@ export async function GET() {
   const tid = session.tenant_id;
   const caja_enabled = await isCajaEnabled(session);
 
-  const [stockRes, billRes, movRes] = await Promise.all([
+  const [stockRes, billRes, movRes, descPendRes, descHistRes] = await Promise.all([
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
     supabaseAdmin.from('operador_billetera').select('operador_id, saldo_actual, turno_abierto').eq('tenant_id', tid),
     supabaseAdmin.from('movimientos').select('*').eq('tenant_id', tid).order('created_at', { ascending: false }).limit(30),
+    // Descargas (Etapa 5): comprobantes tipo 'descarga'. Pendientes a verificar e
+    // historial verificado. Degradan a [] si falta la columna operador_id (stage5).
+    supabaseAdmin.from('comprobantes').select('id, monto, operador_id, created_at')
+      .eq('tenant_id', tid).eq('tipo', 'descarga').eq('estado', 'pendiente').order('created_at', { ascending: false }),
+    supabaseAdmin.from('comprobantes').select('id, monto, operador_id, resolved_by_name, resolved_at, created_at')
+      .eq('tenant_id', tid).eq('tipo', 'descarga').eq('estado', 'verificado').order('resolved_at', { ascending: false }).limit(50),
   ]);
 
   // Degradación elegante: tablas ausentes → resumen vacío, sin romper la UI.
   if (isMissingCajaTable(stockRes.error) || isMissingCajaTable(billRes.error) || isMissingCajaTable(movRes.error)) {
-    return NextResponse.json({ caja_enabled, degraded: true, stock: 0, total_billeteras: 0, billeteras: [], movimientos: [] });
+    return NextResponse.json({ caja_enabled, degraded: true, stock: 0, total_billeteras: 0, billeteras: [], movimientos: [], descargas_pendientes: [], descargas_historial: [], mi_billetera_agente: 0 });
   }
   const anyErr = stockRes.error || billRes.error || movRes.error;
   if (anyErr) return new NextResponse(anyErr.message, { status: 500 });
 
   const billeteras  = (billRes.data ?? []) as any[];
   const movimientos = (movRes.data ?? []) as any[];
+  // Si la columna operador_id aún no existe (sin stage5), estas vienen con error → [].
+  const descPend = (descPendRes.error ? [] : (descPendRes.data ?? [])) as any[];
+  const descHist = (descHistRes.error ? [] : (descHistRes.data ?? [])) as any[];
 
-  // Nombres de los operadores (un solo fetch a agents para billeteras + movs).
+  // Nombres de los operadores (un solo fetch a agents para billeteras + movs + descargas).
   const ids = new Set<string>();
   for (const b of billeteras)  if (b.operador_id) ids.add(b.operador_id);
   for (const m of movimientos) if (m.operador_id)  ids.add(m.operador_id);
+  for (const d of descPend)    if (d.operador_id)  ids.add(d.operador_id);
+  for (const d of descHist)    if (d.operador_id)  ids.add(d.operador_id);
   const nameById = new Map<string, { name: string; role: string }>();
   if (ids.size > 0) {
     const { data: ags } = await supabaseAdmin.from('agents').select('id, name, role').in('id', Array.from(ids));
@@ -86,12 +98,37 @@ export async function GET() {
     created_at:      m.created_at,
   }));
 
+  // Descargas pendientes e historial verificado (Etapa 5).
+  const descargas_pendientes = descPend.map((d: any) => ({
+    id:            d.id,
+    monto:         Number(d.monto),
+    operador_id:   d.operador_id,
+    operador_name: nameById.get(d.operador_id)?.name ?? '—',
+    created_at:    d.created_at,
+  }));
+  const descargas_historial = descHist.map((d: any) => ({
+    id:            d.id,
+    monto:         Number(d.monto),
+    operador_id:   d.operador_id,
+    operador_name: nameById.get(d.operador_id)?.name ?? '—',
+    verificado_por: d.resolved_by_name ?? '—',
+    verificado_at:  d.resolved_at ?? d.created_at,
+  }));
+
+  // Billetera del agente logueado (lo que recibe por descargas verificadas).
+  const mi_billetera_agente = Number(
+    billeteras.find((b: any) => b.operador_id === session.sub)?.saldo_actual ?? 0,
+  );
+
   return NextResponse.json({
     caja_enabled,
     stock: Number(stockRes.data?.stock_actual ?? 0),
     total_billeteras,
     billeteras: billeterasOut,
     movimientos: movimientosOut,
+    descargas_pendientes,
+    descargas_historial,
+    mi_billetera_agente,
   });
 }
 
@@ -149,6 +186,15 @@ export async function POST(request: Request) {
       const r = await borrarMovimiento(session, String(body.movimientoId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
       return NextResponse.json(r);
+    }
+
+    // Verificar una descarga pendiente (Etapa 5): mueve el monto de la billetera
+    // del operador a la del agente que verifica. El guard de saldo y caja vive en
+    // fn_verificar_descarga; el mensaje real del guard sube al front.
+    case 'verificar_descarga': {
+      const r = await verificarDescarga(session, String(body.comprobanteId ?? ''));
+      if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      return NextResponse.json({ ok: true, saldo_operador: r.saldoOperador, saldo_agente: r.saldoAgente });
     }
 
     case 'reset_total': {

@@ -6,6 +6,7 @@ import CronRunner from '@/components/CronRunner';
 import AutoMsgToggle from '@/components/AutoMsgToggle';
 import QuickRepliesManager from '@/components/QuickRepliesManager';
 import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
+import CajaConfigManager from '@/components/CajaConfigManager';
 
 // "Configuración": todo lo de la cuenta (números de WhatsApp, notificación de
 // recarga, clasificación de contactos, respuestas rápidas). El control del bot
@@ -25,6 +26,10 @@ export default function ConfiguracionPage() {
 
         <SectionCard title="Respuestas rápidas" description="Plantillas de mensajes predefinidas. Usalas desde el chat con el botón ⚡.">
           <QuickRepliesManager />
+        </SectionCard>
+
+        <SectionCard title="Caja: descargas y sueldos" description="WhatsApp del agente para descargas y el sueldo diario que cobra cada operador.">
+          <CajaConfigManager />
         </SectionCard>
 
         <WhatsAppNumbersManager />

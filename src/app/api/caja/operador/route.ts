@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled } from '@/lib/caja';
+import { isCajaEnabled, cobrarSueldo, crearDescarga } from '@/lib/caja';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Panel de caja del OPERADOR (Etapa 4b) — SOLO LECTURA.
+// Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
 //
 // A diferencia de /api/fichas (requireStaff, ve a TODOS los operadores), este
 // endpoint está scopeado SIEMPRE al operador logueado (session.sub) y su tenant.
-// No expone billeteras ni movimientos de otros operadores, y NO tiene ninguna
-// acción de escritura: cualquier mutación de caja sigue pasando por /api/fichas,
-// que devuelve 403 al operador. Acá la defensa es estructural (no hay POST).
+// No expone billeteras ni movimientos de otros operadores.
+//
+// GET es solo lectura. El único POST (Etapa 5) son las dos acciones que el
+// operador inicia SOBRE SÍ MISMO: cobrar su sueldo y pedir una descarga al
+// agente. Ambas exigen role==='operator' (la verificación de la descarga la hace
+// el agente por /api/fichas). Cualquier otra mutación de caja sigue en /api/fichas.
 //
 // Vistas (?view=):
 //   (default)      resumen: mi billetera, pozo, mis movs de hoy, pendientes.
@@ -138,12 +141,15 @@ export async function GET(request: Request) {
   }
 
   // ── Comprobantes pendientes (cola GLOBAL del tenant) ───────────────────────
+  // Excluye las descargas: esas las verifica el AGENTE (en /fichas), no el
+  // operador, así que no entran en su cola ni en su contador de pendientes.
   if (view === 'pendientes') {
     const { data, error } = await supabaseAdmin
       .from('comprobantes')
       .select('id, tipo, monto, estado, created_at, contacts(name, phone, casino_username)')
       .eq('tenant_id', tid)
       .eq('estado', 'pendiente')
+      .neq('tipo', 'descarga')
       .order('created_at', { ascending: false });
     if (error) return new NextResponse(error.message, { status: 500 });
 
@@ -185,16 +191,22 @@ export async function GET(request: Request) {
     });
   }
 
-  // ── Resumen (default): números de las 4 cards ──────────────────────────────
+  // ── Resumen (default): números de las 4 cards + datos para sueldo/descarga ──
   const { startISO, endISO } = rangoHoyArgentina();
-  const [saldoRes, pozoRes, hoyRes, pendRes] = await Promise.all([
+  const [saldoRes, pozoRes, hoyRes, pendRes, sueldoRes, waRes] = await Promise.all([
     supabaseAdmin.from('operador_billetera').select('saldo_actual').eq('tenant_id', tid).eq('operador_id', yo).maybeSingle(),
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
     supabaseAdmin.from('movimientos').select('id', { count: 'exact', head: true })
       .eq('tenant_id', tid).eq('operador_id', yo).gte('created_at', startISO).lt('created_at', endISO),
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tid).eq('estado', 'pendiente'),
+      .eq('tenant_id', tid).eq('estado', 'pendiente').neq('tipo', 'descarga'),
+    supabaseAdmin.from('agents').select('sueldo_diario').eq('id', yo).maybeSingle(),
+    supabaseAdmin.from('settings').select('value').eq('key', 'whatsapp_agente').eq('tenant_id', tid).maybeSingle(),
   ]);
+
+  // sueldo_diario / whatsapp_agente degradan a default si falta la migración stage5.
+  const sueldo_diario  = Number(sueldoRes.data?.sueldo_diario ?? 0);
+  const whatsapp_agente = String(waRes.data?.value ?? '').trim();
 
   // Degradación elegante: tablas de caja ausentes → resumen en cero, sin romper.
   if (isMissingCajaTable(saldoRes.error) || isMissingCajaTable(pozoRes.error) || isMissingCajaTable(hoyRes.error)) {
@@ -202,6 +214,7 @@ export async function GET(request: Request) {
       caja_enabled, degraded: true,
       mi_saldo: 0, pozo: 0, mov_hoy_count: 0,
       pendientes_count: pendRes.count ?? 0,
+      sueldo_diario, whatsapp_agente, operador_name: session.name,
     });
   }
 
@@ -211,5 +224,37 @@ export async function GET(request: Request) {
     pozo:             Number(pozoRes.data?.stock_actual ?? 0),
     mov_hoy_count:    hoyRes.count ?? 0,
     pendientes_count: pendRes.count ?? 0,
+    sueldo_diario,
+    whatsapp_agente,
+    operador_name:    session.name,
   });
+}
+
+// POST — acciones que el OPERADOR inicia sobre sí mismo (Etapa 5).
+//   ?accion=sueldo   → cobra su sueldo_diario (fn_cobrar_sueldo).
+//   ?accion=descarga → crea un comprobante de descarga pendiente para el agente.
+// Ambas exigen role==='operator' (defensa server-side, además del middleware).
+export async function POST(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+  if (session.role !== 'operator') {
+    return new NextResponse('Solo un operador puede iniciar esta acción', { status: 403 });
+  }
+
+  const accion = new URL(request.url).searchParams.get('accion');
+
+  if (accion === 'sueldo') {
+    const r = await cobrarSueldo(session);
+    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    return NextResponse.json({ ok: true, monto: r.monto, saldo: r.saldo });
+  }
+
+  if (accion === 'descarga') {
+    const body = await request.json().catch(() => ({} as any));
+    const r = await crearDescarga(session, Number(body.monto));
+    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId });
+  }
+
+  return new NextResponse('Acción inválida', { status: 400 });
 }

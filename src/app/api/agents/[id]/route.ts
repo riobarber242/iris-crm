@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
 // PATCH /api/agents/[id] — editar agente (admin)
 // Campos permitidos: name, email, role, active, schedule_start, schedule_end,
@@ -34,6 +34,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Los minutos de cierre de sesión deben ser un entero entre 1 y 1440' }, { status: 400 });
     }
     updates.session_timeout_minutes = n;
+  }
+  // Sueldo diario del operador (Etapa 5): entero ≥ 0.
+  if (body.sueldo_diario !== undefined) {
+    const n = Number(body.sueldo_diario);
+    if (!Number.isInteger(n) || n < 0) {
+      return NextResponse.json({ error: 'El sueldo diario debe ser un entero mayor o igual a 0' }, { status: 400 });
+    }
+    updates.sueldo_diario = n;
   }
 
   // Si se cambia el rol a algo que no es 'operator', limpiamos los permisos

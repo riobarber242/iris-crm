@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { requireAdmin } from '@/lib/current-agent';
 
-const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, created_at';
+const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
 // Minutos del cierre de sesión por inactividad: entero 1–1440 (hasta 24h).
 // Devuelve el valor saneado o null si es inválido.

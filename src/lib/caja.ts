@@ -511,6 +511,177 @@ export async function borrarMovimiento(session: SessionPayload, movimientoId: st
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Etapa 5 — Descargas + Sueldo.
+//
+//   cobrarSueldo    → SOLO operador. Descuenta su sueldo_diario de su billetera.
+//   crearDescarga   → SOLO operador. Crea un comprobante tipo 'descarga' pendiente
+//                     (su billetera se descuenta recién al verificarlo el agente).
+//   verificarDescarga → SOLO agente/admin. Mueve el monto de la billetera del
+//                       operador a la del agente que verifica (atómico en SQL).
+//
+// Todas respetan caja_enabled: las funciones SQL fn_cobrar_sueldo /
+// fn_verificar_descarga abortan con "La caja está desactivada" si el flag está
+// OFF (defensa en profundidad además del pre-check de acá).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SueldoResult =
+  | { ok: true;  movimientoId: string; monto: number; saldo: number }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Cobro de sueldo del operador (lo inicia él mismo). El monto sale de
+// agents.sueldo_diario dentro de la función SQL; acá no se pasa.
+export async function cobrarSueldo(session: SessionPayload): Promise<SueldoResult> {
+  if (session.role !== 'operator') {
+    return { ok: false, error: 'Solo un operador puede cobrar sueldo' };
+  }
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_cobrar_sueldo', {
+      p_tenant_id:   session.tenant_id,
+      p_operador_id: session.sub,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    const res = data as { movimiento_id: string; monto: number; saldo_actual: number };
+    await logActivity({
+      session,
+      action:     ACTIVITY.MOVIMIENTO_CAJA,
+      objectType: 'movimiento',
+      objectId:   res.movimiento_id,
+      details:    { tipo: 'sueldo', monto: Number(res.monto), saldo_actual: Number(res.saldo_actual), operador_id: session.sub },
+    });
+    return { ok: true, movimientoId: res.movimiento_id, monto: Number(res.monto), saldo: Number(res.saldo_actual) };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al cobrar el sueldo' };
+  }
+}
+
+export type DescargaCreateResult =
+  | { ok: true;  comprobanteId: string }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Crea el comprobante de descarga PENDIENTE (lo inicia el operador). No mueve
+// saldos todavía: la billetera se descuenta cuando el agente lo verifica
+// (verificarDescarga). Guarda operador_id = quién la pidió, sin contacto/imagen.
+export async function crearDescarga(session: SessionPayload, montoRaw: number): Promise<DescargaCreateResult> {
+  if (session.role !== 'operator') {
+    return { ok: false, error: 'Solo un operador puede iniciar una descarga' };
+  }
+  if (!(await isCajaEnabled(session))) {
+    return { ok: false, error: 'La caja está desactivada' };
+  }
+  const monto = Math.trunc(Number(montoRaw));
+  if (!Number.isFinite(monto) || monto <= 0) {
+    return { ok: false, error: 'Ingresá un monto válido (mayor a 0)' };
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('comprobantes')
+      .insert({
+        contact_id:  null,
+        image_url:   null,
+        monto,
+        estado:      'pendiente',
+        tipo:        'descarga',
+        operador_id: session.sub,
+        tenant_id:   session.tenant_id,
+      })
+      .select('id')
+      .single();
+    if (error) {
+      // Sin la migración stage5 (operador_id) o stage4 (tipo/contact_id nullable)
+      // esto no puede funcionar: lo decimos claro.
+      if (/operador_id|tipo|contact_id|null value|column|schema cache/i.test(error.message)) {
+        return { ok: false, error: 'La caja no está inicializada (falta correr supabase-caja-fichas-stage5.sql).', degraded: true };
+      }
+      return { ok: false, error: error.message };
+    }
+    await logActivity({
+      session,
+      action:     ACTIVITY.COMPROBANTE_ENVIADO,
+      objectType: 'comprobante',
+      objectId:   data.id,
+      details:    { tipo: 'descarga', monto, operador_id: session.sub },
+    });
+    return { ok: true, comprobanteId: data.id };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'Error al crear la descarga' };
+  }
+}
+
+export type DescargaVerifyResult =
+  | { ok: true;  saldoOperador: number; saldoAgente: number }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Verifica una descarga pendiente: mueve el monto de la billetera del operador a
+// la del agente que verifica. SOLO agente/admin. Consistencia: si el movimiento
+// SQL falla (caja apagada, saldo insuficiente), NO se marca verificado.
+export async function verificarDescarga(session: SessionPayload, comprobanteId: string): Promise<DescargaVerifyResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
+
+  // Traer la descarga pendiente (operador + monto) del tenant.
+  const { data: comp, error: compErr } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, tipo, estado, monto, operador_id')
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (compErr) {
+    if (isMissingCajaError(compErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: compErr.message };
+  }
+  if (!comp) return { ok: false, error: 'Descarga no encontrada' };
+  if (comp.tipo !== 'descarga') return { ok: false, error: 'El comprobante no es una descarga' };
+  if (comp.estado !== 'pendiente') return { ok: false, error: 'La descarga ya fue resuelta' };
+  if (!comp.operador_id) return { ok: false, error: 'La descarga no tiene operador asociado' };
+
+  const monto = Math.trunc(Number(comp.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto de descarga inválido' };
+
+  // Mover saldos (atómico en SQL). Si falla, no marcamos verificado.
+  let saldoOperador = 0, saldoAgente = 0;
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_verificar_descarga', {
+      p_tenant_id:      session.tenant_id,
+      p_operador_id:    comp.operador_id,
+      p_monto:          monto,
+      p_comprobante_id: comprobanteId,
+      p_verificado_por: session.sub,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    const res = data as { saldo_operador: number; saldo_agente: number };
+    saldoOperador = Number(res.saldo_operador);
+    saldoAgente   = Number(res.saldo_agente);
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al verificar la descarga' };
+  }
+
+  // Marcar el comprobante como verificado (atribución de quién resolvió).
+  const { error: updErr } = await supabaseAdmin
+    .from('comprobantes')
+    .update({ estado: 'verificado', resolved_by: session.sub, resolved_by_name: session.name, resolved_at: new Date().toISOString() })
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.COMPROBANTE_VERIFICADO,
+    objectType: 'comprobante',
+    objectId:   comprobanteId,
+    details:    { tipo: 'descarga', monto, operador_id: comp.operador_id, agente_id: session.sub },
+  });
+
+  return { ok: true, saldoOperador, saldoAgente };
+}
+
 // Reset total de la caja (modo prueba): pozo 0, billeteras 0, borra movimientos y
 // cierres. Comprobantes solo si borrarComprobantes=true. Atómico en SQL.
 export async function resetTotal(session: SessionPayload, borrarComprobantes: boolean): Promise<ManualResult> {

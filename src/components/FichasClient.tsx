@@ -17,10 +17,15 @@ type Movimiento = {
   operador_id: string | null; operador_name: string; creado_por_name: string | null;
   comprobante_id: string | null; editado: boolean; created_at: string;
 };
+type DescargaPend = { id: string; monto: number; operador_id: string; operador_name: string; created_at: string };
+type DescargaHist = { id: string; monto: number; operador_id: string; operador_name: string; verificado_por: string; verificado_at: string };
 type Resumen = {
   caja_enabled: boolean; degraded?: boolean; stock: number; total_billeteras: number;
   billeteras: Billetera[]; movimientos: Movimiento[];
+  descargas_pendientes: DescargaPend[]; descargas_historial: DescargaHist[]; mi_billetera_agente: number;
 };
+
+const HIST_PAGE = 10;
 
 const fmt = (n: number) => n.toLocaleString('es-AR');
 
@@ -32,13 +37,26 @@ function formatFecha(iso: string): string {
   return `${fecha} ${hora}`;
 }
 
+// Colores por tipo (unificado con MiCajaClient):
+//   carga→verde · pago→rojo · sueldo→azul · descarga→naranja · pago_agente→violeta.
 const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
-  carga:    { bg: '#e8fff0', fg: '#1a7a3a' },
-  pago:     { bg: '#fff0f0', fg: '#c0392b' },
-  descarga: { bg: '#fff7e6', fg: '#b8860b' },
-  sueldo:   { bg: '#f0eaff', fg: '#6b3fb0' },
-  traspaso: { bg: '#e6f4ff', fg: '#1d6fb8' },
+  carga:       { bg: '#e8fff0', fg: '#1a7a3a' },
+  pago:        { bg: '#fff0f0', fg: '#c0392b' },
+  sueldo:      { bg: '#e6f0ff', fg: '#1d4ed8' },
+  descarga:    { bg: '#fff3e0', fg: '#d97706' },
+  pago_agente: { bg: '#f0eaff', fg: '#6b3fb0' },
+  traspaso:    { bg: '#e6f4ff', fg: '#1d6fb8' },
 };
+const TIPO_LABEL: Record<string, string> = {
+  carga: 'carga', pago: 'pago', sueldo: 'sueldo', descarga: 'descarga', pago_agente: 'pago agente', traspaso: 'traspaso',
+};
+
+// El pago del agente se guarda como tipo 'pago' pero no toca ninguna billetera
+// (billetera_delta=0) y sube fichas: lo etiquetamos aparte (violeta).
+function displayTipo(m: { tipo: string; billetera_delta: number; fichas_delta: number }): string {
+  if (m.tipo === 'pago' && m.billetera_delta === 0 && m.fichas_delta > 0) return 'pago_agente';
+  return m.tipo;
+}
 
 const btn = (bg: string, fg: string): React.CSSProperties => ({
   background: bg, color: fg, fontWeight: 700, fontSize: '13px', border: 'none',
@@ -61,6 +79,9 @@ export default function FichasClient() {
   const [resetOpen,  setResetOpen]  = useState(false);
   const [resetText,  setResetText]  = useState('');
   const [resetComps, setResetComps] = useState(false);
+
+  // ── Etapa 5: descargas ──
+  const [histPage, setHistPage]     = useState(0);
 
   async function fetchResumen() {
     try {
@@ -144,6 +165,11 @@ export default function FichasClient() {
   async function borrarMov(id: string) {
     if (!window.confirm('Borrar este movimiento y revertir su efecto en stock y billetera?')) return;
     await post({ action: 'borrar_movimiento', movimientoId: id });
+  }
+
+  async function verificarDescarga(id: string, name: string, monto: number) {
+    if (!window.confirm(`Verificar la descarga de ${name} por $${fmt(monto)}? Se moverá de su billetera a la tuya.`)) return;
+    await post({ action: 'verificar_descarga', comprobanteId: id });
   }
 
   async function doResetTotal() {
@@ -287,6 +313,84 @@ export default function FichasClient() {
         </div>
       )}
 
+      {/* ── Descargas (Etapa 5) ───────────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Descargas</p>
+
+        {/* Billetera del agente: lo que recibís por descargas verificadas. */}
+        <div style={{ background: '#f0eaff', borderRadius: '14px', padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b3fb0' }}>
+              Tu billetera de agente
+            </p>
+            <p style={{ margin: '4px 0 0', fontSize: '30px', fontWeight: 900, color: '#4a2a80', lineHeight: 1 }}>
+              {fmt(data?.mi_billetera_agente ?? 0)}
+            </p>
+          </div>
+          <span style={{ fontSize: '11px', color: '#8a6ac0', maxWidth: '220px', textAlign: 'right', lineHeight: 1.4 }}>
+            Acumula lo que los operadores te descargan al verificar.
+          </span>
+        </div>
+
+        {/* Descargas pendientes de verificar */}
+        <p style={{ margin: '4px 0 0', fontSize: '13px', fontWeight: 800, color: '#444' }}>Pendientes de verificar</p>
+        {(data?.descargas_pendientes.length ?? 0) === 0 ? (
+          <p style={{ color: '#bbb', fontSize: '13px', padding: '8px 0' }}>No hay descargas pendientes.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {data!.descargas_pendientes.map((d) => (
+              <div key={d.id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                  <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '3px 10px', borderRadius: '999px', background: TIPO_STYLE.descarga.bg, color: TIPO_STYLE.descarga.fg }}>
+                    descarga
+                  </span>
+                  <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>${fmt(d.monto)}</span>
+                  <span style={{ fontSize: '12px', color: '#888' }}>{d.operador_name}</span>
+                  <span style={{ fontSize: '12px', color: '#aaa' }}>{formatFecha(d.created_at)}</span>
+                </div>
+                <button onClick={() => verificarDescarga(d.id, d.operador_name, d.monto)} disabled={busy} style={btn('#C8FF00', '#000')}>
+                  Verificar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Historial de descargas verificadas (paginado client-side) */}
+        {(data?.descargas_historial.length ?? 0) > 0 && (() => {
+          const hist  = data!.descargas_historial;
+          const pages = Math.ceil(hist.length / HIST_PAGE);
+          const page  = Math.min(histPage, pages - 1);
+          const slice = hist.slice(page * HIST_PAGE, page * HIST_PAGE + HIST_PAGE);
+          return (
+            <>
+              <p style={{ margin: '8px 0 0', fontSize: '13px', fontWeight: 800, color: '#444' }}>Verificadas</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {slice.map((d) => (
+                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '8px 4px', borderBottom: '1px solid #f3f3f3', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#111' }}>${fmt(d.monto)}</span>
+                      <span style={{ fontSize: '12px', color: '#666' }}>{d.operador_name}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: '#999' }}>
+                      <span>verificó {d.verificado_por}</span>
+                      <span>{formatFecha(d.verificado_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {pages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '6px' }}>
+                  <button onClick={() => setHistPage((p) => Math.max(0, p - 1))} disabled={page === 0} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page === 0 ? 0.4 : 1 }}>←</button>
+                  <span style={{ fontSize: '12px', color: '#888', fontWeight: 700 }}>{page + 1} / {pages}</span>
+                  <button onClick={() => setHistPage((p) => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page >= pages - 1 ? 0.4 : 1 }}>→</button>
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </div>
+
       {/* Historial de movimientos */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Movimientos recientes</p>
@@ -295,12 +399,13 @@ export default function FichasClient() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {data!.movimientos.map((m) => {
-              const ts = TIPO_STYLE[m.tipo] ?? { bg: '#eee', fg: '#555' };
+              const dt = displayTipo(m);
+              const ts = TIPO_STYLE[dt] ?? { bg: '#eee', fg: '#555' };
               return (
                 <div key={m.id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                     <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '3px 10px', borderRadius: '999px', background: ts.bg, color: ts.fg }}>
-                      {m.tipo}
+                      {TIPO_LABEL[dt] ?? dt}
                     </span>
                     <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>${fmt(m.monto)}</span>
                     {!!m.bono && m.bono > 0 && (
