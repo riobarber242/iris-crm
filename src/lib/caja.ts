@@ -682,6 +682,158 @@ export async function verificarDescarga(session: SessionPayload, comprobanteId: 
   return { ok: true, saldoOperador, saldoAgente };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Etapa 6 — Cierre de turno con traspaso. MODELO IDÉNTICO al de descargas:
+//
+//   cerrarTurno        → SOLO operador. Crea un comprobante tipo 'traspaso'
+//                        pendiente con el destino elegido. NO mueve la billetera.
+//   verificarTraspaso  → SOLO agente/admin. Recién acá fn_cerrar_turno ejecuta el
+//                        movimiento (origen→0, destino+=saldo), inserta el cierre
+//                        en cierres_turno y resetea el turno. Atómico en SQL.
+//
+// El comprobante va al "canal interno" del equipo (settings.whatsapp_agente): el
+// front abre un link wa.me como interim. Cuando ese número se conecte a la API de
+// Meta los mensajes entrarán solos al CRM; la lógica de acá NO cambia.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CerrarTurnoResult =
+  | { ok: true;  comprobanteId: string; monto: number }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Cierra el turno: crea el comprobante de traspaso PENDIENTE (lo inicia el
+// operador). El monto es su saldo actual (lo que queda = lo que se traspasa). El
+// destino es otro operador, o null = depositar al agente (admin del tenant, que
+// fn_cerrar_turno resuelve al verificar). Guard: un solo cierre pendiente a la vez.
+export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string | null): Promise<CerrarTurnoResult> {
+  if (session.role !== 'operator') {
+    return { ok: false, error: 'Solo un operador puede cerrar su turno' };
+  }
+  if (!(await isCajaEnabled(session))) {
+    return { ok: false, error: 'La caja está desactivada' };
+  }
+
+  const destinoId = destinoIdRaw && String(destinoIdRaw).trim() ? String(destinoIdRaw).trim() : null;
+
+  // El destino, si se eligió, debe ser un operador del MISMO tenant (y no uno mismo).
+  if (destinoId) {
+    if (destinoId === session.sub) {
+      return { ok: false, error: 'No podés traspasarte el saldo a vos mismo' };
+    }
+    const { data: dest } = await supabaseAdmin
+      .from('agents').select('id, role').eq('id', destinoId).eq('tenant_id', session.tenant_id).maybeSingle();
+    if (!dest) return { ok: false, error: 'El operador destino no existe' };
+  }
+
+  // Guard: no permitir dos cierres pendientes encimados.
+  {
+    const { data: pend } = await supabaseAdmin
+      .from('comprobantes').select('id')
+      .eq('tenant_id', session.tenant_id).eq('operador_id', session.sub)
+      .eq('tipo', 'traspaso').eq('estado', 'pendiente').limit(1).maybeSingle();
+    if (pend) return { ok: false, error: 'Ya tenés un cierre de turno pendiente de verificación' };
+  }
+
+  // Saldo actual = lo que se traspasa (snapshot para mostrar; fn_cerrar_turno
+  // relee el saldo real al verificar y zerea la billetera).
+  const { data: bill } = await supabaseAdmin
+    .from('operador_billetera').select('saldo_actual')
+    .eq('tenant_id', session.tenant_id).eq('operador_id', session.sub).maybeSingle();
+  const monto = Number(bill?.saldo_actual ?? 0);
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('comprobantes')
+      .insert({
+        contact_id:          null,
+        image_url:           null,
+        monto,
+        estado:              'pendiente',
+        tipo:                'traspaso',
+        operador_id:         session.sub,
+        operador_destino_id: destinoId,
+        tenant_id:           session.tenant_id,
+      })
+      .select('id')
+      .single();
+    if (error) {
+      if (/operador_destino_id|operador_id|tipo|contact_id|null value|column|schema cache/i.test(error.message)) {
+        return { ok: false, error: 'La caja no está inicializada (falta correr supabase-caja-fichas-stage6.sql).', degraded: true };
+      }
+      return { ok: false, error: error.message };
+    }
+    await logActivity({
+      session,
+      action:     ACTIVITY.COMPROBANTE_ENVIADO,
+      objectType: 'comprobante',
+      objectId:   data.id,
+      details:    { tipo: 'traspaso', monto, operador_id: session.sub, operador_destino_id: destinoId },
+    });
+    return { ok: true, comprobanteId: data.id, monto };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'Error al cerrar el turno' };
+  }
+}
+
+export type TraspasoVerifyResult =
+  | { ok: true;  resumen: Record<string, any> }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Verifica un comprobante de traspaso (cierre de turno). Recién acá fn_cerrar_turno
+// mueve la plata e inserta el cierre. SOLO agente/admin. Consistencia: si el SQL
+// falla (caja apagada, etc.), NO se marca verificado.
+export async function verificarTraspaso(session: SessionPayload, comprobanteId: string): Promise<TraspasoVerifyResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
+
+  const { data: comp, error: compErr } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, tipo, estado, operador_id, operador_destino_id')
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (compErr) {
+    if (isMissingCajaError(compErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: compErr.message };
+  }
+  if (!comp) return { ok: false, error: 'Cierre no encontrado' };
+  if (comp.tipo !== 'traspaso') return { ok: false, error: 'El comprobante no es un cierre de turno' };
+  if (comp.estado !== 'pendiente') return { ok: false, error: 'El cierre ya fue resuelto' };
+  if (!comp.operador_id) return { ok: false, error: 'El cierre no tiene operador asociado' };
+
+  let resumen: Record<string, any> = {};
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_cerrar_turno', {
+      p_tenant_id:           session.tenant_id,
+      p_operador_id:         comp.operador_id,
+      p_operador_destino_id: comp.operador_destino_id ?? null,
+      p_comprobante_id:      comprobanteId,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+    resumen = (data ?? {}) as Record<string, any>;
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al verificar el cierre' };
+  }
+
+  const { error: updErr } = await supabaseAdmin
+    .from('comprobantes')
+    .update({ estado: 'verificado', resolved_by: session.sub, resolved_by_name: session.name, resolved_at: new Date().toISOString() })
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.COMPROBANTE_VERIFICADO,
+    objectType: 'comprobante',
+    objectId:   comprobanteId,
+    details:    { tipo: 'traspaso', operador_id: comp.operador_id, destino_id: resumen.destino_id ?? null, total_traspaso: resumen.total_traspaso ?? null },
+  });
+
+  return { ok: true, resumen };
+}
+
 // Reset total de la caja (modo prueba): pozo 0, billeteras 0, borra movimientos y
 // cierres. Comprobantes solo si borrarComprobantes=true. Atómico en SQL.
 export async function resetTotal(session: SessionPayload, borrarComprobantes: boolean): Promise<ManualResult> {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled, cobrarSueldo, crearDescarga } from '@/lib/caja';
+import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -10,19 +10,21 @@ import { isCajaEnabled, cobrarSueldo, crearDescarga } from '@/lib/caja';
 // endpoint está scopeado SIEMPRE al operador logueado (session.sub) y su tenant.
 // No expone billeteras ni movimientos de otros operadores.
 //
-// GET es solo lectura. El único POST (Etapa 5) son las dos acciones que el
-// operador inicia SOBRE SÍ MISMO: cobrar su sueldo y pedir una descarga al
-// agente. Ambas exigen role==='operator' (la verificación de la descarga la hace
-// el agente por /api/fichas). Cualquier otra mutación de caja sigue en /api/fichas.
+// GET es solo lectura. Los POST son acciones que el operador inicia SOBRE SÍ
+// MISMO: cobrar su sueldo (Etapa 5), pedir una descarga (Etapa 5) y cerrar su
+// turno (Etapa 6). Todas exigen role==='operator'; la verificación (descarga /
+// traspaso) la hace el agente por /api/fichas. Otra mutación sigue en /api/fichas.
 //
 // Vistas (?view=):
-//   (default)      resumen: mi billetera, pozo, mis movs de hoy, pendientes.
+//   (default)      resumen: mi billetera, pozo, mis movs de hoy, pendientes,
+//                  resumen del turno actual y operadores destino para el cierre.
 //   billetera      mis movimientos de billetera (billetera_delta<>0), asc, con
 //                  saldo corriendo.
 //   pozo           últimos N movimientos del pozo (fichas_delta<>0) SIN atribuir
 //                  a ningún operador (solo tipo/delta/fecha): el pozo es comunal.
 //   hoy            mis movimientos de HOY (zona America/Argentina/Buenos_Aires).
 //   pendientes     comprobantes pendientes del tenant (cola global).
+//   cierres        historial de mis cierres de turno (cierres_turno).
 //   comprobante&id reproduce un comprobante del tenant en modo lectura.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -191,10 +193,47 @@ export async function GET(request: Request) {
     });
   }
 
+  // ── Mis cierres de turno (cierres_turno del operador logueado) ─────────────
+  if (view === 'cierres') {
+    const { data, error } = await supabaseAdmin
+      .from('cierres_turno')
+      .select('id, turno_inicio_at, turno_fin_at, total_cargas, total_pagos, total_descargas, total_sueldo, total_traspaso, billetera_inicio, operador_destino_id, created_at')
+      .eq('tenant_id', tid)
+      .eq('operador_id', yo)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (isMissingCajaTable(error)) return NextResponse.json({ caja_enabled, degraded: true, cierres: [] });
+    if (error) return new NextResponse(error.message, { status: 500 });
+
+    // Nombres de los destinos (un solo fetch a agents).
+    const rows = (data ?? []) as any[];
+    const ids = Array.from(new Set(rows.map((c) => c.operador_destino_id).filter(Boolean)));
+    const nameById = new Map<string, string>();
+    if (ids.length > 0) {
+      const { data: ags } = await supabaseAdmin.from('agents').select('id, name').in('id', ids);
+      for (const a of ags ?? []) nameById.set(a.id, a.name);
+    }
+
+    const cierres = rows.map((c) => ({
+      id:              c.id,
+      turno_inicio_at: c.turno_inicio_at,
+      turno_fin_at:    c.turno_fin_at,
+      total_cargas:    Number(c.total_cargas ?? 0),
+      total_pagos:     Number(c.total_pagos ?? 0),
+      total_descargas: Number(c.total_descargas ?? 0),
+      total_sueldo:    Number(c.total_sueldo ?? 0),
+      total_traspaso:  Number(c.total_traspaso ?? 0),
+      billetera_inicio: Number(c.billetera_inicio ?? 0),
+      destino_name:    c.operador_destino_id ? (nameById.get(c.operador_destino_id) ?? '—') : '—',
+      created_at:      c.created_at,
+    }));
+    return NextResponse.json({ caja_enabled, cierres });
+  }
+
   // ── Resumen (default): números de las 4 cards + datos para sueldo/descarga ──
   const { startISO, endISO } = rangoHoyArgentina();
-  const [saldoRes, pozoRes, hoyRes, pendRes, sueldoRes, waRes] = await Promise.all([
-    supabaseAdmin.from('operador_billetera').select('saldo_actual').eq('tenant_id', tid).eq('operador_id', yo).maybeSingle(),
+  const [saldoRes, pozoRes, hoyRes, pendRes, sueldoRes, waRes, turnoRes, operadoresRes] = await Promise.all([
+    supabaseAdmin.from('operador_billetera').select('saldo_actual, turno_inicio_at').eq('tenant_id', tid).eq('operador_id', yo).maybeSingle(),
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
     supabaseAdmin.from('movimientos').select('id', { count: 'exact', head: true })
       .eq('tenant_id', tid).eq('operador_id', yo).gte('created_at', startISO).lt('created_at', endISO),
@@ -202,11 +241,32 @@ export async function GET(request: Request) {
       .eq('tenant_id', tid).eq('estado', 'pendiente').neq('tipo', 'descarga'),
     supabaseAdmin.from('agents').select('sueldo_diario').eq('id', yo).maybeSingle(),
     supabaseAdmin.from('settings').select('value').eq('key', 'whatsapp_agente').eq('tenant_id', tid).maybeSingle(),
+    // Movimientos del turno actual (tipo+monto) para el resumen en vivo del cierre.
+    supabaseAdmin.from('movimientos').select('tipo, monto')
+      .eq('tenant_id', tid).eq('operador_id', yo).gte('created_at', startISO),
+    // Otros operadores del tenant: posibles destinos del traspaso.
+    supabaseAdmin.from('agents').select('id, name').eq('tenant_id', tid).eq('role', 'operator').neq('id', yo),
   ]);
 
   // sueldo_diario / whatsapp_agente degradan a default si falta la migración stage5.
   const sueldo_diario  = Number(sueldoRes.data?.sueldo_diario ?? 0);
   const whatsapp_agente = String(waRes.data?.value ?? '').trim();
+
+  // Resumen del turno actual (totales en vivo, sin cerrar). El inicio es
+  // turno_inicio_at si hay turno abierto; si no, el día AR (mismo fallback que
+  // fn_cerrar_turno). Como hoy no se abren turnos, en la práctica es el día AR.
+  const saldoActual = Number(saldoRes.data?.saldo_actual ?? 0);
+  const turnoMovs = (turnoRes.error ? [] : (turnoRes.data ?? [])) as any[];
+  const sumTipo = (t: string) => turnoMovs.filter((m) => m.tipo === t).reduce((s, m) => s + Number(m.monto ?? 0), 0);
+  const resumen_turno = {
+    total_cargas:     sumTipo('carga'),
+    total_pagos:      sumTipo('pago'),
+    total_descargas:  sumTipo('descarga'),
+    total_sueldo:     sumTipo('sueldo'),
+    saldo_a_traspasar: saldoActual,
+  };
+  const operadores_destino = (operadoresRes.error ? [] : (operadoresRes.data ?? []))
+    .map((a: any) => ({ id: a.id, name: a.name }));
 
   // Degradación elegante: tablas de caja ausentes → resumen en cero, sin romper.
   if (isMissingCajaTable(saldoRes.error) || isMissingCajaTable(pozoRes.error) || isMissingCajaTable(hoyRes.error)) {
@@ -215,25 +275,29 @@ export async function GET(request: Request) {
       mi_saldo: 0, pozo: 0, mov_hoy_count: 0,
       pendientes_count: pendRes.count ?? 0,
       sueldo_diario, whatsapp_agente, operador_name: session.name,
+      resumen_turno, operadores_destino,
     });
   }
 
   return NextResponse.json({
     caja_enabled,
-    mi_saldo:         Number(saldoRes.data?.saldo_actual ?? 0), // COALESCE(.,0): sin fila → 0
+    mi_saldo:         saldoActual, // COALESCE(.,0): sin fila → 0
     pozo:             Number(pozoRes.data?.stock_actual ?? 0),
     mov_hoy_count:    hoyRes.count ?? 0,
     pendientes_count: pendRes.count ?? 0,
     sueldo_diario,
     whatsapp_agente,
     operador_name:    session.name,
+    resumen_turno,
+    operadores_destino,
   });
 }
 
-// POST — acciones que el OPERADOR inicia sobre sí mismo (Etapa 5).
-//   ?accion=sueldo   → cobra su sueldo_diario (fn_cobrar_sueldo).
-//   ?accion=descarga → crea un comprobante de descarga pendiente para el agente.
-// Ambas exigen role==='operator' (defensa server-side, además del middleware).
+// POST — acciones que el OPERADOR inicia sobre sí mismo (Etapas 5–6).
+//   ?accion=sueldo       → cobra su sueldo_diario (fn_cobrar_sueldo).
+//   ?accion=descarga     → crea un comprobante de descarga pendiente para el agente.
+//   ?accion=cerrar_turno → crea un comprobante de traspaso pendiente (cierre).
+// Todas exigen role==='operator' (defensa server-side, además del middleware).
 export async function POST(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -254,6 +318,15 @@ export async function POST(request: Request) {
     const r = await crearDescarga(session, Number(body.monto));
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId });
+  }
+
+  if (accion === 'cerrar_turno') {
+    const body = await request.json().catch(() => ({} as any));
+    // destinoId null/'' = sin traspaso (depositar al agente).
+    const destinoId = body.destinoId != null && String(body.destinoId).trim() ? String(body.destinoId) : null;
+    const r = await cerrarTurno(session, destinoId);
+    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId, monto: r.monto });
   }
 
   return new NextResponse('Acción inválida', { status: 400 });

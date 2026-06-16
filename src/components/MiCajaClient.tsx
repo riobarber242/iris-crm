@@ -52,12 +52,18 @@ function TipoChip({ tipo }: { tipo: string }) {
   );
 }
 
+type ResumenTurno = {
+  total_cargas: number; total_pagos: number; total_descargas: number; total_sueldo: number;
+  saldo_a_traspasar: number;
+};
+type OperadorDestino = { id: string; name: string };
 type Resumen = {
   caja_enabled: boolean; degraded?: boolean;
   mi_saldo: number; pozo: number; mov_hoy_count: number; pendientes_count: number;
   sueldo_diario: number; whatsapp_agente: string; operador_name: string;
+  resumen_turno: ResumenTurno; operadores_destino: OperadorDestino[];
 };
-type Vista = 'resumen' | 'billetera' | 'pozo' | 'hoy' | 'pendientes';
+type Vista = 'resumen' | 'billetera' | 'pozo' | 'hoy' | 'pendientes' | 'cierres';
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 function Card({ label, value, sub, dark, off, onClick, badge }: {
@@ -273,17 +279,56 @@ function PendientesDetalle() {
   );
 }
 
-// ── Acciones del operador (Etapa 5): sueldo + descarga ──────────────────────────
+// ── Mis cierres de turno (Etapa 6) ──────────────────────────────────────────────
+function CierresDetalle() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  useEffect(() => {
+    fetch('/api/caja/operador?view=cierres').then((r) => r.json()).then((d) => setRows(d.cierres ?? [])).catch(() => setRows([]));
+  }, []);
+  if (rows === null) return <Vacio texto="Cargando…" />;
+  if (rows.length === 0) return <Vacio texto="Todavía no cerraste ningún turno." />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {rows.map((c) => (
+        <div key={c.id} style={{ background: '#fff', borderRadius: '12px', padding: '12px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>
+              Traspaso ${fmt(c.total_traspaso)} <span style={{ color: '#888', fontWeight: 600 }}>→ {c.destino_name}</span>
+            </span>
+            <span style={{ fontSize: '12px', color: '#999' }}>{fechaCorta(c.turno_fin_at || c.created_at)}</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px 14px', flexWrap: 'wrap', fontSize: '12px' }}>
+            <span style={{ color: TIPO_STYLE.carga.fg, fontWeight: 700 }}>cargas ${fmt(c.total_cargas)}</span>
+            <span style={{ color: TIPO_STYLE.pago.fg, fontWeight: 700 }}>pagos ${fmt(c.total_pagos)}</span>
+            <span style={{ color: TIPO_STYLE.descarga.fg, fontWeight: 700 }}>descargas ${fmt(c.total_descargas)}</span>
+            <span style={{ color: TIPO_STYLE.sueldo.fg, fontWeight: 700 }}>sueldo ${fmt(c.total_sueldo)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Acciones del operador (Etapa 5: sueldo + descarga · Etapa 6: cierre) ─────────
 
 // Normaliza el WhatsApp del agente a formato internacional para wa.me. El número
 // se guarda sin "+"; si no empieza con 54 (Argentina) se lo anteponemos, así
 // funciona tanto si cargan "1112345678" como "5491112345678".
-function waLink(numeroRaw: string, nombre: string, monto: number): string {
+function waBase(numeroRaw: string): string {
   const digits = String(numeroRaw).replace(/\D/g, '');
-  const full   = digits.startsWith('54') ? digits : `54${digits}`;
-  const fecha  = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const text   = `Descarga de ${nombre} $${fmt(monto)} ${fecha}`;
-  return `https://wa.me/${full}?text=${encodeURIComponent(text)}`;
+  return digits.startsWith('54') ? digits : `54${digits}`;
+}
+function hoyAR(): string {
+  return new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+function waLink(numeroRaw: string, nombre: string, monto: number): string {
+  const text = `Descarga de ${nombre} $${fmt(monto)} ${hoyAR()}`;
+  return `https://wa.me/${waBase(numeroRaw)}?text=${encodeURIComponent(text)}`;
+}
+// Link del cierre de turno: "Traspaso de [origen] a [destino] — $[monto] — [fecha]".
+function waLinkTraspaso(numeroRaw: string, origen: string, destino: string, monto: number): string {
+  const text = `Traspaso de ${origen} a ${destino} — $${fmt(monto)} — ${hoyAR()}`;
+  return `https://wa.me/${waBase(numeroRaw)}?text=${encodeURIComponent(text)}`;
 }
 
 const modalOverlay: React.CSSProperties = {
@@ -378,18 +423,109 @@ function DescargaModal({ whatsappAgente, operadorName, busy, error, done, onConf
   );
 }
 
+// Modal de cierre de turno (2 pasos): (1) resumen del turno; (2) destino del
+// traspaso + confirmación. Si no hay otros operadores, salta directo a "sin
+// traspaso" (depositar al agente).
+function CerrarTurnoModal({ resumen, operadores, busy, error, done, onConfirm, onClose }: {
+  resumen: ResumenTurno; operadores: OperadorDestino[];
+  busy: boolean; error: string | null; done: boolean;
+  onConfirm: (destinoId: string | null, destinoName: string) => void; onClose: () => void;
+}) {
+  const soloYo = operadores.length === 0;
+  const [paso, setPaso] = useState<1 | 2>(1);
+  // '' = sin traspaso (al agente); si hay un solo destino posible igual se elige a mano.
+  const [destinoId, setDestinoId] = useState<string>('');
+
+  const destinoName = destinoId ? (operadores.find((o) => o.id === destinoId)?.name ?? '—') : 'el agente';
+  const monto = resumen.saldo_a_traspasar;
+
+  const Fila = ({ label, val, color }: { label: string; val: number; color?: string }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+      <span style={{ color: '#666' }}>{label}</span>
+      <span style={{ fontWeight: 800, color: color ?? '#111' }}>${fmt(val)}</span>
+    </div>
+  );
+
+  return (
+    <div onClick={busy ? undefined : onClose} style={modalOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+        <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Cerrar turno</h3>
+
+        {done ? (
+          <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
+            Cierre enviado, esperando verificación del receptor. Tu billetera queda en 0 cuando se verifique.
+          </div>
+        ) : paso === 1 ? (
+          <>
+            <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>Resumen de tu turno:</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: '#F7F7F7', borderRadius: '10px', padding: '12px 14px' }}>
+              <Fila label="Cargas"    val={resumen.total_cargas}    color={TIPO_STYLE.carga.fg} />
+              <Fila label="Pagos"     val={resumen.total_pagos}     color={TIPO_STYLE.pago.fg} />
+              <Fila label="Descargas" val={resumen.total_descargas} color={TIPO_STYLE.descarga.fg} />
+              <Fila label="Sueldo"    val={resumen.total_sueldo}    color={TIPO_STYLE.sueldo.fg} />
+              <div style={{ borderTop: '1px solid #e3e3e3', margin: '4px 0' }} />
+              <Fila label="Saldo a traspasar" val={monto} color={TIPO_STYLE.traspaso.fg} />
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ margin: 0, fontSize: '14px', color: '#444', lineHeight: 1.5 }}>
+              ¿A quién le traspasás los <strong>${fmt(monto)}</strong> restantes?
+            </p>
+            <select
+              value={destinoId}
+              onChange={(e) => setDestinoId(e.target.value)}
+              style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 700, outline: 'none', background: '#F7F7F7', color: '#222' }}
+            >
+              <option value="">Sin traspaso — depositar al agente</option>
+              {operadores.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+            <p style={{ margin: 0, fontSize: '13px', color: '#444' }}>
+              ¿Cerrar turno y traspasar <strong>${fmt(monto)}</strong> a <strong>{destinoName}</strong>?
+            </p>
+          </>
+        )}
+
+        {error && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: 600 }}>{error}</div>}
+
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {done ? (
+            <button onClick={onClose} style={btnPrimary}>Cerrar</button>
+          ) : paso === 1 ? (
+            <>
+              <button onClick={onClose} disabled={busy} style={btnGhost}>Cancelar</button>
+              <button onClick={() => setPaso(2)} disabled={busy} style={btnPrimary}>Continuar</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => (soloYo ? onClose() : setPaso(1))} disabled={busy} style={btnGhost}>
+                {soloYo ? 'Cancelar' : 'Atrás'}
+              </button>
+              <button onClick={() => onConfirm(destinoId || null, destinoName)} disabled={busy} style={btnPrimary}>
+                {busy ? '…' : 'Cerrar turno'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Componente principal ───────────────────────────────────────────────────────
 export default function MiCajaClient() {
   const [data, setData]   = useState<Resumen | null>(null);
   const [vista, setVista] = useState<Vista>('resumen');
   const [compId, setCompId] = useState<string | null>(null);
 
-  // Acciones Etapa 5: sueldo y descarga.
+  // Acciones Etapa 5 (sueldo/descarga) y Etapa 6 (cierre de turno).
   const [sueldoOpen, setSueldoOpen]   = useState(false);
   const [descargaOpen, setDescargaOpen] = useState(false);
+  const [cerrarOpen, setCerrarOpen]   = useState(false);
   const [actionBusy, setActionBusy]   = useState(false);
   const [actionErr, setActionErr]     = useState<string | null>(null);
   const [descargaDone, setDescargaDone] = useState(false);
+  const [cerrarDone, setCerrarDone]   = useState(false);
   const [toast, setToast]             = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -441,6 +577,33 @@ export default function MiCajaClient() {
     setDescargaOpen(false); setDescargaDone(false); setActionErr(null);
   }
 
+  async function confirmarCerrar(destinoId: string | null, destinoName: string) {
+    if (!data) return;
+    setActionBusy(true); setActionErr(null);
+    try {
+      // (a) Abrir el canal interno (wa.me al agente) con el detalle del traspaso.
+      if (data.whatsapp_agente) {
+        window.open(waLinkTraspaso(data.whatsapp_agente, data.operador_name, destinoName, data.resumen_turno.saldo_a_traspasar), '_blank', 'noopener');
+      }
+      // (b) Crear el comprobante de cierre (traspaso) pendiente.
+      const res = await fetch('/api/caja/operador?accion=cerrar_turno', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinoId }),
+      });
+      if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo cerrar el turno'); return; }
+      // (c) Confirmación dentro del modal.
+      setCerrarDone(true);
+      await load();
+    } catch {
+      setActionErr('Error de red');
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  function closeCerrar() {
+    setCerrarOpen(false); setCerrarDone(false); setActionErr(null);
+  }
+
   useEffect(() => {
     load();
     const t = setInterval(load, 15_000);
@@ -455,6 +618,7 @@ export default function MiCajaClient() {
     const title = vista === 'billetera' ? 'Mi billetera'
       : vista === 'pozo' ? 'Pozo de fichas'
       : vista === 'hoy' ? 'Mis movimientos de hoy'
+      : vista === 'cierres' ? 'Mis cierres de turno'
       : 'Comprobantes pendientes';
     return (
       <>
@@ -463,6 +627,7 @@ export default function MiCajaClient() {
         {vista === 'pozo'       && <PozoDetalle />}
         {vista === 'hoy'        && <HoyDetalle onOpenComp={setCompId} />}
         {vista === 'pendientes' && <PendientesDetalle />}
+        {vista === 'cierres'    && <CierresDetalle />}
         {compId && <ComprobanteModal id={compId} onClose={() => setCompId(null)} />}
       </>
     );
@@ -503,8 +668,19 @@ export default function MiCajaClient() {
           >
             Descargar al agente
           </button>
+          <button
+            onClick={() => { setActionErr(null); setCerrarDone(false); setCerrarOpen(true); }}
+            style={{ flex: 1, minWidth: '180px', background: '#e6f4ff', color: '#1d6fb8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            className="nav-3d"
+          >
+            Cerrar turno
+          </button>
         </div>
       )}
+
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        <Card label="Mis cierres" value="Ver" sub="historial de tus cierres de turno" off={off} onClick={() => setVista('cierres')} />
+      </div>
 
       {toast && (
         <div onClick={() => setToast(null)} style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '12px', padding: '12px 16px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
@@ -530,6 +706,17 @@ export default function MiCajaClient() {
           done={descargaDone}
           onConfirm={confirmarDescarga}
           onClose={() => { if (!actionBusy) closeDescarga(); }}
+        />
+      )}
+      {cerrarOpen && (
+        <CerrarTurnoModal
+          resumen={data.resumen_turno}
+          operadores={data.operadores_destino}
+          busy={actionBusy}
+          error={actionErr}
+          done={cerrarDone}
+          onConfirm={confirmarCerrar}
+          onClose={() => { if (!actionBusy) closeCerrar(); }}
         />
       )}
     </div>

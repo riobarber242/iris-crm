@@ -5,7 +5,7 @@ import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import {
   recargarFichas, isCajaEnabled,
   setStock, setBilletera, borrarMovimiento, resetTotal,
-  verificarDescarga,
+  verificarDescarga, verificarTraspaso,
 } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
@@ -34,37 +34,44 @@ export async function GET() {
   const tid = session.tenant_id;
   const caja_enabled = await isCajaEnabled(session);
 
-  const [stockRes, billRes, movRes, descPendRes, descHistRes] = await Promise.all([
+  const [stockRes, billRes, movRes, descPendRes, descHistRes, cierresRes] = await Promise.all([
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
     supabaseAdmin.from('operador_billetera').select('operador_id, saldo_actual, turno_abierto').eq('tenant_id', tid),
     supabaseAdmin.from('movimientos').select('*').eq('tenant_id', tid).order('created_at', { ascending: false }).limit(30),
-    // Descargas (Etapa 5): comprobantes tipo 'descarga'. Pendientes a verificar e
-    // historial verificado. Degradan a [] si falta la columna operador_id (stage5).
-    supabaseAdmin.from('comprobantes').select('id, monto, operador_id, created_at')
-      .eq('tenant_id', tid).eq('tipo', 'descarga').eq('estado', 'pendiente').order('created_at', { ascending: false }),
+    // Pendientes a verificar: descargas (Etapa 5) Y cierres de turno (traspaso,
+    // Etapa 6). El receptor/agente los verifica acá. Degradan a [] si falta la
+    // columna operador_id (stage5/6).
+    supabaseAdmin.from('comprobantes').select('id, tipo, monto, operador_id, operador_destino_id, created_at')
+      .eq('tenant_id', tid).in('tipo', ['descarga', 'traspaso']).eq('estado', 'pendiente').order('created_at', { ascending: false }),
     supabaseAdmin.from('comprobantes').select('id, monto, operador_id, resolved_by_name, resolved_at, created_at')
       .eq('tenant_id', tid).eq('tipo', 'descarga').eq('estado', 'verificado').order('resolved_at', { ascending: false }).limit(50),
+    // Cierres de turno (Etapa 6): todos los del tenant para el panel del agente.
+    supabaseAdmin.from('cierres_turno')
+      .select('id, operador_id, operador_destino_id, turno_inicio_at, turno_fin_at, total_cargas, total_pagos, total_descargas, total_sueldo, total_traspaso, billetera_inicio, created_at')
+      .eq('tenant_id', tid).order('created_at', { ascending: false }).limit(100),
   ]);
 
   // Degradación elegante: tablas ausentes → resumen vacío, sin romper la UI.
   if (isMissingCajaTable(stockRes.error) || isMissingCajaTable(billRes.error) || isMissingCajaTable(movRes.error)) {
-    return NextResponse.json({ caja_enabled, degraded: true, stock: 0, total_billeteras: 0, billeteras: [], movimientos: [], descargas_pendientes: [], descargas_historial: [], mi_billetera_agente: 0 });
+    return NextResponse.json({ caja_enabled, degraded: true, stock: 0, total_billeteras: 0, billeteras: [], movimientos: [], descargas_pendientes: [], descargas_historial: [], mi_billetera_agente: 0, cierres: [] });
   }
   const anyErr = stockRes.error || billRes.error || movRes.error;
   if (anyErr) return new NextResponse(anyErr.message, { status: 500 });
 
   const billeteras  = (billRes.data ?? []) as any[];
   const movimientos = (movRes.data ?? []) as any[];
-  // Si la columna operador_id aún no existe (sin stage5), estas vienen con error → [].
+  // Si las columnas operador_id/operador_destino_id aún no existen, estas → [].
   const descPend = (descPendRes.error ? [] : (descPendRes.data ?? [])) as any[];
   const descHist = (descHistRes.error ? [] : (descHistRes.data ?? [])) as any[];
+  const cierres  = (cierresRes.error ? [] : (cierresRes.data ?? [])) as any[];
 
-  // Nombres de los operadores (un solo fetch a agents para billeteras + movs + descargas).
+  // Nombres de los operadores (un solo fetch a agents para todo lo que los use).
   const ids = new Set<string>();
   for (const b of billeteras)  if (b.operador_id) ids.add(b.operador_id);
   for (const m of movimientos) if (m.operador_id)  ids.add(m.operador_id);
-  for (const d of descPend)    if (d.operador_id)  ids.add(d.operador_id);
+  for (const d of descPend)    { if (d.operador_id) ids.add(d.operador_id); if (d.operador_destino_id) ids.add(d.operador_destino_id); }
   for (const d of descHist)    if (d.operador_id)  ids.add(d.operador_id);
+  for (const c of cierres)     { if (c.operador_id) ids.add(c.operador_id); if (c.operador_destino_id) ids.add(c.operador_destino_id); }
   const nameById = new Map<string, { name: string; role: string }>();
   if (ids.size > 0) {
     const { data: ags } = await supabaseAdmin.from('agents').select('id, name, role').in('id', Array.from(ids));
@@ -98,13 +105,33 @@ export async function GET() {
     created_at:      m.created_at,
   }));
 
-  // Descargas pendientes e historial verificado (Etapa 5).
+  // Pendientes de verificar (Etapa 5 descargas + Etapa 6 traspasos). El `tipo`
+  // decide qué acción dispara el botón Verificar en el front.
   const descargas_pendientes = descPend.map((d: any) => ({
     id:            d.id,
+    tipo:          d.tipo ?? 'descarga',
     monto:         Number(d.monto),
     operador_id:   d.operador_id,
     operador_name: nameById.get(d.operador_id)?.name ?? '—',
+    destino_name:  d.operador_destino_id ? (nameById.get(d.operador_destino_id)?.name ?? '—') : null,
     created_at:    d.created_at,
+  }));
+
+  // Cierres de turno del tenant (Etapa 6).
+  const cierresOut = cierres.map((c: any) => ({
+    id:              c.id,
+    operador_id:     c.operador_id,
+    operador_name:   nameById.get(c.operador_id)?.name ?? '—',
+    destino_name:    c.operador_destino_id ? (nameById.get(c.operador_destino_id)?.name ?? '—') : '—',
+    turno_inicio_at: c.turno_inicio_at,
+    turno_fin_at:    c.turno_fin_at,
+    total_cargas:    Number(c.total_cargas ?? 0),
+    total_pagos:     Number(c.total_pagos ?? 0),
+    total_descargas: Number(c.total_descargas ?? 0),
+    total_sueldo:    Number(c.total_sueldo ?? 0),
+    total_traspaso:  Number(c.total_traspaso ?? 0),
+    billetera_inicio: Number(c.billetera_inicio ?? 0),
+    created_at:      c.created_at,
   }));
   const descargas_historial = descHist.map((d: any) => ({
     id:            d.id,
@@ -129,6 +156,7 @@ export async function GET() {
     descargas_pendientes,
     descargas_historial,
     mi_billetera_agente,
+    cierres: cierresOut,
   });
 }
 
@@ -195,6 +223,14 @@ export async function POST(request: Request) {
       const r = await verificarDescarga(session, String(body.comprobanteId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
       return NextResponse.json({ ok: true, saldo_operador: r.saldoOperador, saldo_agente: r.saldoAgente });
+    }
+
+    // Verificar un cierre de turno (Etapa 6): recién acá fn_cerrar_turno mueve la
+    // plata (origen→0, destino+=saldo) e inserta el cierre en cierres_turno.
+    case 'verificar_traspaso': {
+      const r = await verificarTraspaso(session, String(body.comprobanteId ?? ''));
+      if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      return NextResponse.json({ ok: true, resumen: r.resumen });
     }
 
     case 'reset_total': {

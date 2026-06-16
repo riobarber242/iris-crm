@@ -17,12 +17,19 @@ type Movimiento = {
   operador_id: string | null; operador_name: string; creado_por_name: string | null;
   comprobante_id: string | null; editado: boolean; created_at: string;
 };
-type DescargaPend = { id: string; monto: number; operador_id: string; operador_name: string; created_at: string };
+type DescargaPend = { id: string; tipo: string; monto: number; operador_id: string; operador_name: string; destino_name: string | null; created_at: string };
 type DescargaHist = { id: string; monto: number; operador_id: string; operador_name: string; verificado_por: string; verificado_at: string };
+type Cierre = {
+  id: string; operador_id: string; operador_name: string; destino_name: string;
+  turno_inicio_at: string; turno_fin_at: string;
+  total_cargas: number; total_pagos: number; total_descargas: number; total_sueldo: number;
+  total_traspaso: number; billetera_inicio: number; created_at: string;
+};
 type Resumen = {
   caja_enabled: boolean; degraded?: boolean; stock: number; total_billeteras: number;
   billeteras: Billetera[]; movimientos: Movimiento[];
   descargas_pendientes: DescargaPend[]; descargas_historial: DescargaHist[]; mi_billetera_agente: number;
+  cierres: Cierre[];
 };
 
 const HIST_PAGE = 10;
@@ -82,6 +89,10 @@ export default function FichasClient() {
 
   // ── Etapa 5: descargas ──
   const [histPage, setHistPage]     = useState(0);
+  // ── Etapa 6: cierres de turno ──
+  const [cierrePage, setCierrePage] = useState(0);
+  const [cierreOp, setCierreOp]     = useState('');   // filtro por operador (id)
+  const [cierreFecha, setCierreFecha] = useState(''); // filtro por fecha (yyyy-mm-dd)
 
   async function fetchResumen() {
     try {
@@ -167,9 +178,17 @@ export default function FichasClient() {
     await post({ action: 'borrar_movimiento', movimientoId: id });
   }
 
-  async function verificarDescarga(id: string, name: string, monto: number) {
-    if (!window.confirm(`Verificar la descarga de ${name} por $${fmt(monto)}? Se moverá de su billetera a la tuya.`)) return;
-    await post({ action: 'verificar_descarga', comprobanteId: id });
+  // Verificar un pendiente: descarga (plata → tu billetera) o cierre de turno
+  // (plata del origen → su destino). El backend mueve la plata recién acá.
+  async function verificarPendiente(d: DescargaPend) {
+    if (d.tipo === 'traspaso') {
+      const dest = d.destino_name ? `a ${d.destino_name}` : 'al agente';
+      if (!window.confirm(`Verificar el cierre de turno de ${d.operador_name} por $${fmt(d.monto)}? Se traspasará su saldo ${dest}.`)) return;
+      await post({ action: 'verificar_traspaso', comprobanteId: d.id });
+    } else {
+      if (!window.confirm(`Verificar la descarga de ${d.operador_name} por $${fmt(d.monto)}? Se moverá de su billetera a la tuya.`)) return;
+      await post({ action: 'verificar_descarga', comprobanteId: d.id });
+    }
   }
 
   async function doResetTotal() {
@@ -332,27 +351,33 @@ export default function FichasClient() {
           </span>
         </div>
 
-        {/* Descargas pendientes de verificar */}
+        {/* Pendientes de verificar: descargas (Etapa 5) y cierres de turno (Etapa 6) */}
         <p style={{ margin: '4px 0 0', fontSize: '13px', fontWeight: 800, color: '#444' }}>Pendientes de verificar</p>
         {(data?.descargas_pendientes.length ?? 0) === 0 ? (
-          <p style={{ color: '#bbb', fontSize: '13px', padding: '8px 0' }}>No hay descargas pendientes.</p>
+          <p style={{ color: '#bbb', fontSize: '13px', padding: '8px 0' }}>No hay descargas ni cierres pendientes.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {data!.descargas_pendientes.map((d) => (
-              <div key={d.id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-                  <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '3px 10px', borderRadius: '999px', background: TIPO_STYLE.descarga.bg, color: TIPO_STYLE.descarga.fg }}>
-                    descarga
-                  </span>
-                  <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>${fmt(d.monto)}</span>
-                  <span style={{ fontSize: '12px', color: '#888' }}>{d.operador_name}</span>
-                  <span style={{ fontSize: '12px', color: '#aaa' }}>{formatFecha(d.created_at)}</span>
+            {data!.descargas_pendientes.map((d) => {
+              const ts = TIPO_STYLE[d.tipo] ?? TIPO_STYLE.descarga;
+              return (
+                <div key={d.id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '3px 10px', borderRadius: '999px', background: ts.bg, color: ts.fg }}>
+                      {d.tipo === 'traspaso' ? 'cierre' : 'descarga'}
+                    </span>
+                    <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>${fmt(d.monto)}</span>
+                    <span style={{ fontSize: '12px', color: '#888' }}>{d.operador_name}</span>
+                    {d.tipo === 'traspaso' && (
+                      <span style={{ fontSize: '12px', color: '#888' }}>→ {d.destino_name ?? 'agente'}</span>
+                    )}
+                    <span style={{ fontSize: '12px', color: '#aaa' }}>{formatFecha(d.created_at)}</span>
+                  </div>
+                  <button onClick={() => verificarPendiente(d)} disabled={busy} style={btn('#C8FF00', '#000')}>
+                    Verificar
+                  </button>
                 </div>
-                <button onClick={() => verificarDescarga(d.id, d.operador_name, d.monto)} disabled={busy} style={btn('#C8FF00', '#000')}>
-                  Verificar
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -384,6 +409,90 @@ export default function FichasClient() {
                   <button onClick={() => setHistPage((p) => Math.max(0, p - 1))} disabled={page === 0} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page === 0 ? 0.4 : 1 }}>←</button>
                   <span style={{ fontSize: '12px', color: '#888', fontWeight: 700 }}>{page + 1} / {pages}</span>
                   <button onClick={() => setHistPage((p) => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page >= pages - 1 ? 0.4 : 1 }}>→</button>
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </div>
+
+      {/* ── Cierres de turno (Etapa 6) ─────────────────────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Cierres de turno</p>
+        {(() => {
+          const all = data?.cierres ?? [];
+          // Operadores presentes en los cierres, para el filtro.
+          const opsMap = new Map<string, string>();
+          for (const c of all) opsMap.set(c.operador_id, c.operador_name);
+          const ops = Array.from(opsMap.entries());
+
+          // Filtro por operador y por fecha (yyyy-mm-dd sobre turno_fin_at en AR).
+          const filtered = all.filter((c) => {
+            if (cierreOp && c.operador_id !== cierreOp) return false;
+            if (cierreFecha) {
+              const f = new Date(c.turno_fin_at || c.created_at);
+              const fStr = isNaN(f.getTime()) ? '' : new Date(f.getTime() - 3 * 3600_000).toISOString().slice(0, 10);
+              if (fStr !== cierreFecha) return false;
+            }
+            return true;
+          });
+          const pages = Math.max(1, Math.ceil(filtered.length / HIST_PAGE));
+          const page  = Math.min(cierrePage, pages - 1);
+          const slice = filtered.slice(page * HIST_PAGE, page * HIST_PAGE + HIST_PAGE);
+
+          return (
+            <>
+              {/* Filtros */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <select
+                  value={cierreOp}
+                  onChange={(e) => { setCierreOp(e.target.value); setCierrePage(0); }}
+                  style={{ padding: '7px 10px', border: '2px solid #eee', borderRadius: '8px', fontSize: '12px', fontWeight: 700, background: '#F7F7F7', color: '#333' }}
+                >
+                  <option value="">Todos los operadores</option>
+                  {ops.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+                <input
+                  type="date" value={cierreFecha}
+                  onChange={(e) => { setCierreFecha(e.target.value); setCierrePage(0); }}
+                  style={{ padding: '7px 10px', border: '2px solid #eee', borderRadius: '8px', fontSize: '12px', fontWeight: 700, background: '#F7F7F7', color: '#333' }}
+                />
+                {(cierreOp || cierreFecha) && (
+                  <button onClick={() => { setCierreOp(''); setCierreFecha(''); setCierrePage(0); }} style={{ ...btn('#F0F0F0', '#666'), padding: '6px 12px', fontSize: '12px' }}>
+                    Limpiar
+                  </button>
+                )}
+              </div>
+
+              {filtered.length === 0 ? (
+                <p style={{ color: '#bbb', fontSize: '14px', padding: '10px 0' }}>No hay cierres para ese filtro.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {slice.map((c) => (
+                    <div key={c.id} style={{ background: '#fff', borderRadius: '12px', padding: '12px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 800, color: '#111' }}>
+                          {c.operador_name} <span style={{ color: '#888', fontWeight: 600 }}>→ {c.destino_name}</span>
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#999' }}>{formatFecha(c.turno_fin_at || c.created_at)}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px 14px', flexWrap: 'wrap', fontSize: '12px', color: '#555' }}>
+                        <span style={{ color: TIPO_STYLE.carga.fg, fontWeight: 700 }}>cargas ${fmt(c.total_cargas)}</span>
+                        <span style={{ color: TIPO_STYLE.pago.fg, fontWeight: 700 }}>pagos ${fmt(c.total_pagos)}</span>
+                        <span style={{ color: TIPO_STYLE.descarga.fg, fontWeight: 700 }}>descargas ${fmt(c.total_descargas)}</span>
+                        <span style={{ color: TIPO_STYLE.sueldo.fg, fontWeight: 700 }}>sueldo ${fmt(c.total_sueldo)}</span>
+                        <span style={{ color: TIPO_STYLE.traspaso.fg, fontWeight: 800 }}>traspaso ${fmt(c.total_traspaso)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {pages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '2px' }}>
+                  <button onClick={() => setCierrePage((p) => Math.max(0, p - 1))} disabled={page === 0} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page === 0 ? 0.4 : 1 }}>←</button>
+                  <span style={{ fontSize: '12px', color: '#888', fontWeight: 700 }}>{page + 1} / {pages}</span>
+                  <button onClick={() => setCierrePage((p) => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page >= pages - 1 ? 0.4 : 1 }}>→</button>
                 </div>
               )}
             </>
