@@ -11,18 +11,20 @@ export async function POST(request: Request) {
     return new NextResponse('Falta contactId', { status: 400 });
   }
 
-  // Sesión: para atribuir el "atendió" en el registro de actividad (no cambia
-  // el comportamiento del marcado en sí).
+  // Sesión obligatoria: el marcado solo opera sobre mensajes del propio tenant.
   const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   try {
     // OJO: nunca pisar 'failed' — un mensaje que Meta rechazó no fue entregado
     // ni leído. Sin este filtro, abrir el chat convertía los fallidos en
     // "leídos" (doble tilde) y el error quedaba invisible.
+    // Scope por tenant_id: un contactId de otro tenant no afecta nada.
     const { data, error } = await supabaseAdmin
       .from('messages')
       .update({ status: 'read' })
       .eq('contact_id', contactId)
+      .eq('tenant_id', session.tenant_id)
       .eq('role', 'assistant')
       .neq('status', 'read')
       .neq('status', 'failed')
