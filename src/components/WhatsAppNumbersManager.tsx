@@ -37,11 +37,11 @@ const smallBtn: React.CSSProperties = {
 };
 
 // Sección de Configuración para administrar los números de WhatsApp del tenant
-// (tabla whatsapp_numbers). Visible SOLO para admin: para otros roles no
-// renderiza nada (la API igual exige rol admin server-side).
+// (tabla whatsapp_numbers). Visible para admin y agent: para otros roles no
+// renderiza nada (la API igual exige rol admin o agent server-side).
 export default function WhatsAppNumbersManager() {
   const { agent } = useAuth();
-  const isAdmin = agent?.role === 'admin';
+  const canManageNumbers = agent?.role === 'admin' || agent?.role === 'agent';
 
   const [numbers, setNumbers] = useState<WaNumber[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,10 +75,10 @@ export default function WhatsAppNumbersManager() {
   }
 
   useEffect(() => {
-    if (isAdmin) fetchNumbers();
-  }, [isAdmin]);
+    if (canManageNumbers) fetchNumbers();
+  }, [canManageNumbers]);
 
-  if (!isAdmin) return null;
+  if (!canManageNumbers) return null;
 
   async function patchNumber(id: string, payload: Record<string, unknown>): Promise<boolean> {
     setError('');
