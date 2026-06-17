@@ -64,11 +64,32 @@ export async function POST(request: Request) {
   await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
   let contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id, campaign.target_number_id ?? null);
+
+  // Exclusión inteligente: no reenviar a contactos ya contactados por las
+  // campañas seleccionadas. Se re-validan los ids contra el tenant.
+  const excludeIds: string[] = Array.isArray(campaign.exclude_campaign_ids) ? campaign.exclude_campaign_ids : [];
+  if (excludeIds.length > 0) {
+    try {
+      const { data: ownCampaigns } = await supabaseAdmin
+        .from('campaigns').select('id').eq('tenant_id', session.tenant_id).in('id', excludeIds);
+      const validIds = (ownCampaigns ?? []).map((c: any) => c.id);
+      if (validIds.length > 0) {
+        const { data: prev } = await supabaseAdmin
+          .from('campaign_recipients').select('contact_id').in('campaign_id', validIds);
+        const alreadySent = new Set((prev ?? []).map((r: any) => r.contact_id));
+        contacts = contacts.filter((c: any) => !alreadySent.has(c.id));
+      }
+    } catch (err) {
+      console.warn('[campaign send] Exclusión falló (¿tabla campaign_recipients?), envío sin excluir:', err);
+    }
+  }
+
   if (campaign.send_limit) contacts = contacts.slice(0, Number(campaign.send_limit));
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
 
   let sent = 0;
+  const sentContactIds: string[] = [];
 
   for (const contact of contacts) {
     try {
@@ -103,10 +124,20 @@ export async function POST(request: Request) {
         tenant_id:  session.tenant_id,
       });
       sent++;
+      sentContactIds.push(contact.id);
     } catch {
       console.error(`[campaign send] Falló envío a ${contact.phone}`);
     }
     await new Promise((r) => setTimeout(r, 150));
+  }
+
+  // Registrar destinatarios para que futuras campañas puedan excluirlos. Si la
+  // tabla campaign_recipients no existe todavía, no rompe el envío.
+  if (sentContactIds.length > 0) {
+    const { error: recErr } = await supabaseAdmin
+      .from('campaign_recipients')
+      .insert(sentContactIds.map((cid) => ({ campaign_id: campaignId, contact_id: cid })));
+    if (recErr) console.warn('[campaign send] No se registraron destinatarios (¿tabla campaign_recipients?):', recErr.message);
   }
 
   await supabaseAdmin

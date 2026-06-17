@@ -18,6 +18,7 @@ type Campaign = {
   sent_count: number;
   created_at: string;
   recipient_ids: string[] | null;
+  exclude_campaign_ids: string[] | null;
 };
 
 type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean };
@@ -105,6 +106,8 @@ export default function CampanasClient() {
   const [filter,           setFilter]           = useState('todos');
   const [inactiveDays,     setInactiveDays]     = useState(30);
   const [lineFilter,       setLineFilter]       = useState('todas');
+  const [excludePrevious,  setExcludePrevious]  = useState(false);
+  const [excludeCampaignIds, setExcludeCampaignIds] = useState<string[]>([]);
   const [sendLimit,        setSendLimit]        = useState('');
   const [message,          setMessage]          = useState('');
   const [templateName,     setTemplateName]     = useState('');
@@ -212,6 +215,7 @@ export default function CampanasClient() {
     setName(''); setCampaignType('texto_libre'); setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setSendLimit('');
     setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
     setManualTemplate(false);
+    setExcludePrevious(false); setExcludeCampaignIds([]);
     setError(''); setRecipientCount(null);
   }
 
@@ -249,6 +253,7 @@ export default function CampanasClient() {
         name: name.trim(), target_filter: effectiveFilter(filter, inactiveDays), type: campaignType,
         send_limit: sendLimit ? Number(sendLimit) : null,
         target_number_id: lineFilter !== 'todas' ? lineFilter : null,
+        exclude_campaign_ids: excludePrevious ? excludeCampaignIds : [],
       };
       if (campaignType === 'texto_libre') {
         body.message = message.trim();
@@ -402,6 +407,44 @@ export default function CampanasClient() {
               placeholder="Sin límite"
               style={inputStyle}
             />
+          </div>
+
+          {/* Exclusión de contactos ya contactados */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <label style={{ fontSize: '13px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={excludePrevious}
+                onChange={(e) => { setExcludePrevious(e.target.checked); if (!e.target.checked) setExcludeCampaignIds([]); }}
+              />
+              Excluir contactos de campañas anteriores
+            </label>
+            {excludePrevious && (() => {
+              const completadas = campaigns.filter((c) => c.status === 'completada');
+              if (completadas.length === 0) {
+                return <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>No hay campañas completadas para excluir todavía.</p>;
+              }
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: '#FAFAFA', borderRadius: '10px', padding: '12px' }}>
+                  <p style={{ fontSize: '11px', color: '#888', margin: 0 }}>No se enviará a los contactos que ya recibieron las campañas tildadas.</p>
+                  {completadas.map((c) => (
+                    <label key={c.id} style={{ fontSize: '13px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={excludeCampaignIds.includes(c.id)}
+                        onChange={(e) => {
+                          setExcludeCampaignIds((prev) =>
+                            e.target.checked ? [...prev, c.id] : prev.filter((id) => id !== c.id),
+                          );
+                        }}
+                      />
+                      {c.name}
+                      <span style={{ color: '#aaa', fontSize: '11px' }}>· {new Date(c.created_at).toLocaleDateString('es-AR')}</span>
+                    </label>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Contenido según tipo */}
@@ -582,6 +625,9 @@ export default function CampanasClient() {
                   )}
                   {' · '}{new Date(campaign.created_at).toLocaleDateString('es-AR')}
                   {campaign.sent_count > 0 && ` · ${campaign.sent_count} enviados`}
+                  {campaign.exclude_campaign_ids && campaign.exclude_campaign_ids.length > 0 && (
+                    <> · Excluye {campaign.exclude_campaign_ids.length} campaña{campaign.exclude_campaign_ids.length !== 1 ? 's' : ''}</>
+                  )}
                 </p>
               </div>
               <span style={{ ...estilo, fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
