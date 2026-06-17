@@ -22,6 +22,16 @@ type Campaign = {
 
 type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean };
 
+type MetaTemplate = { name: string; language: string; status: string; body: string };
+
+// Cuenta cuántos placeholders {{1}}, {{2}}... distintos tiene el body de una plantilla.
+function countTemplateVars(body: string): number {
+  const matches = body.match(/\{\{\s*(\d+)\s*\}\}/g);
+  if (!matches) return 0;
+  const nums = matches.map((m) => Number(m.replace(/[^\d]/g, '')));
+  return Math.max(0, ...nums);
+}
+
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
   borrador:   { background: '#F0F0F0', color: '#888' },
   enviando:   { background: '#fff8d6', color: '#b8860b', border: '1px solid #f0c040' },
@@ -87,6 +97,13 @@ export default function CampanasClient() {
   const [templateLang,     setTemplateLang]     = useState('es');
   const [templateVars,     setTemplateVars]     = useState<string[]>(['']);
 
+  // Plantillas aprobadas de Meta (selector visual para template_meta)
+  const [metaTemplates,    setMetaTemplates]    = useState<MetaTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError,   setTemplatesError]   = useState('');
+  const [templatesLoaded,  setTemplatesLoaded]  = useState(false);
+  const [manualTemplate,   setManualTemplate]   = useState(false);
+
   async function fetchCampaigns() {
     try {
       const res = await fetch('/api/campaigns');
@@ -105,6 +122,44 @@ export default function CampanasClient() {
     const t = setInterval(fetchCampaigns, 10_000);
     return () => clearInterval(t);
   }, []);
+
+  async function fetchTemplates() {
+    setTemplatesLoading(true);
+    setTemplatesError('');
+    try {
+      const res = await fetch('/api/campaigns/templates');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setTemplatesError(data?.error || 'No se pudieron cargar las plantillas. Verificá el token en Configuración.');
+        setMetaTemplates([]);
+      } else {
+        setMetaTemplates(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      setTemplatesError('No se pudieron cargar las plantillas. Verificá el token en Configuración.');
+      setMetaTemplates([]);
+    } finally {
+      setTemplatesLoading(false);
+      setTemplatesLoaded(true);
+    }
+  }
+
+  // Al cambiar a "Template Meta", cargar las plantillas aprobadas (una sola vez).
+  useEffect(() => {
+    if (campaignType === 'template_meta' && !templatesLoaded && !templatesLoading) {
+      fetchTemplates();
+    }
+  }, [campaignType, templatesLoaded, templatesLoading]);
+
+  // Selección de una plantilla del selector: setea nombre, idioma y prepara los
+  // inputs de variables según los placeholders {{n}} del body.
+  function selectTemplate(t: MetaTemplate) {
+    setTemplateName(t.name);
+    setTemplateLang(t.language || 'es');
+    const count = countTemplateVars(t.body);
+    setTemplateVars(count > 0 ? Array(count).fill('') : ['']);
+    setError('');
+  }
 
   async function fetchRecipientCount(f: string, line: string) {
     setCountLoading(true);
@@ -136,6 +191,7 @@ export default function CampanasClient() {
   function resetForm() {
     setName(''); setCampaignType('texto_libre'); setFilter('todos'); setLineFilter('todas'); setSendLimit('');
     setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
+    setManualTemplate(false);
     setError(''); setRecipientCount(null);
   }
 
@@ -328,17 +384,87 @@ export default function CampanasClient() {
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 2 }}>
-                  <label style={labelStyle}>Nombre del template</label>
-                  <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Ej: reactivacion_bono" style={inputStyle} />
-                  <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Debe coincidir exactamente con el nombre en Meta Business Manager.</p>
+              {/* Selector visual de plantillas aprobadas de Meta */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <label style={labelStyle}>Plantilla aprobada</label>
+                  {!templatesLoading && (
+                    <button
+                      type="button"
+                      onClick={() => fetchTemplates()}
+                      style={{ background: 'none', border: 'none', color: '#1a7a3a', fontWeight: 700, fontSize: '12px', cursor: 'pointer', padding: 0 }}
+                    >
+                      ↻ Recargar
+                    </button>
+                  )}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-                  <label style={labelStyle}>Idioma</label>
-                  <input value={templateLang} onChange={(e) => setTemplateLang(e.target.value)} placeholder="es" style={inputStyle} />
-                </div>
+
+                {templatesLoading && (
+                  <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>Cargando plantillas...</p>
+                )}
+
+                {!templatesLoading && templatesError && (
+                  <div style={{ background: '#fff5f5', border: '1px solid #f08080', borderRadius: '10px', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <p style={{ fontSize: '13px', color: '#c0392b', margin: 0, fontWeight: 600 }}>{templatesError}</p>
+                    {!manualTemplate && (
+                      <button type="button" onClick={() => setManualTemplate(true)} style={{ background: 'none', border: 'none', color: '#1a7a3a', fontWeight: 700, fontSize: '12px', cursor: 'pointer', padding: 0, alignSelf: 'flex-start' }}>
+                        Ingresar el nombre manualmente →
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {!templatesLoading && !templatesError && metaTemplates.length === 0 && (
+                  <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>
+                    No hay plantillas aprobadas en este WABA. Creá una en Meta Business Manager y esperá su aprobación.
+                  </p>
+                )}
+
+                {!templatesLoading && metaTemplates.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {metaTemplates.map((t) => {
+                      const selected = templateName === t.name;
+                      return (
+                        <button
+                          key={`${t.name}-${t.language}`}
+                          type="button"
+                          onClick={() => selectTemplate(t)}
+                          style={{
+                            textAlign: 'left', cursor: 'pointer', borderRadius: '12px', padding: '12px 14px',
+                            border: selected ? '2px solid #1a7a3a' : '2px solid #e0e0e0',
+                            background: selected ? '#f0fff4' : '#fff',
+                            display: 'flex', flexDirection: 'column', gap: '6px',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <code style={{ fontSize: '13px', fontWeight: 800, color: '#000', background: '#F5F5F5', borderRadius: '6px', padding: '2px 8px' }}>{t.name}</code>
+                            <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
+                            {selected && <span style={{ fontSize: '11px', color: '#1a7a3a', fontWeight: 800 }}>✓ Seleccionada</span>}
+                          </div>
+                          {t.body && (
+                            <p style={{ fontSize: '12px', color: '#777', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{t.body}</p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+
+              {/* Fallback manual: solo si Meta no respondió y el usuario lo pidió */}
+              {manualTemplate && (
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 2 }}>
+                    <label style={labelStyle}>Nombre del template</label>
+                    <input value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="Ej: reactivacion_bono" style={inputStyle} />
+                    <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Debe coincidir exactamente con el nombre en Meta Business Manager.</p>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                    <label style={labelStyle}>Idioma</label>
+                    <input value={templateLang} onChange={(e) => setTemplateLang(e.target.value)} placeholder="es" style={inputStyle} />
+                  </div>
+                </div>
+              )}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={labelStyle}>Variables del template <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(una por línea en el template)</span></label>
