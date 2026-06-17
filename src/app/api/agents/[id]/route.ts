@@ -42,10 +42,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const updates: Record<string, any> = {};
   if (body.name !== undefined)           updates.name           = String(body.name).trim();
   if (body.email !== undefined)          updates.email          = String(body.email).trim() || null;
-  // Solo el admin puede cambiar roles. El agente no puede escalar privilegios
-  // ni convertir a sus operadores en agentes/admins.
+  // Solo el admin puede cambiar roles, y solo entre agente y operador (la UI ya
+  // no ofrece admin). El agente no puede escalar privilegios ni convertir a sus
+  // operadores en agentes/admins.
   if (body.role !== undefined && session.role === 'admin')
-    updates.role = ['admin', 'operator'].includes(body.role) ? body.role : 'agent';
+    updates.role = body.role === 'operator' ? 'operator' : 'agent';
   if (body.active !== undefined)         updates.active         = !!body.active;
   if (body.schedule_start !== undefined) updates.schedule_start = body.schedule_start || null;
   if (body.schedule_end !== undefined)   updates.schedule_end   = body.schedule_end   || null;

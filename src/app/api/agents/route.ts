@@ -57,10 +57,11 @@ export async function POST(request: Request) {
   const name     = String(body.name ?? '').trim() || username;
   const email    = String(body.email ?? '').trim() || null;
   const password = String(body.password ?? '');
-  // El agente solo puede crear operadores; el admin elige el rol libremente.
+  // El agente solo puede crear operadores; el admin elige entre agente y
+  // operador (la UI ya no ofrece crear admins).
   const role     = session.role === 'agent'
     ? 'operator'
-    : (['admin', 'operator'].includes(body.role) ? body.role : 'agent');
+    : (body.role === 'operator' ? 'operator' : 'agent');
   const schedule_start = body.schedule_start || null;
   const schedule_end   = body.schedule_end   || null;
   const system_prompt  = body.system_prompt != null ? String(body.system_prompt) : null;
