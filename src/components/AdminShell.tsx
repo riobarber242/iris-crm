@@ -25,6 +25,7 @@ const navLabels: Record<string, string> = {
   tenants:        'Agentes',
   servicios:      'Servicios',
   'mi-bot':       'Mi Bot',
+  'chat-interno': 'Chat interno',
   configuracion:  'Configuración',
 };
 
@@ -53,18 +54,20 @@ export function AdminShell({ children }: { children: ReactNode }) {
     // Operador: Conversaciones, Contactos, Cargas, Pagos (verifica los suyos),
     // Mi Caja (panel de caja propio, solo lectura — Etapa 4b) y Configuración
     // (solo expone "Cambiar contraseña" para este rol).
-    items = ['conversaciones', 'contactos', 'cargas', 'pagos', 'mi-caja', 'configuracion'];
+    items = ['conversaciones', 'contactos', 'cargas', 'pagos', 'mi-caja', 'chat-interno', 'configuracion'];
   } else {
     // Agente: todo + Operadores (gestiona los de su tenant). Sin Tenants/Agentes.
-    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'mi-bot', 'configuracion'];
+    items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'chat-interno', 'mi-bot', 'configuracion'];
   }
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [unread, setUnread] = useState({ total: 0, newPending: 0, recurringPending: 0, comprobantesPending: 0, cargasPending: 0, pagosPending: 0 });
+  const [internalUnread, setInternalUnread] = useState(0);
   const unreadChannelRef            = useRef<any>(null);
   const unreadSupabaseRef           = useRef<any>(null);
+  const internalChannelRef          = useRef<any>(null);
 
   useEffect(() => {
     function fetchBotStatus() {
@@ -162,6 +165,43 @@ export function AdminShell({ children }: { children: ReactNode }) {
       try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch (err) { console.warn('[unread realtime] removeChannel falló:', err); }
     };
   }, []);
+
+  // Badge de no-leídos del CHAT INTERNO. Solo para miembros (agent/operator);
+  // el admin de plataforma no participa, así que no consultamos para ese rol.
+  // Refresca por polling, por el evento que dispara InternalChatClient al marcar
+  // leído, y por realtime de internal_messages.
+  const isInternalMember = agent?.role === 'agent' || agent?.role === 'operator';
+  useEffect(() => {
+    if (!isInternalMember) { setInternalUnread(0); return; }
+
+    let disposed = false;
+    async function fetchInternalUnread() {
+      try {
+        const res = await fetch('/api/internal/unread');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!disposed) setInternalUnread(data.unread ?? 0);
+      } catch {}
+    }
+    fetchInternalUnread();
+    const timer = setInterval(fetchInternalUnread, 15_000);
+    window.addEventListener('refresh-internal-unread', fetchInternalUnread);
+
+    const sb = getSupabaseBrowser();
+    if (sb) {
+      const ch = sb.channel('internal-unread-badge')
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'internal_messages' }, fetchInternalUnread)
+        .subscribe();
+      internalChannelRef.current = ch;
+    }
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      window.removeEventListener('refresh-internal-unread', fetchInternalUnread);
+      try { if (sb && internalChannelRef.current) sb.removeChannel(internalChannelRef.current); } catch (err) { console.warn('[internal unread realtime] removeChannel falló:', err); }
+    };
+  }, [isInternalMember]);
 
   // Refresh unread badge immediately on every route change
   // (when operator opens/closes a conversation, last_read_at updates → count drops)
@@ -420,6 +460,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 >
                   <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     {navLabels[item]}
+                    {item === 'chat-interno' && internalUnread > 0 && (
+                      <span style={{
+                        background: '#FF8C00', color: '#fff', borderRadius: '999px',
+                        fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        padding: '0 5px', lineHeight: 1,
+                      }}>
+                        {internalUnread > 99 ? '99+' : internalUnread}
+                      </span>
+                    )}
                     {item === 'cargas' && unread.cargasPending > 0 && (
                       <span style={{
                         background: '#b8860b', color: '#fff', borderRadius: '999px',
