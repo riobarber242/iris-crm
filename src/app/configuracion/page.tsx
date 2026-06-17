@@ -6,6 +6,7 @@ import CronRunner from '@/components/CronRunner';
 import AutoMsgToggle from '@/components/AutoMsgToggle';
 import QuickRepliesManager from '@/components/QuickRepliesManager';
 import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
+import WhatsAppTemplatesManager from '@/components/WhatsAppTemplatesManager';
 import CajaConfigManager from '@/components/CajaConfigManager';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
 import { getSessionAgent } from '@/lib/current-agent';
@@ -47,6 +48,8 @@ export default async function ConfiguracionPage() {
             </SectionCard>
 
             <WhatsAppNumbersManager />
+
+            <WhatsAppTemplatesManager />
           </>
         )}
 
