@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
 import { getSessionAgent } from '@/lib/current-agent';
-import { resolveCreds } from '@/lib/meta/client';
+import { supabaseAdmin } from '@/lib/db';
 
 // Trae las plantillas aprobadas de Meta para el tenant.
-// Estrategia: usa el phone_number_id del número default del tenant (resolveCreds)
-// para resolver el waba_id via Graph API (/{phone_number_id}?fields=whatsapp_business_account)
-// y luego consulta /{waba_id}/message_templates?status=APPROVED.
+// Para listar plantillas hace falta el WABA ID (no el phone_number_id). El
+// phone number node de la Graph API NO expone un campo directo al WABA, así que
+// lo resolvemos en cascada (ver resolveWabaId). Una vez con el WABA:
+//   GET /{waba_id}/message_templates?status=APPROVED
 // Devuelve { name, language, status, body } por plantilla.
 
 const GRAPH = 'https://graph.facebook.com/v19.0';
@@ -18,28 +19,81 @@ type MetaTemplate = {
   components?: { type: string; text?: string }[];
 };
 
+// Resuelve el WABA ID a usar para listar plantillas, en orden de robustez:
+//   1. waba_id ya guardado en la fila del número (lo más confiable).
+//   2. GET /{phone_number_id}?fields=id,display_phone_number,account_id → account_id.
+//   3. GET /me?fields=granular_scopes,id → primer WABA con permiso
+//      whatsapp_business_management/messaging del System User del token.
+//   4. WABA global de env (WHATSAPP_BUSINESS_ACCOUNT_ID / WHATSAPP_WABA_ID).
+async function resolveWabaId(
+  token: string,
+  phoneId: string,
+  dbWabaId: string | null,
+): Promise<string | null> {
+  // 1) WABA guardado en DB
+  if (dbWabaId) return dbWabaId;
+
+  // 2) account_id del phone number node
+  try {
+    const res = await axios.get(`${GRAPH}/${phoneId}`, {
+      params: { fields: 'id,display_phone_number,account_id', access_token: token },
+      timeout: 10000,
+    });
+    const accountId = res.data?.account_id;
+    if (accountId) return String(accountId);
+  } catch { /* sigue con el próximo fallback */ }
+
+  // 3) granular_scopes del token (System User): primer WABA con permiso de WhatsApp
+  try {
+    const res = await axios.get(`${GRAPH}/me`, {
+      params: { fields: 'granular_scopes,id', access_token: token },
+      timeout: 10000,
+    });
+    const scopes: { scope: string; target_ids?: string[] }[] = res.data?.granular_scopes ?? [];
+    const waScope =
+      scopes.find((s) => s.scope === 'whatsapp_business_management') ??
+      scopes.find((s) => s.scope === 'whatsapp_business_messaging');
+    const first = waScope?.target_ids?.[0];
+    if (first) return String(first);
+  } catch { /* sigue con el fallback de env */ }
+
+  // 4) WABA global de env
+  return process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ?? process.env.WHATSAPP_WABA_ID ?? null;
+}
+
 export async function GET() {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
-  // Token + phone_number_id a usar: número default activo del tenant (o env global).
-  const { token, phoneId } = await resolveCreds(session.tenant_id);
+  // Número default activo del tenant: de ahí salen token, phone_id y waba_id.
+  // Si el tenant no tiene número propio, caemos a las credenciales globales de env.
+  const { data: line } = await supabaseAdmin
+    .from('whatsapp_numbers')
+    .select('phone_number_id, access_token, waba_id')
+    .eq('tenant_id', session.tenant_id)
+    .eq('is_default', true)
+    .eq('active', true)
+    .maybeSingle();
+
+  const token   = line?.access_token || process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneId = line?.phone_number_id || process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!token) {
+    return NextResponse.json(
+      { error: 'No hay access token configurado. Verificá el token en Configuración.' },
+      { status: 502 },
+    );
+  }
 
   try {
-    // 1) phone_number_id → waba_id
-    const phoneRes = await axios.get(`${GRAPH}/${phoneId}`, {
-      params: { fields: 'whatsapp_business_account', access_token: token },
-      timeout: 10000,
-    });
-    const wabaId = phoneRes.data?.whatsapp_business_account?.id;
+    const wabaId = await resolveWabaId(token, phoneId ?? '', line?.waba_id ?? null);
     if (!wabaId) {
       return NextResponse.json(
-        { error: 'No se pudo resolver el WABA del número. Verificá el token en Configuración.' },
+        { error: 'No se pudo resolver el WABA. Cargá el WABA ID del número en Configuración.' },
         { status: 502 },
       );
     }
 
-    // 2) waba_id → plantillas aprobadas
     const tplRes = await axios.get(`${GRAPH}/${wabaId}/message_templates`, {
       params: { status: 'APPROVED', limit: 50, access_token: token },
       timeout: 10000,
