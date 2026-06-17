@@ -102,14 +102,12 @@ export default function CampanasClient() {
 
   // Form state
   const [name,             setName]             = useState('');
-  const [campaignType,     setCampaignType]     = useState<CampaignType>('texto_libre');
   const [filter,           setFilter]           = useState('todos');
   const [inactiveDays,     setInactiveDays]     = useState(30);
   const [lineFilter,       setLineFilter]       = useState('todas');
   const [excludePrevious,  setExcludePrevious]  = useState(false);
   const [excludeCampaignIds, setExcludeCampaignIds] = useState<string[]>([]);
   const [sendLimit,        setSendLimit]        = useState('');
-  const [message,          setMessage]          = useState('');
   const [templateName,     setTemplateName]     = useState('');
   const [templateLang,     setTemplateLang]     = useState('es');
   const [templateVars,     setTemplateVars]     = useState<string[]>(['']);
@@ -161,12 +159,12 @@ export default function CampanasClient() {
     }
   }
 
-  // Al cambiar a "Template Meta", cargar las plantillas aprobadas (una sola vez).
+  // Al abrir el formulario, cargar las plantillas aprobadas (una sola vez).
   useEffect(() => {
-    if (campaignType === 'template_meta' && !templatesLoaded && !templatesLoading) {
+    if (showForm && !templatesLoaded && !templatesLoading) {
       fetchTemplates();
     }
-  }, [campaignType, templatesLoaded, templatesLoading]);
+  }, [showForm, templatesLoaded, templatesLoading]);
 
   // Selección de una plantilla del selector: setea nombre, idioma y prepara los
   // inputs de variables según los placeholders {{n}} del body.
@@ -212,15 +210,14 @@ export default function CampanasClient() {
   }
 
   function resetForm() {
-    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setSendLimit('');
-    setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
+    setName(''); setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setSendLimit('');
+    setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
     setManualTemplate(false);
     setExcludePrevious(false); setExcludeCampaignIds([]);
     setError(''); setRecipientCount(null);
   }
 
   function prefillReactivacion() {
-    setCampaignType('template_meta');
     setName('Reactivación — Bono 20%');
     setFilter('inactivo_dias');
     setInactiveDays(30);
@@ -244,24 +241,19 @@ export default function CampanasClient() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) { setError('Completá el nombre.'); return; }
-    if (campaignType === 'texto_libre' && !message.trim()) { setError('Completá el mensaje.'); return; }
-    if (campaignType === 'template_meta' && !templateName.trim()) { setError('Completá el nombre del template.'); return; }
+    if (!templateName.trim()) { setError('Completá el nombre del template.'); return; }
 
     setCreating(true); setError('');
     try {
       const body: any = {
-        name: name.trim(), target_filter: effectiveFilter(filter, inactiveDays), type: campaignType,
+        name: name.trim(), target_filter: effectiveFilter(filter, inactiveDays), type: 'template_meta',
         send_limit: sendLimit ? Number(sendLimit) : null,
         target_number_id: lineFilter !== 'todas' ? lineFilter : null,
         exclude_campaign_ids: excludePrevious ? excludeCampaignIds : [],
+        template_name:      templateName.trim(),
+        template_language:  templateLang.trim() || 'es',
+        template_variables: templateVars.filter(Boolean),
       };
-      if (campaignType === 'texto_libre') {
-        body.message = message.trim();
-      } else {
-        body.template_name      = templateName.trim();
-        body.template_language  = templateLang.trim() || 'es';
-        body.template_variables = templateVars.filter(Boolean);
-      }
       const res = await fetch('/api/campaigns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -330,31 +322,13 @@ export default function CampanasClient() {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Promo junio 2026" style={inputStyle} />
           </div>
 
-          {/* Tipo */}
+          {/* Tipo: las campañas siempre usan Template Meta. */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label style={labelStyle}>Tipo de mensaje</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(['texto_libre', 'template_meta'] as CampaignType[]).map((t) => (
-                <button
-                  key={t} type="button"
-                  onClick={() => setCampaignType(t)}
-                  style={{
-                    flex: 1, padding: '10px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '13px', cursor: 'pointer',
-                    border: campaignType === t ? '2px solid #C8FF00' : '2px solid #e0e0e0',
-                    background: campaignType === t ? '#f9ffe0' : '#F5F5F5',
-                    color: campaignType === t ? '#000' : '#888',
-                  }}
-                >
-                  {t === 'texto_libre' ? '✏️ Texto libre' : '📋 Template Meta'}
-                </button>
-              ))}
+            <div style={{ padding: '10px 14px', borderRadius: '10px', fontWeight: 700, fontSize: '13px', border: '2px solid #C8FF00', background: '#f9ffe0', color: '#000', alignSelf: 'flex-start' }}>
+              📋 Template Meta
             </div>
-            {campaignType === 'texto_libre' && (
-              <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Solo funciona si el contacto te escribió en las últimas 24 hs.</p>
-            )}
-            {campaignType === 'template_meta' && (
-              <p style={{ fontSize: '11px', color: '#1a7a3a', margin: 0, fontWeight: 600 }}>Puede llegar a cualquier contacto. Requiere un template aprobado por Meta.</p>
-            )}
+            <p style={{ fontSize: '11px', color: '#1a7a3a', margin: 0, fontWeight: 600 }}>Puede llegar a cualquier contacto. Requiere un template aprobado por Meta.</p>
           </div>
 
           {/* Destinatarios */}
@@ -447,20 +421,8 @@ export default function CampanasClient() {
             })()}
           </div>
 
-          {/* Contenido según tipo */}
-          {campaignType === 'texto_libre' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={labelStyle}>Mensaje</label>
-              <textarea
-                value={message} onChange={(e) => setMessage(e.target.value)}
-                placeholder="Escribí el mensaje que van a recibir..." rows={4}
-                style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
-              />
-              <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>{message.length} caracteres</p>
-            </div>
-          ) : (
-            <>
-              {/* Selector visual de plantillas aprobadas de Meta */}
+          {/* Contenido: selector visual de plantillas aprobadas de Meta */}
+          <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                   <label style={labelStyle}>Plantilla aprobada</label>
@@ -577,8 +539,7 @@ export default function CampanasClient() {
                   + Agregar variable
                 </button>
               </div>
-            </>
-          )}
+          </>
 
           {error && <p style={{ fontSize: '13px', color: '#E53935', fontWeight: 600, margin: 0 }}>{error}</p>}
 
