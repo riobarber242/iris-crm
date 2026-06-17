@@ -321,10 +321,6 @@ function waBase(numeroRaw: string): string {
 function hoyAR(): string {
   return new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
-function waLink(numeroRaw: string, nombre: string, monto: number): string {
-  const text = `Descarga de ${nombre} $${fmt(monto)} ${hoyAR()}`;
-  return `https://wa.me/${waBase(numeroRaw)}?text=${encodeURIComponent(text)}`;
-}
 // Link del cierre de turno: "Traspaso de [origen] a [destino] — $[monto] — [fecha]".
 function waLinkTraspaso(numeroRaw: string, origen: string, destino: string, monto: number): string {
   const text = `Traspaso de ${origen} a ${destino} — $${fmt(monto)} — ${hoyAR()}`;
@@ -369,15 +365,14 @@ function SueldoModal({ monto, busy, error, onConfirm, onClose }: {
   );
 }
 
-// Modal de descarga: el operador ingresa el monto; al confirmar abrimos el wa.me
-// y creamos el comprobante pendiente. Si el agente no configuró su WhatsApp, no
-// se puede continuar.
-function DescargaModal({ whatsappAgente, operadorName, busy, error, done, onConfirm, onClose }: {
-  whatsappAgente: string; operadorName: string; busy: boolean; error: string | null; done: boolean;
+// Modal de descarga: el operador ingresa el monto; al confirmar se postea el
+// resumen al chat interno del equipo y se crea el comprobante pendiente. Después
+// el operador adjunta el comprobante en el chat interno.
+function DescargaModal({ operadorName, busy, error, done, onConfirm, onClose }: {
+  operadorName: string; busy: boolean; error: string | null; done: boolean;
   onConfirm: (monto: number) => void; onClose: () => void;
 }) {
   const [montoStr, setMontoStr] = useState('');
-  const sinWhatsapp = !whatsappAgente;
   const monto = parseInt(montoStr.replace(/\D/g, ''), 10);
   const montoValido = Number.isInteger(monto) && monto > 0;
 
@@ -386,18 +381,19 @@ function DescargaModal({ whatsappAgente, operadorName, busy, error, done, onConf
       <div onClick={(e) => e.stopPropagation()} style={modalCard}>
         <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Descargar al agente</h3>
 
-        {sinWhatsapp ? (
-          <div style={{ background: '#FFF6E0', color: '#9a6b00', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 600, lineHeight: 1.5 }}>
-            El agente no configuró su número de WhatsApp todavía.
-          </div>
-        ) : done ? (
-          <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
-            Comprobante enviado, esperando verificación del agente.
-          </div>
+        {done ? (
+          <>
+            <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
+              Resumen enviado al chat interno. Adjuntá ahí el comprobante para que el agente lo verifique.
+            </div>
+            <Link href="/chat-interno" style={{ ...btnPrimary, textAlign: 'center', textDecoration: 'none' }}>
+              Ir al chat interno
+            </Link>
+          </>
         ) : (
           <>
             <p style={{ margin: 0, fontSize: '14px', color: '#444', lineHeight: 1.5 }}>
-              Ingresá el monto a descargar. Se abrirá el WhatsApp del agente y se creará el comprobante pendiente.
+              Ingresá el monto a descargar. Se enviará el resumen al chat interno del equipo y se creará el comprobante pendiente. Después adjuntá el comprobante en el chat.
             </p>
             <input
               type="number" min="1" step="1" value={montoStr} autoFocus
@@ -412,7 +408,7 @@ function DescargaModal({ whatsappAgente, operadorName, busy, error, done, onConf
 
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={onClose} disabled={busy} style={btnGhost}>{done ? 'Cerrar' : 'Cancelar'}</button>
-          {!sinWhatsapp && !done && (
+          {!done && (
             <button onClick={() => montoValido && onConfirm(monto)} disabled={busy || !montoValido} style={{ ...btnPrimary, opacity: montoValido ? 1 : 0.5, cursor: montoValido && !busy ? 'pointer' : 'not-allowed' }}>
               {busy ? '…' : 'Confirmar'}
             </button>
@@ -556,8 +552,16 @@ export default function MiCajaClient() {
     if (!data) return;
     setActionBusy(true); setActionErr(null);
     try {
-      // (a) Abrir el WhatsApp del agente en una pestaña nueva.
-      window.open(waLink(data.whatsapp_agente, data.operador_name, monto), '_blank', 'noopener');
+      // (a) Postear el resumen de la descarga al chat interno del equipo
+      //     (reemplaza el viejo window.open(wa.me)). Best-effort: si el chat
+      //     interno fallara, NO bloqueamos la creación del comprobante de caja.
+      const resumen = `Descarga de ${data.operador_name} $${fmt(monto)} ${hoyAR()}`;
+      try {
+        await fetch('/api/internal/messages', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: resumen }),
+        });
+      } catch { /* no bloquea la descarga */ }
       // (b) Crear el comprobante de descarga pendiente.
       const res = await fetch('/api/caja/operador?accion=descarga', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto }),
@@ -699,7 +703,6 @@ export default function MiCajaClient() {
       )}
       {descargaOpen && (
         <DescargaModal
-          whatsappAgente={data.whatsapp_agente}
           operadorName={data.operador_name}
           busy={actionBusy}
           error={actionErr}
