@@ -19,9 +19,16 @@ async function requireAdmin(): Promise<{ session: any; error?: undefined } | { s
   return { session };
 }
 
+async function requireAdminOrAgent(): Promise<{ session: any; error?: undefined } | { session?: undefined; error: NextResponse }> {
+  const session = await getSessionAgent();
+  if (!session) return { error: new NextResponse('No autenticado', { status: 401 }) };
+  if (session.role !== 'admin' && session.role !== 'agent') return { error: new NextResponse('Requiere rol admin o agent', { status: 403 }) };
+  return { session };
+}
+
 // GET: cualquier sesión (no solo admin) — Campañas e Import necesitan listar
 // las líneas para sus selectores. La respuesta no expone secretos (has_token
-// es booleano; el token nunca viaja). POST/PATCH/verify siguen admin-only.
+// es booleano; el token nunca viaja). POST/PATCH/verify admiten admin y agent (scope por tenant).
 export async function GET() {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -37,7 +44,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const { session, error } = await requireAdmin();
+  const { session, error } = await requireAdminOrAgent();
   if (error) return error;
 
   const body = await request.json().catch(() => null);
@@ -80,7 +87,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const { session, error } = await requireAdmin();
+  const { session, error } = await requireAdminOrAgent();
   if (error) return error;
 
   const body = await request.json().catch(() => null);

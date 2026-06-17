@@ -5,11 +5,11 @@ import { getSessionAgent } from '@/lib/current-agent';
 
 // Verifica un número contra la Graph API de Meta:
 // GET /{phone_number_id}?fields=display_phone_number con el token del número
-// (o el global de env si la fila no tiene token propio). Solo rol admin.
+// (o el global de env si la fila no tiene token propio). Rol admin o agent.
 export async function POST(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
-  if (session.role !== 'admin') return new NextResponse('Requiere rol admin', { status: 403 });
+  if (session.role !== 'admin' && session.role !== 'agent') return new NextResponse('Requiere rol admin o agent', { status: 403 });
 
   const body = await request.json().catch(() => null);
   const id = body?.id as string | undefined;
