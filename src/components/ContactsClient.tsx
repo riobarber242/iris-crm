@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import NewContactModal from '@/components/NewContactModal';
 
 type ContactRow = {
   id:                 string;
@@ -92,6 +93,7 @@ export default function ContactsClient() {
   const [lines,        setLines]        = useState<WaLine[]>([]);
   const [lineLabels,   setLineLabels]   = useState<Record<string, string>>({});
   const [importLine,   setImportLine]   = useState('');
+  const [showNewContact, setShowNewContact] = useState(false);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
 
   async function fetchContacts() {
@@ -245,6 +247,24 @@ export default function ContactsClient() {
         >
           {importing ? 'Importando...' : '⬆ Importar CSV'}
         </button>
+
+        <button
+          onClick={() => setShowNewContact(true)}
+          style={{
+            background: '#C8FF00',
+            color: '#000',
+            fontWeight: 700,
+            fontSize: '13px',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 18px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          ➕ Nuevo contacto
+        </button>
       </div>
 
       {/* Import result banner */}
@@ -387,6 +407,13 @@ export default function ContactsClient() {
             );
           })}
         </div>
+      )}
+
+      {showNewContact && (
+        <NewContactModal
+          onClose={() => setShowNewContact(false)}
+          onCreated={fetchContacts}
+        />
       )}
     </div>
   );
