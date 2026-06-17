@@ -3,11 +3,13 @@ import axios from 'axios';
 import { getSessionAgent } from '@/lib/current-agent';
 import { supabaseAdmin } from '@/lib/db';
 
-// Trae las plantillas aprobadas de Meta para el tenant.
+// Trae las plantillas activas de Meta para el tenant.
 // Para listar plantillas hace falta el WABA ID (no el phone_number_id). El
 // phone number node de la Graph API NO expone un campo directo al WABA, así que
 // lo resolvemos en cascada (ver resolveWabaId). Una vez con el WABA:
-//   GET /{waba_id}/message_templates?status=APPROVED
+//   GET /{waba_id}/message_templates?status=ACTIVE
+// Si esa llamada falla (token sin permiso sobre el WABA), reintentamos con el
+// business_id del token (GET /me?fields=business{id}).
 // Devuelve { name, language, status, body } por plantilla.
 
 // v18.0: misma versión que lib/meta/client.ts usa para envíos. Si Meta
@@ -20,6 +22,42 @@ type MetaTemplate = {
   status: string;
   components?: { type: string; text?: string }[];
 };
+
+type Template = { name: string; language: string; status: string; body: string };
+
+// Lista las plantillas ACTIVE de un nodo (WABA o business). Lanza si Meta falla.
+async function listTemplates(nodeId: string, token: string): Promise<Template[]> {
+  const res = await axios.get(`${GRAPH}/${nodeId}/message_templates`, {
+    params: {
+      fields: 'name,status,language,components',
+      status: 'ACTIVE',
+      limit: 50,
+      access_token: token,
+    },
+    timeout: 10000,
+  });
+  const data: MetaTemplate[] = res.data?.data ?? [];
+  return data.map((t) => ({
+    name: t.name,
+    language: t.language,
+    status: t.status,
+    body: t.components?.find((c) => c.type === 'BODY')?.text ?? '',
+  }));
+}
+
+// business_id del System User del token: GET /me?fields=business{id}
+async function resolveBusinessId(token: string): Promise<string | null> {
+  try {
+    const res = await axios.get(`${GRAPH}/me`, {
+      params: { fields: 'business{id}', access_token: token },
+      timeout: 10000,
+    });
+    const id = res.data?.business?.id;
+    return id ? String(id) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Resuelve el WABA ID a usar para listar plantillas, en orden de robustez:
 //   1. waba_id ya guardado en la fila del número (lo más confiable).
@@ -87,40 +125,33 @@ export async function GET() {
     );
   }
 
+  const wabaId = await resolveWabaId(token, phoneId ?? '', line?.waba_id ?? null);
+  if (!wabaId) {
+    return NextResponse.json(
+      { error: 'No se pudo resolver el WABA. Cargá el WABA ID del número en Configuración.' },
+      { status: 502 },
+    );
+  }
+
+  // 1er intento: listar contra el WABA.
   try {
-    const wabaId = await resolveWabaId(token, phoneId ?? '', line?.waba_id ?? null);
-    if (!wabaId) {
-      return NextResponse.json(
-        { error: 'No se pudo resolver el WABA. Cargá el WABA ID del número en Configuración.' },
-        { status: 502 },
-      );
+    return NextResponse.json(await listTemplates(wabaId, token));
+  } catch (err: any) {
+    console.error('[campaigns/templates] Error Meta (waba):', JSON.stringify(err?.response?.data ?? err?.message));
+
+    // 2do intento: listar contra el business_id del token.
+    const businessId = await resolveBusinessId(token);
+    if (businessId) {
+      try {
+        return NextResponse.json(await listTemplates(businessId, token));
+      } catch (err2: any) {
+        console.error('[campaigns/templates] Error Meta (business):', JSON.stringify(err2?.response?.data ?? err2?.message));
+      }
     }
 
-    const tplRes = await axios.get(`${GRAPH}/${wabaId}/message_templates`, {
-      params: {
-        fields: 'name,status,language,components',
-        status: 'APPROVED',
-        limit: 50,
-        access_token: token,
-      },
-      timeout: 10000,
-    });
-
-    const data: MetaTemplate[] = tplRes.data?.data ?? [];
-    const templates = data.map((t) => ({
-      name: t.name,
-      language: t.language,
-      status: t.status,
-      body: t.components?.find((c) => c.type === 'BODY')?.text ?? '',
-    }));
-
-    return NextResponse.json(templates);
-  } catch (err: any) {
     const metaErr = err?.response?.data?.error;
     const reason  = metaErr?.message || err?.message || 'Error desconocido';
     const code    = metaErr?.code;
-    // Log completo de lo que devuelve Meta para diagnóstico.
-    console.error('[campaigns/templates] Error Meta:', JSON.stringify(err?.response?.data ?? err?.message));
     return NextResponse.json(
       { error: `No se pudieron cargar las plantillas: ${reason}`, code, meta: metaErr ?? null },
       { status: 502 },
