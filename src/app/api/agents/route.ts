@@ -13,9 +13,11 @@ function parseTimeoutMinutes(raw: any): number | null {
   return n;
 }
 
-// GET /api/agents — lista de agentes
-//  - admin: todos los agentes (alcance global del sistema).
-//  - agent: solo los operadores de SU tenant.
+// GET /api/agents — lista de agentes/operadores del PROPIO tenant.
+//  - admin: todos los del tenant.
+//  - agent: solo los operadores del tenant.
+// El aislamiento por tenant_id aplica a todos los roles (un usuario nunca debe
+// ver usuarios de otro tenant).
 export async function GET() {
   const session = await requireAgentOrAdmin();
   if (!session) {
@@ -25,11 +27,12 @@ export async function GET() {
   let query = supabaseAdmin
     .from('agents')
     .select(AGENT_FIELDS)
+    .eq('tenant_id', session.tenant_id)
     .order('created_at', { ascending: true });
 
-  // El agente solo gestiona operadores de su propio tenant (filtrado server-side).
+  // El agente, además, solo gestiona operadores.
   if (session.role === 'agent') {
-    query = query.eq('tenant_id', session.tenant_id).eq('role', 'operator');
+    query = query.eq('role', 'operator');
   }
 
   const { data, error } = await query;

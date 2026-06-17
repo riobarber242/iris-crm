@@ -553,8 +553,7 @@ export default function CampanasClient() {
       <div style={{ background: '#fffbe6', border: '1px solid #f0c040', borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
         <span style={{ fontSize: '16px', flexShrink: 0 }}>⚠️</span>
         <p style={{ fontSize: '13px', color: '#7a5c00', margin: 0, lineHeight: 1.6 }}>
-          <strong>Límite de WhatsApp:</strong> Los mensajes de texto libre solo llegan a contactos activos en las últimas 24 hs.
-          Para reactivación usá <strong>Template Meta</strong> — creá el template en Meta Business Manager y esperá aprobación antes de enviar.
+          <strong>Template Meta:</strong> creá el template en Meta Business Manager y esperá su aprobación antes de enviar. Una vez aprobado, puede llegar a cualquier contacto.
         </p>
       </div>
 

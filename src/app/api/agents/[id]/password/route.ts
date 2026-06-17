@@ -4,7 +4,7 @@ import { hashPassword } from '@/lib/auth';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
 
 // POST /api/agents/[id]/password — resetear contraseña de un agente
-//  - admin: cualquier agente.
+//  - admin: cualquier usuario de SU tenant.
 //  - agent: solo operadores de su propio tenant.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAgentOrAdmin();
@@ -14,16 +14,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
-  // El agente solo resetea la contraseña de operadores de su tenant.
-  if (session.role === 'agent') {
-    const { data: target } = await supabaseAdmin
-      .from('agents')
-      .select('id, role, tenant_id')
-      .eq('id', id)
-      .maybeSingle();
-    if (!target || target.tenant_id !== session.tenant_id || target.role !== 'operator') {
-      return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-    }
+  // Aislamiento por tenant para todos los roles; el agente además solo opera
+  // sobre operadores. Mismo 403 para "no existe" y "es de otro tenant".
+  const { data: target } = await supabaseAdmin
+    .from('agents')
+    .select('id, role, tenant_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (!target || target.tenant_id !== session.tenant_id) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+  }
+  if (session.role === 'agent' && target.role !== 'operator') {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
   }
 
   let body: any;

@@ -5,17 +5,21 @@ import type { SessionPayload } from '@/lib/session';
 
 const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
-// El agente solo puede tocar operadores de SU tenant. Devuelve null si la
-// operación está permitida, o una respuesta de error si debe rechazarse.
-// El admin tiene alcance global, así que nunca se restringe.
+// Aislamiento por tenant en mutaciones por id. Devuelve null si la operación
+// está permitida, o una respuesta de error si debe rechazarse.
+//  - Todos los roles: solo pueden tocar usuarios de SU propio tenant.
+//  - agent: además, solo operadores (nunca otros agentes/admins).
 async function denyIfNotOwnOperator(session: SessionPayload, id: string): Promise<NextResponse | null> {
-  if (session.role !== 'agent') return null;
   const { data: target } = await supabaseAdmin
     .from('agents')
     .select('id, role, tenant_id')
     .eq('id', id)
     .maybeSingle();
-  if (!target || target.tenant_id !== session.tenant_id || target.role !== 'operator') {
+  // No se filtra existencia: mismo 403 para "no existe" y "es de otro tenant".
+  if (!target || target.tenant_id !== session.tenant_id) {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+  }
+  if (session.role === 'agent' && target.role !== 'operator') {
     return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
   }
   return null;
