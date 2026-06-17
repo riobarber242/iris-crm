@@ -1110,15 +1110,39 @@ export async function POST(request: Request) {
   // Solo admin y agentes acceden a las herramientas de actividad del equipo.
   // A los operadores ni se les declaran (y runTool las rechaza igual).
   const isStaff = session.role === 'admin' || session.role === 'agent';
+
+  // Permisos del operador: leídos FRESCOS de agents (el token dura 7 días y
+  // podría estar desactualizado si el admin los cambió). Si la query falla,
+  // caemos a los valores del token para no romper el chat.
+  let canTop  = !!session.can_see_top_clients;
+  let canCamp = !!session.can_see_campaigns;
+  if (session.role === 'operator') {
+    try {
+      const { data } = await supabaseAdmin
+        .from('agents')
+        .select('can_see_top_clients, can_see_campaigns')
+        .eq('id', session.sub)
+        .eq('tenant_id', session.tenant_id)
+        .maybeSingle();
+      if (data) {
+        canTop  = !!data.can_see_top_clients;
+        canCamp = !!data.can_see_campaigns;
+      }
+    } catch { /* fallback a los flags del token */ }
+  }
+  // Sesión efectiva con los permisos al día. Se usa para exponer tools, armar la
+  // guía y ejecutar runTool, así exposición y ejecución coinciden siempre.
+  const effSession = { ...session, can_see_top_clients: canTop, can_see_campaigns: canCamp };
+
   // Operador: herramientas operativas + Top Clientes SOLO con permiso. Nada de
   // STAFF_TOOLS (métricas globales, actividad del equipo, asesoría, bot config).
   const tools = isStaff
     ? [...TOOLS, TOP_CLIENTS_TOOL, ...OPS_TOOLS, ...STAFF_TOOLS]
-    : [...TOOLS, ...OPS_TOOLS, ...(session.can_see_top_clients ? [TOP_CLIENTS_TOOL] : [])];
+    : [...TOOLS, ...OPS_TOOLS, ...(canTop ? [TOP_CLIENTS_TOOL] : [])];
 
   // Índice de la guía filtrado por rol/permisos: Iris solo conoce (y get_help
   // solo entrega) las secciones que ESTE usuario realmente ve en su panel.
-  const helpKeys = allowedHelpSections(session);
+  const helpKeys = allowedHelpSections(effSession);
   const helpIndex = helpKeys.map((k) => `${k} ("${HELP_SECTIONS[k].titulo}")`).join(', ');
   const system =
     SYSTEM_PROMPT +
@@ -1146,7 +1170,7 @@ export async function POST(request: Request) {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const block of resp.content) {
           if (block.type === 'tool_use') {
-            const out = await runTool(block.name, block.input, tid, isStaff, session, client);
+            const out = await runTool(block.name, block.input, tid, isStaff, effSession, client);
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
