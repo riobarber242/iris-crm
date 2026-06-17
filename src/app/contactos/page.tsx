@@ -3,20 +3,31 @@ export const dynamic = 'force-dynamic';
 import { AdminShell } from '@/components/AdminShell';
 import ContactsClient from '@/components/ContactsClient';
 import { supabaseAdmin } from '@/lib/db';
+import { getSessionAgent } from '@/lib/current-agent';
 
 function fmt(n: number) {
   return n.toLocaleString('es-AR');
 }
 
 export default async function ContactsPage() {
-  // agendados = mismo filtro que la lista (casino_username asignado); total = todos los contactos en DB
-  const [agendadosRes, totalRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
-      .not('casino_username', 'is', null).neq('casino_username', ''),
-    supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }),
-  ]);
-  const agendados = agendadosRes.count ?? 0;
-  const total     = totalRes.count     ?? 0;
+  // Contadores SCOPEADOS al tenant del usuario logueado (igual que la lista).
+  // agendados = contactos del tenant con casino_username; total = todos los del
+  // tenant. Sin sesión (caso de borde; el middleware ya exige login) → 0, para
+  // nunca contar contactos de otros tenants.
+  const session = await getSessionAgent();
+  let agendados = 0;
+  let total     = 0;
+  if (session) {
+    const [agendadosRes, totalRes] = await Promise.all([
+      supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', session.tenant_id)
+        .not('casino_username', 'is', null).neq('casino_username', ''),
+      supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', session.tenant_id),
+    ]);
+    agendados = agendadosRes.count ?? 0;
+    total     = totalRes.count     ?? 0;
+  }
 
   return (
     <AdminShell>
