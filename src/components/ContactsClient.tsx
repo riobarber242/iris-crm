@@ -213,8 +213,8 @@ export default function ContactsClient() {
           <button
             onClick={() => setShowActions((v) => !v)}
             style={{
-              background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '13px',
-              border: 'none', borderRadius: '12px', padding: '12px 18px', cursor: 'pointer',
+              background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '14px',
+              border: '2px solid transparent', borderRadius: '12px', padding: '12px 18px', cursor: 'pointer',
               whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px',
             }}
           >
