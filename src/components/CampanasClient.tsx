@@ -42,10 +42,23 @@ const FILTERS = [
   { value: 'todos',          label: 'Todos los contactos' },
   { value: 'cliente_activo', label: 'Cliente activo' },
   { value: 'inactivo',       label: 'Inactivo' },
-  { value: 'inactivo_30d',   label: 'Inactivo sin recargar 30+ días' },
-  { value: 'inactivo_45d',   label: 'Inactivo sin recargar 45+ días' },
+  { value: 'inactivo_dias',  label: 'Inactivo sin recargar X días' },
   { value: 'nuevo',          label: 'Nuevo' },
 ];
+
+// 'inactivo_dias' es un sentinel de UI: el filtro real es inactivo_Xd, donde X
+// son los días que escribe el usuario. effectiveFilter lo traduce al postear.
+function effectiveFilter(f: string, days: number): string {
+  return f === 'inactivo_dias' ? `inactivo_${days}d` : f;
+}
+
+// Etiqueta legible de un filtro guardado. Reconoce inactivo_Xd (que no está en
+// FILTERS porque X es dinámico) para no mostrar el valor crudo en las tarjetas.
+function filterLabel(value: string): string {
+  const m = value.match(/^inactivo_(\d+)d$/);
+  if (m) return `Inactivo sin recargar ${m[1]} días`;
+  return FILTERS.find((f) => f.value === value)?.label ?? value;
+}
 
 // Rangos del historial de envíos
 const HISTORY_RANGES = [
@@ -90,6 +103,7 @@ export default function CampanasClient() {
   const [name,             setName]             = useState('');
   const [campaignType,     setCampaignType]     = useState<CampaignType>('texto_libre');
   const [filter,           setFilter]           = useState('todos');
+  const [inactiveDays,     setInactiveDays]     = useState(30);
   const [lineFilter,       setLineFilter]       = useState('todas');
   const [sendLimit,        setSendLimit]        = useState('');
   const [message,          setMessage]          = useState('');
@@ -165,7 +179,7 @@ export default function CampanasClient() {
     setCountLoading(true);
     setRecipientCount(null);
     try {
-      const isInactivoDays = f === 'inactivo_30d' || f === 'inactivo_45d';
+      const isInactivoDays = /^inactivo_\d+d$/.test(f);
       const param = isInactivoDays
         ? `?status=inactivo`
         : f === 'todos' ? '?all=true' : `?status=${f}`;
@@ -180,16 +194,22 @@ export default function CampanasClient() {
 
   function handleFilterChange(f: string) {
     setFilter(f);
-    fetchRecipientCount(f, lineFilter);
+    fetchRecipientCount(effectiveFilter(f, inactiveDays), lineFilter);
+  }
+
+  function handleDaysChange(value: string) {
+    const days = Math.min(365, Math.max(1, Number(value) || 1));
+    setInactiveDays(days);
+    if (filter === 'inactivo_dias') fetchRecipientCount(effectiveFilter('inactivo_dias', days), lineFilter);
   }
 
   function handleLineChange(l: string) {
     setLineFilter(l);
-    fetchRecipientCount(filter, l);
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), l);
   }
 
   function resetForm() {
-    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setLineFilter('todas'); setSendLimit('');
+    setName(''); setCampaignType('texto_libre'); setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setSendLimit('');
     setMessage(''); setTemplateName(''); setTemplateLang('es'); setTemplateVars(['']);
     setManualTemplate(false);
     setError(''); setRecipientCount(null);
@@ -198,7 +218,8 @@ export default function CampanasClient() {
   function prefillReactivacion() {
     setCampaignType('template_meta');
     setName('Reactivación — Bono 20%');
-    setFilter('inactivo_30d');
+    setFilter('inactivo_dias');
+    setInactiveDays(30);
     setTemplateLang('es');
     setTemplateName('');
     setTemplateVars(['20%']);
@@ -225,7 +246,7 @@ export default function CampanasClient() {
     setCreating(true); setError('');
     try {
       const body: any = {
-        name: name.trim(), target_filter: filter, type: campaignType,
+        name: name.trim(), target_filter: effectiveFilter(filter, inactiveDays), type: campaignType,
         send_limit: sendLimit ? Number(sendLimit) : null,
         target_number_id: lineFilter !== 'todas' ? lineFilter : null,
       };
@@ -337,6 +358,18 @@ export default function CampanasClient() {
             <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
               {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
+            {filter === 'inactivo_dias' && (
+              <>
+                <label style={{ ...labelStyle, marginTop: '4px' }}>Días sin recargar</label>
+                <input
+                  type="number" min={1} max={365} value={inactiveDays}
+                  onChange={(e) => handleDaysChange(e.target.value)}
+                  placeholder="30"
+                  style={inputStyle}
+                />
+                <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Contactos inactivos sin recarga verificada en los últimos {inactiveDays} días (1 a 365).</p>
+              </>
+            )}
             {lines.length > 0 && (
               <>
                 <label style={{ ...labelStyle, marginTop: '4px' }}>Línea</label>
@@ -353,7 +386,7 @@ export default function CampanasClient() {
             {(countLoading || recipientCount !== null) && (
               <p style={{ fontSize: '12px', color: '#555', margin: 0, fontWeight: 600 }}>
                 {countLoading ? 'Contando...' : `~${recipientCount} contacto${recipientCount !== 1 ? 's' : ''}`}
-                {(filter === 'inactivo_30d' || filter === 'inactivo_45d') && !countLoading && (
+                {filter === 'inactivo_dias' && !countLoading && (
                   <span style={{ color: '#888', fontWeight: 400 }}> (estimado — el filtro exacto aplica al enviar)</span>
                 )}
               </p>
@@ -543,7 +576,7 @@ export default function CampanasClient() {
                   </span>
                 </div>
                 <p style={{ fontSize: '12px', color: '#aaa', margin: '3px 0 0 0' }}>
-                  Filtro: <strong>{FILTERS.find(f => f.value === campaign.target_filter)?.label ?? campaign.target_filter}</strong>
+                  Filtro: <strong>{filterLabel(campaign.target_filter)}</strong>
                   {campaign.target_number_id && (
                     <> · Línea: <strong>{lines.find((l) => l.id === campaign.target_number_id)?.label ?? campaign.target_number_id}</strong></>
                   )}

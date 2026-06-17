@@ -17,8 +17,10 @@ async function resolveContacts(filter: string, tenantId: string, targetNumberId:
     return data ?? [];
   }
 
-  if (filter === 'inactivo_30d' || filter === 'inactivo_45d') {
-    const days   = filter === 'inactivo_30d' ? 30 : 45;
+  // Inactivos sin recargar en los últimos X días (X dinámico: inactivo_Xd).
+  const inactiveMatch = filter.match(/^inactivo_(\d+)d$/);
+  if (inactiveMatch) {
+    const days   = Math.min(365, Math.max(1, Number(inactiveMatch[1])));
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
 
     const [{ data: inactivos }, { data: recentRecargas }] = await Promise.all([
