@@ -10,7 +10,9 @@ import { supabaseAdmin } from '@/lib/db';
 //   GET /{waba_id}/message_templates?status=APPROVED
 // Devuelve { name, language, status, body } por plantilla.
 
-const GRAPH = 'https://graph.facebook.com/v19.0';
+// v18.0: misma versión que lib/meta/client.ts usa para envíos. Si Meta
+// devuelve #100 con esta versión, probar bajando a 'v17.0'.
+const GRAPH = 'https://graph.facebook.com/v18.0';
 
 type MetaTemplate = {
   name: string;
@@ -95,7 +97,12 @@ export async function GET() {
     }
 
     const tplRes = await axios.get(`${GRAPH}/${wabaId}/message_templates`, {
-      params: { status: 'APPROVED', limit: 50, access_token: token },
+      params: {
+        fields: 'name,status,language,components',
+        status: 'APPROVED',
+        limit: 50,
+        access_token: token,
+      },
       timeout: 10000,
     });
 
@@ -109,9 +116,13 @@ export async function GET() {
 
     return NextResponse.json(templates);
   } catch (err: any) {
-    const reason = err?.response?.data?.error?.message || err?.message || 'Error desconocido';
+    const metaErr = err?.response?.data?.error;
+    const reason  = metaErr?.message || err?.message || 'Error desconocido';
+    const code    = metaErr?.code;
+    // Log completo de lo que devuelve Meta para diagnóstico.
+    console.error('[campaigns/templates] Error Meta:', JSON.stringify(err?.response?.data ?? err?.message));
     return NextResponse.json(
-      { error: `No se pudieron cargar las plantillas: ${reason}` },
+      { error: `No se pudieron cargar las plantillas: ${reason}`, code, meta: metaErr ?? null },
       { status: 502 },
     );
   }
