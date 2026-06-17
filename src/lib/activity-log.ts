@@ -24,6 +24,7 @@ export const ACTIVITY = {
   SESSION_LOGIN:          'session_login',
   SESSION_LOGOUT:         'session_logout',        // details.reason: 'manual' | 'inactividad'
   CONTACT_EDITED:         'contact_edited',
+  CONTACT_CREATED:        'contact_created',        // alta individual de un contacto desde la UI
   CONTACT_IMPORTED:       'contact_imported',
   CONFIG_CHANGED:         'config_changed',         // details.key: system_prompt | bot_enabled | offline_mode | …
   BOT_CONFIG_UPDATED:     'bot_config_updated',     // via Iris AI; details guarda los valores ANTERIORES (respaldo)
