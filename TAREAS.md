@@ -1,6 +1,6 @@
 # Tareas pendientes — IRIS
 
-> Última actualización: 2026-06-18
+> Última actualización: 2026-06-18 (navegación rápida en producción)
 > Documento de seguimiento entre sesiones. Estado de cada tarea: **PENDIENTE** / **EN CURSO** / **HECHO**.
 
 ---
@@ -11,6 +11,10 @@
 - [HECHO] Badge de no-leído en el sidebar (fix typo `conversations` → `conversaciones`).
 - [HECHO] El circulito de no-leído se limpia solo al **ABRIR** la conversación (no al tocar la fila).
 - [HECHO] "Visto": último operador que vio cada conversación (cartelito "Visto por X"; migración `last_seen_by` / `last_seen_at` corrida).
+
+## ✅ HECHO — Rendimiento
+
+- [HECHO] Navegación rápida entre secciones (layout compartido + esqueleto de carga, el menú ya no se reconstruye).
 
 ---
 
