@@ -490,7 +490,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                         {unread.pagosPending > 99 ? '99+' : unread.pagosPending}
                       </span>
                     )}
-                    {item === 'conversations' && (unread.newPending > 0 || unread.recurringPending > 0) && (
+                    {item === 'conversaciones' && (unread.newPending > 0 || unread.recurringPending > 0) && (
                       <span style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
                         {unread.newPending > 0 && (
                           <span style={{
