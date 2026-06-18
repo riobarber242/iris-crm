@@ -76,26 +76,6 @@ export default function ConversationsClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist last_read_at to DB, clear badge optimistically, refresh sidebar badge
-  function markRead(contactId: string) {
-    // Optimistic update: clear badge in list immediately
-    setConversations(prev =>
-      prev.map(c =>
-        c.id === contactId
-          ? { ...c, last_read_at: new Date().toISOString() }
-          : c,
-      ),
-    );
-    // Persist to DB
-    fetch('/api/conversations', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contactId, markRead: true }),
-    }).catch(() => {});
-    // Notify AdminShell to refresh the sidebar badge immediately
-    window.dispatchEvent(new Event('refresh-unread'));
-  }
-
   const FILTERS: { key: typeof activeFilter; label: string }[] = [
     { key: 'todos',          label: 'Todos' },
     { key: 'nuevo',          label: 'Nuevo' },
@@ -289,7 +269,9 @@ export default function ConversationsClient() {
         const lastMessage     = messages[0];
 
         // Clasificación de pendiente (única fuente de verdad, compartida con la API).
-        // markRead() setea last_read_at = NOW() optimistamente → limpia el badge.
+        // El badge se limpia recién al ABRIR la conversación: el chat marca
+        // last_read_at = NOW() server-side (ver conversaciones/[id]/page.tsx) y
+        // la lista lo refleja en el próximo refetch (polling/realtime/remount).
         const badgeType = classifyPending({
           lastRole:          lastMessage?.role,
           lastMsgAt:         lastMessage?.created_at,
@@ -315,7 +297,6 @@ export default function ConversationsClient() {
             key={contact.id}
             href={`/conversaciones/${contact.id}`}
             style={{ textDecoration: 'none' }}
-            onClick={() => markRead(contact.id)}
           >
             <div
               className="conv-row"
