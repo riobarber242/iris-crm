@@ -1,6 +1,6 @@
 # Tareas pendientes — IRIS
 
-> Última actualización: 2026-06-18 (navegación rápida en producción)
+> Última actualización: 2026-06-18 (caja en tiempo real en producción)
 > Documento de seguimiento entre sesiones. Estado de cada tarea: **PENDIENTE** / **EN CURSO** / **HECHO**.
 
 ---
@@ -16,6 +16,15 @@
 
 - [HECHO] Navegación rápida entre secciones (layout compartido + esqueleto de carga, el menú ya no se reconstruye).
 
+## ✅ HECHO — Tiempo real (repaso completo)
+
+- [HECHO] **Repaso de tiempo real, criterio cumplido punta a punta:**
+  - Realtime: conversaciones / mensajes / chat interno / cargas-pagos ✓ y **caja-billeteras** (CajaResumen, MiCajaClient, FichasClient suscritos al INSERT de `movimientos`; poll 15s de respaldo) ✓.
+  - Refresco cada pocos segundos: contadores / listas (contactos, campañas) ✓.
+  - Al-entrar: configuraciones ✓.
+  - Tablas `movimientos` / `fichas_stock` / `operador_billetera` habilitadas en la publicación `supabase_realtime`.
+  - Solo display: NO tocó la lógica de plata (eso sigue en Caja Etapa 2, abajo).
+
 ---
 
 ## 🟡 PENDIENTE — Chica
@@ -26,12 +35,6 @@
 ---
 
 ## 🔴 PENDIENTE — Grandes (cada una su propia sesión)
-
-- [PENDIENTE] **Repaso de tiempo real.** Definir pantalla por pantalla qué se actualiza solo. Criterio:
-  - Realtime en: conversaciones / mensajes / chat interno / caja-billeteras.
-  - Refresco cada pocos segundos en: contadores / listas.
-  - Al-entrar en: configuraciones.
-  - NO todo segundo-a-segundo.
 
 - [PENDIENTE] **Caja Etapa 2 (PLATA REAL — la más delicada).**
   - Cierre de turno con verificación diferida: sube comprobante → el turno cierra ya, la billetera se acredita cuando **OTRO** operador verifica.
