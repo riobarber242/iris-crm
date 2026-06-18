@@ -133,10 +133,10 @@ export default function InternalChatClient() {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
-  // Scroll estilo WhatsApp: abrir abajo, y solo auto-bajar si el usuario ya está
-  // cerca del fondo (si scrolleó arriba a leer historial, no lo tironeamos).
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // Scroll estilo WhatsApp: abrir abajo y seguir el fondo solo si el usuario ya
+  // está cerca del fondo (si scrolleó arriba a leer historial, no lo tironeamos).
   const isNearBottomRef = useRef(true);
-  const didInitialScrollRef = useRef(false);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -157,14 +157,14 @@ export default function InternalChatClient() {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight; // instantáneo (sin smooth)
   }
-  // Re-scroll cuando una imagen del chat termina de cargar (expanden el
-  // contenido y, sin esto, dejaban la vista arriba).
+  // Refuerzo: re-scroll cuando una imagen termina de cargar (el ResizeObserver
+  // ya lo cubre; esto ayuda en navegadores sin RO). Solo si está pegado al fondo.
   function handleMediaLoad() {
-    if (isNearBottomRef.current || !didInitialScrollRef.current) scrollToBottom();
+    if (isNearBottomRef.current) scrollToBottom();
   }
 
-  // Al cambiar de sala, re-hacer el salto inicial al fondo.
-  useEffect(() => { didInitialScrollRef.current = false; }, [roomId]);
+  // Al cambiar de sala, volver al modo "pegado al fondo" para abrir abajo.
+  useEffect(() => { isNearBottomRef.current = true; }, [roomId]);
 
   // ── Resolver la sala del tenant (get-or-create server-side) ────────────────
   useEffect(() => {
@@ -270,14 +270,20 @@ export default function InternalChatClient() {
     };
   }, [roomId, fetchMessages, markRead, myId]);
 
+  // Sigue el fondo de forma robusta: el ResizeObserver dispara cuando el
+  // contenido cambia de alto (mensajes nuevos e imágenes que cargan/expanden).
+  // Si el usuario está pegado al fondo, baja al fondo real; si scrolleó arriba,
+  // no lo toca. Cubre imágenes cacheadas donde el onLoad puede no dispararse.
   useEffect(() => {
-    if (messages.length === 0 || !listRef.current) return;
-    if (!didInitialScrollRef.current) {
-      requestAnimationFrame(() => { scrollToBottom(); didInitialScrollRef.current = true; });
-    } else if (isNearBottomRef.current) {
-      requestAnimationFrame(() => scrollToBottom());
-    }
-  }, [messages]);
+    const scroller = listRef.current;
+    const content  = contentRef.current;
+    if (!scroller || !content || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      if (isNearBottomRef.current) scroller.scrollTop = scroller.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => { growTextarea(textInputRef.current); }, [input]);
 
@@ -502,7 +508,7 @@ export default function InternalChatClient() {
   }
 
   return (
-    <div className="internal-chat" style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+    <div className="internal-chat" style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
       {/* ── Columna izquierda: lista de salas (Etapa 1: una sola) ── */}
       <aside className="internal-rooms" style={{ width: '280px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -531,15 +537,17 @@ export default function InternalChatClient() {
         </div>
       </aside>
 
-      {/* ── Columna derecha: chat ── */}
-      <div style={{ flex: 1, minWidth: 0, background: '#FFFFFF', borderRadius: '20px', padding: '20px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)' }}>
+      {/* ── Columna derecha: chat (flex column de alto completo) ── */}
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, background: '#FFFFFF', borderRadius: '20px', padding: '20px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Message list */}
+        {/* Message list (scroller externo) + contenido observado por el RO.
+            flex:1 + minHeight:0 → único que scrollea; la caja queda fija abajo. */}
         <div
           ref={listRef}
           onScroll={updateNearBottom}
-          style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
+          style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
         >
+        <div ref={contentRef} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {loadError && messages.length === 0 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', fontSize: '13px' }}>
               <span>⚠ No se pudieron cargar los mensajes.</span>
@@ -617,9 +625,10 @@ export default function InternalChatClient() {
             );
           })}
         </div>
+        </div>
 
-        {/* Input area */}
-        <div style={{ position: 'relative' }} ref={panelRef}>
+        {/* Input area — fija abajo, no se encoge */}
+        <div style={{ position: 'relative', flexShrink: 0 }} ref={panelRef}>
 
           {/* Emoji picker */}
           {showEmoji && (

@@ -60,10 +60,10 @@ export default async function ConversationPage({ params }: any) {
 
   return (
     <AdminShell>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div className="chat-page-fill">
 
         {/* Back button */}
-        <div>
+        <div style={{ flexShrink: 0 }}>
           <Link
             href="/conversaciones"
             style={{
@@ -84,21 +84,26 @@ export default async function ConversationPage({ params }: any) {
           </Link>
         </div>
 
-        <ContactHeader
-          contactId={contact.id}
-          phone={contact.phone}
-          initialCasinoUsername={contact.casino_username}
-          initialBlocked={contact.blocked ?? false}
-          initialStatus={contact.status ?? 'nuevo'}
-          conversationState={contact.conversation_state ?? null}
-          initialNotes={contact.notes ?? ''}
-          initialProvincia={contact.provincia ?? null}
-          initialAssignedAgentId={contact.assigned_agent_id ?? null}
-          recargasCount={recargas.count}
-          recargasMonto={recargas.montoTotal}
-        />
+        <div style={{ flexShrink: 0 }}>
+          <ContactHeader
+            contactId={contact.id}
+            phone={contact.phone}
+            initialCasinoUsername={contact.casino_username}
+            initialBlocked={contact.blocked ?? false}
+            initialStatus={contact.status ?? 'nuevo'}
+            conversationState={contact.conversation_state ?? null}
+            initialNotes={contact.notes ?? ''}
+            initialProvincia={contact.provincia ?? null}
+            initialAssignedAgentId={contact.assigned_agent_id ?? null}
+            recargasCount={recargas.count}
+            recargasMonto={recargas.montoTotal}
+          />
+        </div>
 
-        <ChatWindow contactId={contact.id} />
+        {/* Ocupa el resto de la altura; ChatWindow scrollea adentro. */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <ChatWindow contactId={contact.id} />
+        </div>
 
       </div>
     </AdminShell>

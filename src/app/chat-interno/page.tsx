@@ -14,17 +14,21 @@ export default async function ChatInternoPage() {
 
   return (
     <AdminShell>
-      <div className="space-y-8">
-        <SectionCard title="Chat interno" description="Sala del equipo (agente y operadores). Privada de tu cuenta, no se envía a los clientes.">
-          {isMember ? (
-            <InternalChatClient />
-          ) : (
+      {isMember ? (
+        // Alto acotado a la pantalla: el chat fija su caja abajo y solo el área
+        // de mensajes scrollea (no usa SectionCard para poder ocupar el alto).
+        <div className="chat-page-fill">
+          <InternalChatClient />
+        </div>
+      ) : (
+        <div className="space-y-8">
+          <SectionCard title="Chat interno" description="Sala del equipo (agente y operadores). Privada de tu cuenta, no se envía a los clientes.">
             <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>
               El chat interno es para agentes y operadores del equipo.
             </div>
-          )}
-        </SectionCard>
-      </div>
+          </SectionCard>
+        </div>
+      )}
     </AdminShell>
   );
 }

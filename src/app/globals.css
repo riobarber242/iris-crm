@@ -158,10 +158,25 @@ button, input, textarea, select {
 .logo-desktop { display: flex; }
 .logo-mobile  { display: none; }
 
+/* Página de chat: ocupa la altura visible (pantalla menos el banner de 80px y el
+   padding del .app-main de 24px arriba+abajo) para que SOLO el área de mensajes
+   scrollee y la caja de escribir quede fija abajo siempre visible. */
+.chat-page-fill {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  height: calc(100vh - 128px);   /* fallback para navegadores sin dvh */
+  height: calc(100dvh - 128px);
+}
+
 /* Celular. */
 @media (max-width: 768px) {
   .app-header { padding: 0 16px !important; min-width: 0 !important; overflow: hidden !important; }
   .app-main   { padding: 14px !important; }
+
+  /* En mobile el .app-main usa padding 14px (28 arriba+abajo). */
+  .chat-page-fill { height: calc(100dvh - 108px); }
 
   .logo-desktop { display: none; }
   .logo-mobile  { display: flex; }
