@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pantalla de Caja de fichas (solo admin/agent). Parte 2: stock del pozo,
@@ -107,7 +108,27 @@ export default function FichasClient() {
     }
   }
 
-  useEffect(() => { fetchResumen(); }, []);
+  useEffect(() => {
+    fetchResumen();
+    // Poll de respaldo (antes Fichas solo cargaba al entrar) + realtime: todo
+    // movimiento de caja escribe en `movimientos` y refresca pozo/billeteras
+    // al instante. Si el canal no está disponible, el poll cubre igual.
+    const t = setInterval(fetchResumen, 15_000);
+
+    const sb = getSupabaseBrowser();
+    let ch: any = null;
+    if (sb) {
+      ch = sb.channel('realtime-fichas')
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => fetchResumen())
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(t);
+      if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[fichas realtime] removeChannel falló:', err); } }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function post(payload: Record<string, any>): Promise<boolean> {
     setBusy(true);

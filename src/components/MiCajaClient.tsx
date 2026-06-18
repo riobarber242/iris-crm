@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del operador (Etapa 4b) — SOLO LECTURA.
@@ -611,7 +612,21 @@ export default function MiCajaClient() {
   useEffect(() => {
     load();
     const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
+
+    // Realtime: cualquier movimiento de caja escribe en `movimientos` y
+    // refresca mi billetera / pozo / movs al instante. El poll queda de respaldo.
+    const sb = getSupabaseBrowser();
+    let ch: any = null;
+    if (sb) {
+      ch = sb.channel('realtime-mi-caja')
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => load())
+        .subscribe();
+    }
+
+    return () => {
+      clearInterval(t);
+      if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[mi-caja realtime] removeChannel falló:', err); } }
+    };
   }, [load]);
 
   if (!data) return <Vacio texto="Cargando tu caja…" />;

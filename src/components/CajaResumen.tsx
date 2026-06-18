@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Banda de caja en el dashboard (solo admin/agent — el dashboard ya es staff).
@@ -49,7 +50,23 @@ export default function CajaResumen() {
     }
     load();
     const t = setInterval(load, 15_000);
-    return () => { alive = false; clearInterval(t); };
+
+    // Realtime: cualquier movimiento de caja (carga, pago, sueldo, descarga,
+    // traspaso) escribe en `movimientos` y refresca los saldos al instante.
+    // El poll de arriba queda como respaldo si el canal no está disponible.
+    const sb = getSupabaseBrowser();
+    let ch: any = null;
+    if (sb) {
+      ch = sb.channel('realtime-caja-resumen')
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => load())
+        .subscribe();
+    }
+
+    return () => {
+      alive = false;
+      clearInterval(t);
+      if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[caja-resumen realtime] removeChannel falló:', err); } }
+    };
   }, []);
 
   // No mostramos nada hasta tener datos, ni si la caja no está en uso.
