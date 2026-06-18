@@ -260,7 +260,7 @@ export default function AgentsClient() {
                     </span>
                   ) : (
                     <>
-                      {isAdmin && <button onClick={() => startEdit(a)} style={btn('#F0F0F0', '#333')}>Editar</button>}
+                      {(isAdmin || a.role === 'operator') && <button onClick={() => startEdit(a)} style={btn('#F0F0F0', '#333')}>Editar</button>}
                       <button onClick={() => toggleActive(a)} style={btn(a.active ? '#FFE5E5' : '#E8F5E9', a.active ? '#CC3333' : '#1a8a1a')}>
                         {a.active ? 'Desactivar' : 'Activar'}
                       </button>
@@ -273,6 +273,20 @@ export default function AgentsClient() {
                 {/* permisos del operador (full-width, solo al editar un operator) */}
                 {editing && draft.role === 'operator' && (
                   <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                    {/* Horario: el admin lo edita en su columna inline; el agente,
+                        cuya tabla no tiene esa columna, lo edita acá. */}
+                    {!isAdmin && (
+                      <>
+                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Horario
+                        </label>
+                        <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <input style={{ ...inputStyle, width: '90px' }} type="time" value={draft.schedule_start ?? ''} onChange={e => setDraft({ ...draft, schedule_start: e.target.value })} />
+                          <span style={{ fontSize: '12px', color: '#888' }}>a</span>
+                          <input style={{ ...inputStyle, width: '90px' }} type="time" value={draft.schedule_end ?? ''} onChange={e => setDraft({ ...draft, schedule_end: e.target.value })} />
+                        </span>
+                      </>
+                    )}
                     <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Permisos del operador
                     </label>
