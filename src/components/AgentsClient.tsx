@@ -17,6 +17,7 @@ type Agent = {
   can_see_campaigns: boolean;
   session_timeout_enabled: boolean;
   session_timeout_minutes: number;
+  sueldo_diario: number;
   created_at: string;
 };
 
@@ -45,7 +46,7 @@ export default function AgentsClient() {
   const [error,   setError]   = useState('');
 
   // create form
-  const [nu, setNu] = useState({ username: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
+  const [nu, setNu] = useState({ username: '', password: '', role: 'agent', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20, sueldo_diario: 18000 });
   const [creating, setCreating] = useState(false);
 
   // inline edit
@@ -79,7 +80,7 @@ export default function AgentsClient() {
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        setNu({ username: '', password: '', role: isAdmin ? 'agent' : 'operator', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20 });
+        setNu({ username: '', password: '', role: isAdmin ? 'agent' : 'operator', schedule_start: '', schedule_end: '', can_see_top_clients: false, can_see_campaigns: false, session_timeout_enabled: true, session_timeout_minutes: 20, sueldo_diario: 18000 });
         fetchAgents();
       } else {
         setError(d.error ?? 'No se pudo crear');
@@ -92,7 +93,7 @@ export default function AgentsClient() {
     setEditId(a.id);
     // name/email ya no se editan desde la tabla → no se incluyen en el draft
     // (así el PATCH no los toca).
-    setDraft({ role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '', can_see_top_clients: a.can_see_top_clients, can_see_campaigns: a.can_see_campaigns, session_timeout_enabled: a.session_timeout_enabled, session_timeout_minutes: a.session_timeout_minutes });
+    setDraft({ role: a.role, schedule_start: hhmm(a.schedule_start), schedule_end: hhmm(a.schedule_end), system_prompt: a.system_prompt ?? '', can_see_top_clients: a.can_see_top_clients, can_see_campaigns: a.can_see_campaigns, session_timeout_enabled: a.session_timeout_enabled, session_timeout_minutes: a.session_timeout_minutes, sueldo_diario: a.sueldo_diario });
   }
 
   async function deleteAgent(a: Agent) {
@@ -175,6 +176,14 @@ export default function AgentsClient() {
                   <span style={{ fontSize: '12px', color: '#888' }}>min</span>
                 </>
               )}
+            </span>
+          </Field>
+        )}
+        {nu.role === 'operator' && (
+          <Field label="Sueldo diario">
+            <span style={{ display: 'flex', gap: '6px', alignItems: 'center', height: '34px' }}>
+              <span style={{ fontSize: '13px', color: '#888' }}>$</span>
+              <input style={{ ...inputStyle, width: '100px' }} type="number" min={0} step={1} value={nu.sueldo_diario} onChange={e => setNu({ ...nu, sueldo_diario: Number(e.target.value) })} />
             </span>
           </Field>
         )}
@@ -284,6 +293,14 @@ export default function AgentsClient() {
                       ) : (
                         <span style={{ fontSize: '12px', color: '#888' }}>La sesión de este operador no expira nunca.</span>
                       )}
+                    </span>
+                    <label style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: '6px' }}>
+                      Sueldo diario
+                    </label>
+                    <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', color: '#888' }}>$</span>
+                      <input style={{ ...inputStyle, width: '120px' }} type="number" min={0} step={1} value={draft.sueldo_diario ?? 0} onChange={e => setDraft({ ...draft, sueldo_diario: Number(e.target.value) })} />
+                      <span style={{ fontSize: '12px', color: '#888' }}>lo cobra el operador desde Mi Caja</span>
                     </span>
                   </div>
                 )}

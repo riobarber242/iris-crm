@@ -80,6 +80,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Los minutos de cierre de sesión deben ser un entero entre 1 y 1440' }, { status: 400 });
   }
 
+  // Sueldo diario (Etapa 5): solo aplica a operadores. Entero ≥ 0; default 18000.
+  // Para roles no-operator se ignora (queda en el default de la columna).
+  let sueldo_diario = 18000;
+  if (body.sueldo_diario !== undefined) {
+    const n = Number(body.sueldo_diario);
+    if (!Number.isInteger(n) || n < 0) {
+      return NextResponse.json({ error: 'El sueldo diario debe ser un entero mayor o igual a 0' }, { status: 400 });
+    }
+    sueldo_diario = n;
+  }
+
   if (!username || !password) {
     return NextResponse.json({ error: 'Faltan usuario o contraseña' }, { status: 400 });
   }
@@ -103,6 +114,8 @@ export async function POST(request: Request) {
       can_see_campaigns,
       session_timeout_enabled,
       session_timeout_minutes: session_timeout_minutes ?? 20,
+      // Solo guardamos el sueldo elegido para operadores; el resto queda en el default.
+      sueldo_diario: role === 'operator' ? sueldo_diario : 18000,
       // Multi-tenant: el nuevo usuario hereda el tenant de quien lo crea.
       tenant_id: session.tenant_id,
     })
