@@ -179,6 +179,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const reactBarLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Scroll estilo WhatsApp: abrir abajo, y solo auto-bajar si el usuario ya está
+  // cerca del fondo (si scrolleó arriba a leer historial, no lo tironeamos).
+  const isNearBottomRef = useRef(true);
+  const didInitialScrollRef = useRef(false);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
   const qrPanelRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +192,28 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Scroll helpers ───────────────────────────────────────────────────────
+  const NEAR_BOTTOM_PX = 120; // margen para considerar "está mirando lo último"
+  function updateNearBottom() {
+    const el = listRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }
+  function scrollToBottom() {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight; // instantáneo (sin smooth)
+  }
+  // Re-scroll cuando una imagen del chat termina de cargar (los comprobantes
+  // expanden el contenido y, sin esto, dejaban la vista arriba). Solo baja si el
+  // usuario está cerca del fondo o si todavía no se hizo el salto inicial.
+  function handleMediaLoad() {
+    if (isNearBottomRef.current || !didInitialScrollRef.current) scrollToBottom();
+  }
+
+  // Cada conversación re-hace el salto inicial al fondo (el componente no se
+  // remonta al cambiar de contacto: solo cambia la prop).
+  useEffect(() => { didInitialScrollRef.current = false; }, [contactId]);
 
   // Trae los mensajes del server y los fusiona conservando los mensajes
   // optimistas locales (los que todavía no tienen id en la DB: enviando/fallidos).
@@ -314,7 +340,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
         }
         return [...m, incoming];
       });
-      setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
+      setTimeout(() => { if (isNearBottomRef.current) scrollToBottom(); }, 50);
     }
     function onUpdate(payload: any) {
       setMessages((m) => m.map((msg) => (msg.id === payload.new.id ? { ...msg, ...payload.new } : msg)));
@@ -361,7 +387,16 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   }, [contactId, fetchMessages, fetchVerifSent]);
 
   useEffect(() => {
-    if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    if (messages.length === 0 || !listRef.current) return;
+    if (!didInitialScrollRef.current) {
+      // Primera carga de esta conversación: saltar al fondo instantáneo, tras
+      // el layout (rAF). Las imágenes que carguen luego re-bajan vía onLoad.
+      requestAnimationFrame(() => { scrollToBottom(); didInitialScrollRef.current = true; });
+    } else if (isNearBottomRef.current) {
+      // Mensajes nuevos (envío/realtime/polling): solo bajar si el usuario ya
+      // estaba mirando lo último; si scrolleó arriba, respetamos su posición.
+      requestAnimationFrame(() => scrollToBottom());
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -652,6 +687,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
       {/* Message list */}
       <div
         ref={listRef}
+        onScroll={updateNearBottom}
         style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
       >
         {loadError && messages.length === 0 && (
@@ -730,6 +766,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                       objectFit: 'contain', borderRadius: '10px',
                       display: 'block', cursor: 'pointer', background: '#00000010',
                     }}
+                    onLoad={handleMediaLoad}
                     onClick={() => setLightboxUrl(media.url)}
                   />
                   {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
@@ -749,6 +786,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                       src={url}
                       alt="imagen"
                       style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
+                      onLoad={handleMediaLoad}
                       onClick={() => setLightboxUrl(url)}
                     />
                   );

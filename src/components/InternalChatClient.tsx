@@ -133,6 +133,10 @@ export default function InternalChatClient() {
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Scroll estilo WhatsApp: abrir abajo, y solo auto-bajar si el usuario ya está
+  // cerca del fondo (si scrolleó arriba a leer historial, no lo tironeamos).
+  const isNearBottomRef = useRef(true);
+  const didInitialScrollRef = useRef(false);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const channelRef = useRef<any>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -141,6 +145,26 @@ export default function InternalChatClient() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Scroll helpers (estilo WhatsApp) ─────────────────────────────────────
+  const NEAR_BOTTOM_PX = 120;
+  function updateNearBottom() {
+    const el = listRef.current;
+    if (!el) return;
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }
+  function scrollToBottom() {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight; // instantáneo (sin smooth)
+  }
+  // Re-scroll cuando una imagen del chat termina de cargar (expanden el
+  // contenido y, sin esto, dejaban la vista arriba).
+  function handleMediaLoad() {
+    if (isNearBottomRef.current || !didInitialScrollRef.current) scrollToBottom();
+  }
+
+  // Al cambiar de sala, re-hacer el salto inicial al fondo.
+  useEffect(() => { didInitialScrollRef.current = false; }, [roomId]);
 
   // ── Resolver la sala del tenant (get-or-create server-side) ────────────────
   useEffect(() => {
@@ -209,7 +233,7 @@ export default function InternalChatClient() {
       });
       // Si entró un mensaje de otro miembro, lo marcamos leído (estamos en la sala).
       if (incoming.author_id && incoming.author_id !== myId) markRead();
-      setTimeout(() => { if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight; }, 50);
+      setTimeout(() => { if (isNearBottomRef.current) scrollToBottom(); }, 50);
     }
 
     let retry = 0;
@@ -247,7 +271,12 @@ export default function InternalChatClient() {
   }, [roomId, fetchMessages, markRead, myId]);
 
   useEffect(() => {
-    if (listRef.current) listRef.current.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
+    if (messages.length === 0 || !listRef.current) return;
+    if (!didInitialScrollRef.current) {
+      requestAnimationFrame(() => { scrollToBottom(); didInitialScrollRef.current = true; });
+    } else if (isNearBottomRef.current) {
+      requestAnimationFrame(() => scrollToBottom());
+    }
   }, [messages]);
 
   useEffect(() => { growTextarea(textInputRef.current); }, [input]);
@@ -508,6 +537,7 @@ export default function InternalChatClient() {
         {/* Message list */}
         <div
           ref={listRef}
+          onScroll={updateNearBottom}
           style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
         >
           {loadError && messages.length === 0 && (
@@ -556,6 +586,7 @@ export default function InternalChatClient() {
                       src={media.url}
                       alt={media.caption || 'imagen'}
                       style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
+                      onLoad={handleMediaLoad}
                       onClick={() => setLightboxUrl(media.url)}
                     />
                     {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
