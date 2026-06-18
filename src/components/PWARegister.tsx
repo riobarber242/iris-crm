@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from './AuthProvider';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 
 // Convierte la VAPID public key (base64url) a Uint8Array para pushManager.subscribe.
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
@@ -11,6 +12,18 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(new ArrayBuffer(raw.length));
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
+}
+
+// Promise.race con timeout para APIs que NO aceptan AbortSignal
+// (serviceWorker.ready, pushManager.subscribe). Si se vence, rechaza con un
+// error claro para que el caller corte el spinner en vez de colgarse para
+// siempre. Limpia el timer pase lo que pase.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timeout: ${label} (${ms} ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
 
 // iOS/iPadOS (todo WebKit). En iPad moderno el UA dice "Macintosh" pero hay touch.
@@ -43,6 +56,7 @@ export default function PWARegister() {
   const [pushPrompt, setPushPrompt] = useState<PushPrompt>(null);
   const [dismissed, setDismissed] = useState(false);
   const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -82,17 +96,23 @@ export default function PWARegister() {
   // Suscribe al push (no pide permiso: asume que ya está 'granted'). Idempotente.
   const ensureSubscription = useCallback(async () => {
     if (!agent || !vapidKey) return;
-    const registration = await navigator.serviceWorker.ready;
+    const registration = await withTimeout(
+      navigator.serviceWorker.ready, 12000, 'service worker listo',
+    );
     const existing = await registration.pushManager.getSubscription();
-    const subscription = existing ?? await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidKey),
-    });
-    await fetch('/api/push/subscribe', {
+    const subscription = existing ?? await withTimeout(
+      registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      }),
+      12000, 'suscripción push',
+    );
+    const res = await fetchWithTimeout('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ subscription, agentId: agent.id }),
-    });
+    }, 15000);
+    if (!res.ok) throw new Error(`El servidor rechazó la suscripción (HTTP ${res.status})`);
   }, [agent, vapidKey]);
 
   // ── Decidir qué afiche mostrar (depende del agente logueado) ───────────────
@@ -130,17 +150,21 @@ export default function PWARegister() {
   // Click del usuario → recién acá pedimos permiso (obligatorio en Safari).
   async function enableNotifications() {
     setWorking(true);
+    setError(null);
     try {
       const permission = await Notification.requestPermission();
       if (permission === 'granted') {
         await ensureSubscription();
         setPushPrompt(null);
+      } else if (permission === 'denied') {
+        setError('Bloqueaste las notificaciones. Activalas desde el candado del navegador y recargá.');
       } else {
-        // 'denied' o 'default' (cerró el prompt) → ocultar el afiche.
-        setPushPrompt(null);
+        // 'default' → cerró el prompt sin decidir. Dejamos el banner para reintentar.
+        setError('No se completó la activación. Probá de nuevo.');
       }
     } catch (err) {
       console.warn('[pwa] Error activando notificaciones:', err);
+      setError('No se pudieron activar las notificaciones. Reintentá.');
     } finally {
       setWorking(false);
     }
@@ -165,9 +189,11 @@ export default function PWARegister() {
       {/* ── Activar notificaciones (Chrome / Safari escritorio / Firefox) ── */}
       {showPush && pushPrompt === 'prompt' && (
         <div style={bannerStyle} role="status">
-          <span style={{ fontSize: '14px' }}>🔔 Activá las notificaciones para enterarte de mensajes nuevos</span>
+          <span style={{ fontSize: '14px', color: error ? '#ffb3b3' : '#fff' }}>
+            {error ?? '🔔 Activá las notificaciones para enterarte de mensajes nuevos'}
+          </span>
           <button onClick={enableNotifications} disabled={working} style={primaryBtn}>
-            {working ? 'Activando…' : 'Activar'}
+            {working ? 'Activando…' : error ? 'Reintentar' : 'Activar'}
           </button>
           <button onClick={() => setDismissed(true)} aria-label="Cerrar" style={closeBtn}>✕</button>
         </div>
