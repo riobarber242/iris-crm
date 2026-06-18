@@ -6,11 +6,12 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import ChatWindow from '@/components/ChatWindow';
 import ContactHeader from '@/components/ContactHeader';
+import { formatRelativeTime } from '@/lib/formatRelativeTime';
 
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, assigned_agent_id, tenant_id, messages(content, created_at, role)')
+    .select('id, name, phone, status, blocked, casino_username, conversation_state, notes, provincia, assigned_agent_id, tenant_id, last_seen_by, last_seen_at, messages(content, created_at, role)')
     .eq('id', id)
     .single();
 
@@ -50,11 +51,29 @@ export default async function ConversationPage({ params }: any) {
     );
   }
 
-  // Mark as read server-side so badge clears on next poll
+  // "Visto por X": resolvemos el nombre del operador que vio ESTA conversación
+  // por última vez ANTES de esta apertura (fetchContact ya corrió arriba, así
+  // que `last_seen_by` todavía refleja la visita previa). Tenant-scoped.
+  let vistoPor: string | null = null;
+  if (contact.last_seen_by && contact.last_seen_at) {
+    const { data: seenAgent } = await supabaseAdmin
+      .from('agents')
+      .select('name')
+      .eq('id', contact.last_seen_by)
+      .eq('tenant_id', session.tenant_id)
+      .maybeSingle();
+    if (seenAgent?.name) vistoPor = seenAgent.name;
+  }
+
+  // Mark as read server-side so badge clears on next poll. De paso registramos
+  // el "visto" (quién/ cuándo) y filtramos por tenant_id (además del id).
+  // last_read_at se mantiene igual: alimenta el no-leído; el visto es aparte.
+  const nowIso = new Date().toISOString();
   await supabaseAdmin
     .from('contacts')
-    .update({ last_read_at: new Date().toISOString() })
-    .eq('id', id);
+    .update({ last_read_at: nowIso, last_seen_by: session.sub, last_seen_at: nowIso })
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id);
 
   const recargas = await fetchRecargasResumen(id);
 
@@ -83,6 +102,12 @@ export default async function ConversationPage({ params }: any) {
             ← Conversaciones
           </Link>
         </div>
+
+        {vistoPor && contact.last_seen_at && (
+          <div style={{ flexShrink: 0, fontSize: '12px', color: '#999', padding: '2px 4px' }}>
+            👁 Visto por {vistoPor} · {formatRelativeTime(contact.last_seen_at)}
+          </div>
+        )}
 
         <div style={{ flexShrink: 0 }}>
           <ContactHeader
