@@ -312,20 +312,8 @@ function CierresDetalle() {
 
 // ── Acciones del operador (Etapa 5: sueldo + descarga · Etapa 6: cierre) ─────────
 
-// Normaliza el WhatsApp del agente a formato internacional para wa.me. El número
-// se guarda sin "+"; si no empieza con 54 (Argentina) se lo anteponemos, así
-// funciona tanto si cargan "1112345678" como "5491112345678".
-function waBase(numeroRaw: string): string {
-  const digits = String(numeroRaw).replace(/\D/g, '');
-  return digits.startsWith('54') ? digits : `54${digits}`;
-}
 function hoyAR(): string {
   return new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-// Link del cierre de turno: "Traspaso de [origen] a [destino] — $[monto] — [fecha]".
-function waLinkTraspaso(numeroRaw: string, origen: string, destino: string, monto: number): string {
-  const text = `Traspaso de ${origen} a ${destino} — $${fmt(monto)} — ${hoyAR()}`;
-  return `https://wa.me/${waBase(numeroRaw)}?text=${encodeURIComponent(text)}`;
 }
 
 const modalOverlay: React.CSSProperties = {
