@@ -802,7 +802,8 @@ export async function verificarTraspaso(session: SessionPayload, comprobanteId: 
   // operador: solo a quien figura como operador_destino_id de ESTE comprobante.
   const esDestino = comp.tipo === 'traspaso'
     && session.role === 'operator'
-    && comp.operador_destino_id === session.sub;
+    && comp.operador_destino_id === session.sub
+    && comp.operador_id !== session.sub;
   if (!isStaff(session) && !esDestino) return { ok: false, error: 'No autorizado' };
 
   if (comp.tipo !== 'traspaso') return { ok: false, error: 'El comprobante no es un cierre de turno' };
