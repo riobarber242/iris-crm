@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno, verificarTraspaso } from '@/lib/caja';
+import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno, verificarTraspaso, rechazarTraspaso } from '@/lib/caja';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -366,6 +366,16 @@ export async function POST(request: Request) {
     const r = await verificarTraspaso(session, String(body.comprobanteId ?? ''));
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
     return NextResponse.json({ ok: true, resumen: r.resumen });
+  }
+
+  // Rechazar un cierre de turno: marca el comprobante 'rechazado', sin mover
+  // plata. Mismo permiso que verificar (destino del comprobante); la autorización
+  // fina vive en rechazarTraspaso.
+  if (accion === 'rechazar_traspaso') {
+    const body = await request.json().catch(() => ({} as any));
+    const r = await rechazarTraspaso(session, String(body.comprobanteId ?? ''));
+    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    return NextResponse.json({ ok: true });
   }
 
   return new NextResponse('Acción inválida', { status: 400 });

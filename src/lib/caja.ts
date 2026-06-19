@@ -600,12 +600,28 @@ export async function crearDescarga(session: SessionPayload, montoRaw: number): 
       }
       return { ok: false, error: error.message };
     }
+
+    // Congelar el monto en la billetera del operador (no se descuenta hasta que
+    // el agente verifique). Si la RPC falla (saldo disponible insuficiente, etc.),
+    // borramos el comprobante recién creado para no dejarlo huérfano sin congelar.
+    const { error: freezeErr } = await supabaseAdmin.rpc('fn_cobrar_descarga', {
+      p_tenant_id:      session.tenant_id,
+      p_operador_id:    session.sub,
+      p_monto:          monto,
+      p_comprobante_id: data.id,
+    });
+    if (freezeErr) {
+      await supabaseAdmin.from('comprobantes').delete().eq('id', data.id).eq('tenant_id', session.tenant_id);
+      if (isMissingCajaError(freezeErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: freezeErr.message };
+    }
+
     await logActivity({
       session,
       action:     ACTIVITY.COMPROBANTE_ENVIADO,
       objectType: 'comprobante',
       objectId:   data.id,
-      details:    { tipo: 'descarga', monto, operador_id: session.sub },
+      details:    { tipo: 'descarga', monto, operador_id: session.sub, congelado: true },
     });
     return { ok: true, comprobanteId: data.id };
   } catch (err: any) {
@@ -680,6 +696,68 @@ export async function verificarDescarga(session: SessionPayload, comprobanteId: 
   });
 
   return { ok: true, saldoOperador, saldoAgente };
+}
+
+export type DescargaRejectResult =
+  | { ok: true }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Rechaza una descarga pendiente: libera el congelado del operador (la plata
+// vuelve a estar disponible) y marca el comprobante 'rechazado'. SOLO agente/admin
+// (mismo flujo que verificarDescarga). NO descuenta saldo real ni acredita a nadie.
+export async function rechazarDescarga(session: SessionPayload, comprobanteId: string): Promise<DescargaRejectResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
+
+  const { data: comp, error: compErr } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, tipo, estado, monto, operador_id')
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (compErr) {
+    if (isMissingCajaError(compErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: compErr.message };
+  }
+  if (!comp) return { ok: false, error: 'Descarga no encontrada' };
+  if (comp.tipo !== 'descarga') return { ok: false, error: 'El comprobante no es una descarga' };
+  if (comp.estado !== 'pendiente') return { ok: false, error: 'La descarga ya fue resuelta' };
+  if (!comp.operador_id) return { ok: false, error: 'La descarga no tiene operador asociado' };
+
+  const monto = Math.trunc(Number(comp.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto de descarga inválido' };
+
+  // Liberar el congelado (atómico en SQL). Si falla, no marcamos rechazado.
+  try {
+    const { error } = await supabaseAdmin.rpc('fn_rechazar_descarga', {
+      p_tenant_id:      session.tenant_id,
+      p_operador_id:    comp.operador_id,
+      p_monto:          monto,
+      p_comprobante_id: comprobanteId,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: error.message };
+    }
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al rechazar la descarga' };
+  }
+
+  const { error: updErr } = await supabaseAdmin
+    .from('comprobantes')
+    .update({ estado: 'rechazado', resolved_by: session.sub, resolved_by_name: session.name, resolved_at: new Date().toISOString() })
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.COMPROBANTE_RECHAZADO,
+    objectType: 'comprobante',
+    objectId:   comprobanteId,
+    details:    { tipo: 'descarga', monto, operador_id: comp.operador_id, agente_id: session.sub },
+  });
+
+  return { ok: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -843,6 +921,54 @@ export async function verificarTraspaso(session: SessionPayload, comprobanteId: 
   });
 
   return { ok: true, resumen };
+}
+
+export type TraspasoRejectResult =
+  | { ok: true }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Rechaza un cierre de turno (traspaso) pendiente: marca el comprobante
+// 'rechazado'. NO mueve plata (el cierre no mueve nada hasta verificar; el
+// operador conserva su saldo y puede volver a cerrar). Misma autorización que
+// verificarTraspaso: staff o el operador destino exacto (nunca el origen).
+export async function rechazarTraspaso(session: SessionPayload, comprobanteId: string): Promise<TraspasoRejectResult> {
+  if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
+
+  const { data: comp, error: compErr } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, tipo, estado, operador_id, operador_destino_id')
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (compErr) {
+    if (isMissingCajaError(compErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: compErr.message };
+  }
+  if (!comp) return { ok: false, error: 'Cierre no encontrado' };
+
+  const esDestino = comp.tipo === 'traspaso'
+    && session.role === 'operator'
+    && comp.operador_destino_id === session.sub
+    && comp.operador_id !== session.sub;
+  if (!isStaff(session) && !esDestino) return { ok: false, error: 'No autorizado' };
+
+  if (comp.tipo !== 'traspaso') return { ok: false, error: 'El comprobante no es un cierre de turno' };
+  if (comp.estado !== 'pendiente') return { ok: false, error: 'El cierre ya fue resuelto' };
+
+  const { error: updErr } = await supabaseAdmin
+    .from('comprobantes')
+    .update({ estado: 'rechazado', resolved_by: session.sub, resolved_by_name: session.name, resolved_at: new Date().toISOString() })
+    .eq('id', comprobanteId).eq('tenant_id', session.tenant_id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.COMPROBANTE_RECHAZADO,
+    objectType: 'comprobante',
+    objectId:   comprobanteId,
+    details:    { tipo: 'traspaso', operador_id: comp.operador_id, destino_id: comp.operador_destino_id ?? null },
+  });
+
+  return { ok: true };
 }
 
 // Reset total de la caja (modo prueba): pozo 0, billeteras 0, borra movimientos y

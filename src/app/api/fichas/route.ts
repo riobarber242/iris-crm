@@ -5,7 +5,7 @@ import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import {
   recargarFichas, isCajaEnabled,
   setStock, setBilletera, borrarMovimiento, resetTotal,
-  verificarDescarga, verificarTraspaso,
+  verificarDescarga, rechazarDescarga, verificarTraspaso,
 } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
@@ -36,7 +36,7 @@ export async function GET() {
 
   const [stockRes, billRes, movRes, descPendRes, descHistRes, cierresRes] = await Promise.all([
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
-    supabaseAdmin.from('operador_billetera').select('operador_id, saldo_actual, turno_abierto').eq('tenant_id', tid),
+    supabaseAdmin.from('operador_billetera').select('operador_id, saldo_actual, saldo_congelado, turno_abierto').eq('tenant_id', tid),
     supabaseAdmin.from('movimientos').select('*').eq('tenant_id', tid).order('created_at', { ascending: false }).limit(30),
     // Pendientes a verificar: descargas (Etapa 5) Y cierres de turno (traspaso,
     // Etapa 6). El receptor/agente los verifica acá. Degradan a [] si falta la
@@ -78,13 +78,20 @@ export async function GET() {
     for (const a of ags ?? []) nameById.set(a.id, { name: a.name, role: a.role });
   }
 
+  // Operadores con una descarga pendiente (para el panel "Operadores en turno").
+  const descargaPendOpIds = new Set(
+    descPend.filter((d: any) => (d.tipo ?? 'descarga') === 'descarga' && d.operador_id).map((d: any) => d.operador_id),
+  );
+
   const billeterasOut = billeteras
     .map((b: any) => ({
       operador_id:   b.operador_id,
       name:          nameById.get(b.operador_id)?.name ?? '—',
       role:          nameById.get(b.operador_id)?.role ?? null,
       saldo:         Number(b.saldo_actual),
+      saldo_congelado: Number(b.saldo_congelado ?? 0),
       turno_abierto: !!b.turno_abierto,
+      tiene_descarga_pendiente: descargaPendOpIds.has(b.operador_id),
     }))
     .sort((a, b) => b.saldo - a.saldo);
 
@@ -223,6 +230,14 @@ export async function POST(request: Request) {
       const r = await verificarDescarga(session, String(body.comprobanteId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
       return NextResponse.json({ ok: true, saldo_operador: r.saldoOperador, saldo_agente: r.saldoAgente });
+    }
+
+    // Rechazar una descarga pendiente: libera el congelado del operador y marca
+    // el comprobante 'rechazado'. Solo staff (mismo lugar que verificar_descarga).
+    case 'rechazar_descarga': {
+      const r = await rechazarDescarga(session, String(body.comprobanteId ?? ''));
+      if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      return NextResponse.json({ ok: true });
     }
 
     // Verificar un cierre de turno (Etapa 6): recién acá fn_cerrar_turno mueve la

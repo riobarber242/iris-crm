@@ -142,6 +142,9 @@ export default function InternalChatClient() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+  // Comprobantes de cierre ya resueltos (verificados o rechazados) en esta sesión:
+  // ocultamos sus botones al instante (el content del mensaje no cambia al resolver).
+  const [resueltos, setResueltos] = useState<Set<string>>(new Set());
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -425,9 +428,27 @@ export default function InternalChatClient() {
         body: JSON.stringify({ comprobanteId }),
       });
       if (!res.ok) { alert(await res.text().catch(() => '') || 'No se pudo verificar'); return; }
+      setResueltos((s) => new Set(s).add(comprobanteId));
       alert('Traspaso verificado.');
     } catch {
       alert('Error de red al verificar.');
+    }
+  }
+
+  // Rechaza el cierre de turno: marca el comprobante 'rechazado', sin mover plata.
+  async function rechazarTraspasoDesdeChat(comprobanteId: string | null) {
+    if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
+    if (!window.confirm('¿Rechazar este cierre de turno? No se moverá plata; el operador podrá volver a cerrar.')) return;
+    try {
+      const res = await fetch('/api/caja/operador?accion=rechazar_traspaso', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comprobanteId }),
+      });
+      if (!res.ok) { alert(await res.text().catch(() => '') || 'No se pudo rechazar'); return; }
+      setResueltos((s) => new Set(s).add(comprobanteId));
+      alert('Cierre rechazado.');
+    } catch {
+      alert('Error de red al rechazar.');
     }
   }
 
@@ -634,10 +655,10 @@ export default function InternalChatClient() {
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{traspaso ? traspaso.text : m.content}</p>
                 )}
 
-                {/* Acciones sobre un cierre de turno recibido (no propio). ✓ Verificar
-                    llama al backend con el comprobante_id embebido; ✗ Rechazar es
-                    placeholder (todavía no hay endpoint de rechazo). */}
-                {traspaso && !isMine && (
+                {/* Acciones sobre un cierre de turno recibido (no propio). Se ocultan
+                    una vez resuelto (verificado o rechazado) en esta sesión. ✓ acredita
+                    el saldo; ✗ marca el comprobante rechazado sin mover plata. */}
+                {traspaso && !isMine && !resueltos.has(traspaso.comprobante_id ?? '') && (
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button
                       type="button"
@@ -648,7 +669,7 @@ export default function InternalChatClient() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => alert('Rechazado')}
+                      onClick={() => rechazarTraspasoDesdeChat(traspaso.comprobante_id)}
                       style={{ background: '#c0392b', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
                     >
                       ✗ Rechazar

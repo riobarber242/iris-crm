@@ -11,6 +11,7 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 type Billetera = {
   operador_id: string; name: string; role: string | null; saldo: number; turno_abierto: boolean;
+  saldo_congelado: number; tiene_descarga_pendiente: boolean;
 };
 type Movimiento = {
   id: string; tipo: string; monto: number; bono: number | null;
@@ -311,6 +312,40 @@ export default function FichasClient() {
           </button>
         </div>
       </div>
+
+      {/* Operadores en turno: los que tienen el turno abierto, con su saldo, el
+          congelado por descargas pendientes y un badge si tienen una sin verificar. */}
+      {(data?.billeteras.some((b) => b.turno_abierto) ?? false) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Operadores en turno</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {data!.billeteras.filter((b) => b.turno_abierto).map((b) => (
+              <div key={b.operador_id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 700, color: '#222' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#1a8a1a', display: 'inline-block', flexShrink: 0 }} />
+                  {b.name}
+                  {b.tiene_descarga_pendiente && (
+                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#d97706', background: '#fff3e0', borderRadius: '999px', padding: '2px 8px', textTransform: 'uppercase' }}>
+                      descarga pendiente
+                    </span>
+                  )}
+                </span>
+                <span style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '12px', color: '#888' }}>
+                    Disponible <b style={{ color: '#111' }}>{fmt(b.saldo - b.saldo_congelado)}</b>
+                  </span>
+                  {b.saldo_congelado > 0 && (
+                    <span style={{ fontSize: '12px', color: '#888' }}>
+                      Congelado <b style={{ color: '#d97706' }}>{fmt(b.saldo_congelado)}</b>
+                    </span>
+                  )}
+                  <span style={{ fontSize: '15px', fontWeight: 800, color: b.saldo < 0 ? '#c0392b' : '#111' }}>{fmt(b.saldo)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Billeteras por operador (con controles manuales del agente) */}
       {(data?.billeteras.length ?? 0) > 0 && (
