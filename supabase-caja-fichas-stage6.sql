@@ -51,7 +51,7 @@ alter table comprobantes add column if not exists operador_destino_id uuid refer
 -- el cierre con la foto del turno y resetea el turno. Atómico, con lock de fila
 -- sobre la billetera del origen. Mismo patrón que fn_verificar_descarga.
 --
---   p_operador_destino_id null → destino = admin del tenant (agente más antiguo).
+--   p_operador_destino_id null → destino = agente del tenant (el más antiguo).
 --   p_comprobante_id           → se liga al movimiento de traspaso.
 -- ─────────────────────────────────────────────────────────────────────────────
 create or replace function fn_cerrar_turno(
@@ -115,16 +115,16 @@ begin
   select coalesce(stock_actual, 0) into v_stock from fichas_stock where tenant_id = p_tenant_id;
   v_stock := coalesce(v_stock, 0);
 
-  -- Destino: el operador elegido, o el admin del tenant si no hay (sin traspaso).
+  -- Destino: el operador elegido, o el agente del tenant si no hay (sin traspaso).
   v_destino := p_operador_destino_id;
   if v_destino is null then
     select id into v_destino
       from agents
-     where tenant_id = p_tenant_id and role = 'admin'
+     where tenant_id = p_tenant_id and role = 'agent'
      order by created_at asc
      limit 1;
     if v_destino is null then
-      raise exception 'No hay un agente (admin) para recibir el traspaso';
+      raise exception 'No hay un agente para recibir el traspaso';
     end if;
   end if;
 
