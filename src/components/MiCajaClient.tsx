@@ -586,10 +586,16 @@ export default function MiCajaClient() {
     if (!data) return;
     setActionBusy(true); setActionErr(null);
     try {
-      // (a) Abrir el canal interno (wa.me al agente) con el detalle del traspaso.
-      if (data.whatsapp_agente) {
-        window.open(waLinkTraspaso(data.whatsapp_agente, data.operador_name, destinoName, data.resumen_turno.saldo_a_traspasar), '_blank', 'noopener');
-      }
+      // (a) Postear el cierre al chat interno del equipo (mismo canal que la
+      //     descarga; reemplaza el viejo window.open(wa.me)). Best-effort: si el
+      //     chat interno fallara, NO bloqueamos la creación del comprobante.
+      const resumen = `🔄 Cierre de turno pendiente — ${data.operador_name} traspasa $${fmt(data.resumen_turno.saldo_a_traspasar)} a ${destinoName}. Esperando verificación.`;
+      try {
+        await fetch('/api/internal/messages', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: resumen }),
+        });
+      } catch { /* no bloquea el cierre */ }
       // (b) Crear el comprobante de cierre (traspaso) pendiente.
       const res = await fetch('/api/caja/operador?accion=cerrar_turno', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinoId }),
