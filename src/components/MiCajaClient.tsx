@@ -596,21 +596,25 @@ export default function MiCajaClient() {
     if (!data) return;
     setActionBusy(true); setActionErr(null);
     try {
-      // (a) Postear el cierre al chat interno del equipo (mismo canal que la
-      //     descarga; reemplaza el viejo window.open(wa.me)). Best-effort: si el
-      //     chat interno fallara, NO bloqueamos la creación del comprobante.
-      const resumen = `🔄 Cierre de turno pendiente — ${data.operador_name} traspasa $${fmt(data.resumen_turno.saldo_a_traspasar)} a ${destinoName}. Esperando verificación.`;
-      try {
-        await fetch('/api/internal/messages', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: resumen }),
-        });
-      } catch { /* no bloquea el cierre */ }
-      // (b) Crear el comprobante de cierre (traspaso) pendiente.
+      // (a) Crear PRIMERO el comprobante de cierre (traspaso) pendiente, para
+      //     tener su id y poder ligarlo al mensaje del chat.
       const res = await fetch('/api/caja/operador?accion=cerrar_turno', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinoId }),
       });
       if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo cerrar el turno'); return; }
+      const { comprobanteId } = await res.json().catch(() => ({} as any));
+
+      // (b) Postear el cierre al chat interno con el comprobante_id embebido en
+      //     el content JSON, para poder verificarlo desde el chat. Best-effort:
+      //     si el chat falla, NO revertimos el comprobante ya creado.
+      const text = `🔄 Cierre de turno pendiente — ${data.operador_name} traspasa $${fmt(data.resumen_turno.saldo_a_traspasar)} a ${destinoName}. Esperando verificación.`;
+      try {
+        await fetch('/api/internal/messages', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: JSON.stringify({ _type: 'traspaso', comprobante_id: comprobanteId ?? null, text }) }),
+        });
+      } catch { /* no bloquea el cierre */ }
+
       // (c) Confirmación dentro del modal.
       setCerrarDone(true);
       await load();

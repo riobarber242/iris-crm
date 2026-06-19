@@ -74,6 +74,17 @@ function parseMedia(raw: string): MediaContent | null {
   return null;
 }
 
+// Mensaje de cierre de turno: lleva el comprobante a verificar embebido.
+// content JSON {_type:'traspaso', comprobante_id, text}.
+type TraspasoContent = { _type: 'traspaso'; comprobante_id: string | null; text: string };
+function parseTraspaso(raw: string): TraspasoContent | null {
+  try {
+    const p = JSON.parse(raw);
+    if (p?._type === 'traspaso' && typeof p.text === 'string') return p;
+  } catch {}
+  return null;
+}
+
 function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -403,6 +414,23 @@ export default function InternalChatClient() {
     return handleSendText();
   }
 
+  // Verificar un cierre de turno desde el chat. Llama al endpoint del operador
+  // (operator-only); el backend solo deja pasar al destino exacto del comprobante.
+  async function verificarTraspasoDesdeChat(comprobanteId: string | null) {
+    if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
+    if (!window.confirm('¿Verificar este cierre de turno? Se acreditará el saldo en tu billetera.')) return;
+    try {
+      const res = await fetch('/api/caja/operador?accion=verificar_traspaso', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comprobanteId }),
+      });
+      if (!res.ok) { alert(await res.text().catch(() => '') || 'No se pudo verificar'); return; }
+      alert('Traspaso verificado.');
+    } catch {
+      alert('Error de red al verificar.');
+    }
+  }
+
   async function handleSendText() {
     const content = input.trim();
     if (!content) return;
@@ -562,6 +590,7 @@ export default function InternalChatClient() {
           {messages.map((m, i) => {
             const isMine = !!m.author_id && m.author_id === myId;
             const media = parseMedia(m.content);
+            const traspaso = parseTraspaso(m.content);
             const signature = m.author_name
               ? `${m.author_name}${m.author_role ? ` · ${ROLE_LABEL[m.author_role] ?? m.author_role}` : ''}`
               : '';
@@ -602,16 +631,17 @@ export default function InternalChatClient() {
                 ) : media?._type === 'audio' ? (
                   <audio controls src={media.url} style={{ width: '100%', minWidth: '200px', marginTop: '2px' }} />
                 ) : (
-                  <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
+                  <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{traspaso ? traspaso.text : m.content}</p>
                 )}
 
-                {/* Acciones de verificación sobre imágenes recibidas (no propias).
-                    Placeholders por ahora: la verificación real se conecta después. */}
-                {media?._type === 'image' && !isMine && (
+                {/* Acciones sobre un cierre de turno recibido (no propio). ✓ Verificar
+                    llama al backend con el comprobante_id embebido; ✗ Rechazar es
+                    placeholder (todavía no hay endpoint de rechazo). */}
+                {traspaso && !isMine && (
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button
                       type="button"
-                      onClick={() => alert('Verificado')}
+                      onClick={() => verificarTraspasoDesdeChat(traspaso.comprobante_id)}
                       style={{ background: '#1a7a3a', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
                     >
                       ✓ Verificar
