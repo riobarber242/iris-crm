@@ -268,6 +268,33 @@ export async function GET(request: Request) {
   const operadores_destino = (operadoresRes.error ? [] : (operadoresRes.data ?? []))
     .map((a: any) => ({ id: a.id, name: a.name }));
 
+  // Traspaso pendiente del que ESTE operador es destino: para que pueda
+  // verificarlo desde su propio panel. Degrada a null si falta la columna
+  // operador_destino_id (stage6 sin correr). El permiso fino lo aplica
+  // verificarTraspaso al ejecutar la acción; acá es solo para mostrar la card.
+  let traspaso_a_verificar:
+    | { id: string; origen_name: string; monto: number; created_at: string }
+    | null = null;
+  {
+    const { data: tr } = await supabaseAdmin
+      .from('comprobantes')
+      .select('id, monto, operador_id, created_at')
+      .eq('tenant_id', tid).eq('tipo', 'traspaso').eq('estado', 'pendiente')
+      .eq('operador_destino_id', yo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (tr) {
+      let origen_name = '—';
+      if (tr.operador_id) {
+        const { data: ag } = await supabaseAdmin
+          .from('agents').select('name').eq('id', tr.operador_id).maybeSingle();
+        if (ag?.name) origen_name = ag.name;
+      }
+      traspaso_a_verificar = { id: tr.id, origen_name, monto: Number(tr.monto ?? 0), created_at: tr.created_at };
+    }
+  }
+
   // Degradación elegante: tablas de caja ausentes → resumen en cero, sin romper.
   if (isMissingCajaTable(saldoRes.error) || isMissingCajaTable(pozoRes.error) || isMissingCajaTable(hoyRes.error)) {
     return NextResponse.json({
@@ -275,7 +302,7 @@ export async function GET(request: Request) {
       mi_saldo: 0, pozo: 0, mov_hoy_count: 0,
       pendientes_count: pendRes.count ?? 0,
       sueldo_diario, whatsapp_agente, operador_name: session.name,
-      resumen_turno, operadores_destino,
+      resumen_turno, operadores_destino, traspaso_a_verificar,
     });
   }
 
@@ -290,6 +317,7 @@ export async function GET(request: Request) {
     operador_name:    session.name,
     resumen_turno,
     operadores_destino,
+    traspaso_a_verificar,
   });
 }
 

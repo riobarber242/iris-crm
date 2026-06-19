@@ -63,6 +63,7 @@ type Resumen = {
   mi_saldo: number; pozo: number; mov_hoy_count: number; pendientes_count: number;
   sueldo_diario: number; whatsapp_agente: string; operador_name: string;
   resumen_turno: ResumenTurno; operadores_destino: OperadorDestino[];
+  traspaso_a_verificar?: { id: string; origen_name: string; monto: number } | null;
 };
 type Vista = 'resumen' | 'billetera' | 'pozo' | 'hoy' | 'pendientes' | 'cierres';
 
@@ -512,6 +513,7 @@ export default function MiCajaClient() {
   const [descargaDone, setDescargaDone] = useState(false);
   const [cerrarDone, setCerrarDone]   = useState(false);
   const [toast, setToast]             = useState<string | null>(null);
+  const [verifErr, setVerifErr]       = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -520,6 +522,26 @@ export default function MiCajaClient() {
       setData(await res.json());
     } catch {}
   }, []);
+
+  // Verificar el traspaso recibido (el operador es el destino). Reusa la acción
+  // verificar_traspaso del endpoint del operador; el backend solo deja pasar al
+  // destino exacto del comprobante. En éxito, recarga el resumen.
+  async function verificarTraspasoRecibido(id: string) {
+    setActionBusy(true); setVerifErr(null);
+    try {
+      const res = await fetch('/api/caja/operador?accion=verificar_traspaso', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comprobanteId: id }),
+      });
+      if (!res.ok) { setVerifErr(await res.text().catch(() => '') || 'No se pudo verificar el traspaso'); return; }
+      setToast('Traspaso verificado. El saldo se acreditó en tu billetera.');
+      await load();
+    } catch {
+      setVerifErr('Error de red');
+    } finally {
+      setActionBusy(false);
+    }
+  }
 
   async function confirmarSueldo() {
     setActionBusy(true); setActionErr(null);
@@ -652,6 +674,31 @@ export default function MiCajaClient() {
         <div style={{ background: '#f0f0f0', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '16px' }}>🚫</span>
           <span style={{ fontSize: '13px', fontWeight: 700, color: '#888' }}>Caja desactivada — los saldos no se están moviendo.</span>
+        </div>
+      )}
+
+      {/* Traspaso recibido pendiente: el operador es el destino y puede verificarlo
+          desde su panel. Solo con la caja encendida (si está off, el SQL aborta). */}
+      {!off && data.traspaso_a_verificar && (
+        <div style={{ background: '#e6f4ff', border: '1px solid #b3dcff', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <span style={{ fontSize: '14px', fontWeight: 700, color: '#0b4f80' }}>
+            🔄 Tenés un traspaso pendiente de {data.traspaso_a_verificar.origen_name} por ${fmt(data.traspaso_a_verificar.monto)}.
+          </span>
+          <span style={{ fontSize: '12px', color: '#555' }}>
+            Al verificar, ese saldo se acredita en tu billetera.
+          </span>
+          {verifErr && (
+            <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '8px 12px', fontSize: '13px', fontWeight: 600 }}>
+              {verifErr}
+            </div>
+          )}
+          <button
+            onClick={() => verificarTraspasoRecibido(data.traspaso_a_verificar!.id)}
+            disabled={actionBusy}
+            style={{ alignSelf: 'flex-start', background: '#1d6fb8', color: '#fff', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '10px', padding: '11px 20px', cursor: actionBusy ? 'default' : 'pointer', opacity: actionBusy ? 0.6 : 1 }}
+          >
+            {actionBusy ? 'Verificando…' : 'Verificar'}
+          </button>
         </div>
       )}
 
