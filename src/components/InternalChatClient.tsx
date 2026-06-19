@@ -605,6 +605,27 @@ export default function InternalChatClient() {
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>
                 )}
 
+                {/* Acciones de verificación sobre imágenes recibidas (no propias).
+                    Placeholders por ahora: la verificación real se conecta después. */}
+                {media?._type === 'image' && !isMine && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => alert('Verificado')}
+                      style={{ background: '#1a7a3a', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
+                    >
+                      ✓ Verificar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => alert('Rechazado')}
+                      style={{ background: '#c0392b', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
+                    >
+                      ✗ Rechazar
+                    </button>
+                  </div>
+                )}
+
                 {/* Hora + estado local (enviando / fallido con reintento) */}
                 <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isMine ? 'flex-end' : 'flex-start' }}
                    title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
