@@ -687,9 +687,10 @@ export async function verificarDescarga(session: SessionPayload, comprobanteId: 
 //
 //   cerrarTurno        → SOLO operador. Crea un comprobante tipo 'traspaso'
 //                        pendiente con el destino elegido. NO mueve la billetera.
-//   verificarTraspaso  → SOLO agente/admin. Recién acá fn_cerrar_turno ejecuta el
-//                        movimiento (origen→0, destino+=saldo), inserta el cierre
-//                        en cierres_turno y resetea el turno. Atómico en SQL.
+//   verificarTraspaso  → agente/admin O el operador destino del comprobante.
+//                        Recién acá fn_cerrar_turno ejecuta el movimiento
+//                        (origen→0, destino+=saldo), inserta el cierre en
+//                        cierres_turno y resetea el turno. Atómico en SQL.
 //
 // El comprobante va al "canal interno" del equipo (settings.whatsapp_agente): el
 // front abre un link wa.me como interim. Cuando ese número se conecte a la API de
@@ -779,10 +780,10 @@ export type TraspasoVerifyResult =
   | { ok: false; error: string; degraded?: boolean };
 
 // Verifica un comprobante de traspaso (cierre de turno). Recién acá fn_cerrar_turno
-// mueve la plata e inserta el cierre. SOLO agente/admin. Consistencia: si el SQL
-// falla (caja apagada, etc.), NO se marca verificado.
+// mueve la plata e inserta el cierre. Lo verifica agente/admin o el operador que es
+// el destino del comprobante. Consistencia: si el SQL falla (caja apagada, etc.),
+// NO se marca verificado.
 export async function verificarTraspaso(session: SessionPayload, comprobanteId: string): Promise<TraspasoVerifyResult> {
-  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
   if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
 
   const { data: comp, error: compErr } = await supabaseAdmin
@@ -795,6 +796,15 @@ export async function verificarTraspaso(session: SessionPayload, comprobanteId: 
     return { ok: false, error: compErr.message };
   }
   if (!comp) return { ok: false, error: 'Cierre no encontrado' };
+
+  // Autorización: lo verifica el staff (admin/agent) O el operador que es el
+  // destino EXACTO de este traspaso (peer-to-peer). No habilita a ningún otro
+  // operador: solo a quien figura como operador_destino_id de ESTE comprobante.
+  const esDestino = comp.tipo === 'traspaso'
+    && session.role === 'operator'
+    && comp.operador_destino_id === session.sub;
+  if (!isStaff(session) && !esDestino) return { ok: false, error: 'No autorizado' };
+
   if (comp.tipo !== 'traspaso') return { ok: false, error: 'El comprobante no es un cierre de turno' };
   if (comp.estado !== 'pendiente') return { ok: false, error: 'El cierre ya fue resuelto' };
   if (!comp.operador_id) return { ok: false, error: 'El cierre no tiene operador asociado' };

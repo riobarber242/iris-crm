@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
+import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno, verificarTraspaso } from '@/lib/caja';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -327,6 +327,17 @@ export async function POST(request: Request) {
     const r = await cerrarTurno(session, destinoId);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId, monto: r.monto });
+  }
+
+  // Verificar un cierre de turno del que ESTE operador es el destino. La
+  // autorización fina (debe ser el operador_destino_id del comprobante) vive en
+  // verificarTraspaso; acá ya pasó el gate role==='operator' de la ruta. El
+  // staff verifica por /api/fichas; este endpoint es para el operador destino.
+  if (accion === 'verificar_traspaso') {
+    const body = await request.json().catch(() => ({} as any));
+    const r = await verificarTraspaso(session, String(body.comprobanteId ?? ''));
+    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    return NextResponse.json({ ok: true, resumen: r.resumen });
   }
 
   return new NextResponse('Acción inválida', { status: 400 });
