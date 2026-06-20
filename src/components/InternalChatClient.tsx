@@ -31,6 +31,7 @@ type Message = {
   content: string;
   created_at?: string;
   status?: string; // solo local: 'sending' | 'failed'
+  traspaso_estado?: string | null; // estado del comprobante (cierres): pendiente|verificado|rechazado
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -142,9 +143,10 @@ export default function InternalChatClient() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
-  // Comprobantes de cierre ya resueltos (verificados o rechazados) en esta sesión:
-  // ocultamos sus botones al instante (el content del mensaje no cambia al resolver).
-  const [resueltos, setResueltos] = useState<Set<string>>(new Set());
+  // Comprobantes de cierre resueltos en ESTA sesión (override optimista para
+  // mostrar el chip correcto al instante). El estado persistido llega igual en
+  // cada mensaje (traspaso_estado) vía el GET, así que sobrevive a un reload.
+  const [resueltos, setResueltos] = useState<Map<string, 'verificado' | 'rechazado'>>(new Map());
   // Acción de cierre armada para confirmar inline (sin window.confirm bloqueante),
   // id en curso, y errores por comprobante. Todo no bloqueante.
   const [traspasoConfirm, setTraspasoConfirm] = useState<{ id: string; kind: 'verificar' | 'rechazar' } | null>(null);
@@ -443,7 +445,7 @@ export default function InternalChatClient() {
         setTraspasoErr((e) => ({ ...e, [comprobanteId]: msg }));
         return;
       }
-      setResueltos((s) => new Set(s).add(comprobanteId));
+      setResueltos((s) => new Map(s).set(comprobanteId, kind === 'verificar' ? 'verificado' : 'rechazado'));
     } catch {
       setTraspasoErr((e) => ({ ...e, [comprobanteId]: 'Error de red. Reintentá.' }));
     } finally {
@@ -654,12 +656,30 @@ export default function InternalChatClient() {
                   <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{traspaso ? traspaso.text : m.content}</p>
                 )}
 
-                {/* Acciones sobre un cierre de turno recibido (no propio). Se ocultan
-                    una vez resuelto (verificado o rechazado) en esta sesión. ✓ acredita
-                    el saldo; ✗ marca el comprobante rechazado sin mover plata. La
-                    confirmación es inline (no usa window.confirm/alert bloqueantes). */}
-                {traspaso && !isMine && !resueltos.has(traspaso.comprobante_id ?? '') && (() => {
+                {/* Cierre de turno: si ya está resuelto (estado persistido en
+                    traspaso_estado, u override local), mostramos un chip ✓/✗ —
+                    para todos, incluido el que cerró. Si sigue pendiente y NO es
+                    propio, los botones inline (confirmación no bloqueante). Si es
+                    propio y pendiente, nada (espera al receptor). */}
+                {traspaso && (() => {
                   const cid = traspaso.comprobante_id ?? '';
+                  const estadoServer = m.traspaso_estado;
+                  const estadoFinal = resueltos.get(cid)
+                    ?? (estadoServer === 'verificado' || estadoServer === 'rechazado' ? estadoServer : null);
+
+                  if (estadoFinal) {
+                    const ok = estadoFinal === 'verificado';
+                    return (
+                      <div style={{ marginTop: '8px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 800, color: ok ? '#1a7a3a' : '#c0392b', background: ok ? '#e8fff0' : '#fdecea', borderRadius: '999px', padding: '4px 10px' }}>
+                          {ok ? '✓ Verificado' : '✗ Rechazado'}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  if (isMine) return null; // el que cerró espera la confirmación del receptor
+
                   const busy = traspasoBusy === cid;
                   const armado = traspasoConfirm?.id === cid ? traspasoConfirm.kind : null;
                   const err = traspasoErr[cid];

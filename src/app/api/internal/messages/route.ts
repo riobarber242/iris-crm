@@ -41,9 +41,38 @@ export async function GET(request: Request) {
       .in('id', authorIds);
     avatarById = Object.fromEntries((ags ?? []).map((a: any) => [a.id, a.avatar_url ?? null]));
   }
-  const enriched = (data ?? []).map((m: any) =>
-    m.author_id ? { ...m, author_avatar: avatarById[m.author_id] ?? null } : m,
-  );
+
+  // Estado real de los comprobantes de cierre referenciados por mensajes
+  // 'traspaso' (content JSON {_type:'traspaso', comprobante_id}). Así el front
+  // sabe si ya fue verificado/rechazado y no muestra los botones tras un reload.
+  function comprobanteIdDe(content: string): string | null {
+    try {
+      const p = JSON.parse(content);
+      if (p?._type === 'traspaso' && typeof p.comprobante_id === 'string') return p.comprobante_id;
+    } catch {}
+    return null;
+  }
+  const compIds = [
+    ...new Set((data ?? [])
+      .map((m: any) => comprobanteIdDe(m.content))
+      .filter((id: string | null): id is string => !!id)),
+  ];
+  let estadoById: Record<string, string> = {};
+  if (compIds.length) {
+    const { data: comps } = await supabaseAdmin
+      .from('comprobantes')
+      .select('id, estado')
+      .eq('tenant_id', session.tenant_id)
+      .in('id', compIds);
+    estadoById = Object.fromEntries((comps ?? []).map((c: any) => [c.id, c.estado]));
+  }
+
+  const enriched = (data ?? []).map((m: any) => {
+    const out = m.author_id ? { ...m, author_avatar: avatarById[m.author_id] ?? null } : { ...m };
+    const cid = comprobanteIdDe(m.content);
+    if (cid) out.traspaso_estado = estadoById[cid] ?? null;
+    return out;
+  });
 
   return NextResponse.json(enriched);
 }
