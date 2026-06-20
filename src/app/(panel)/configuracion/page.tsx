@@ -6,7 +6,6 @@ import AutoMsgToggle from '@/components/AutoMsgToggle';
 import QuickRepliesManager from '@/components/QuickRepliesManager';
 import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
 import WhatsAppTemplatesManager from '@/components/WhatsAppTemplatesManager';
-import CajaConfigManager from '@/components/CajaConfigManager';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
 import { getSessionAgent } from '@/lib/current-agent';
 
@@ -39,10 +38,6 @@ export default async function ConfiguracionPage() {
 
           <SectionCard title="Respuestas rápidas" description="Plantillas de mensajes predefinidas. Usalas desde el chat con el botón ⚡.">
             <QuickRepliesManager />
-          </SectionCard>
-
-          <SectionCard title="Caja: descargas y sueldos" description="WhatsApp del agente para descargas y el sueldo diario que cobra cada operador.">
-            <CajaConfigManager />
           </SectionCard>
 
           <WhatsAppNumbersManager />
