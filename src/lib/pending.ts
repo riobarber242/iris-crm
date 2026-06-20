@@ -4,9 +4,10 @@
 // Reglas de negocio (sin estado persistido en la base; todo derivado):
 //  · "No leída" mientras last_read_at < último mensaje. SOLO un humano que abre
 //    el chat (bump de last_read_at) la marca como leída → limpia el pendiente.
-//  · 🔴 ROJO    = no leída + CRM ONLINE (no offline) + conversation_state ∈
-//                 {'done','known_client'} → terminó el onboarding, o es un cliente
-//                 ya reconocido (tiene casino_username) → atención humana directa.
+//  · 🔴 ROJO    = no leída + conversation_state ∈ {'done','known_client'} →
+//                 terminó el onboarding, o es un cliente ya reconocido (tiene
+//                 casino_username) → atención humana directa. Aplica también en
+//                 modo offline.
 //  · 🟠 NARANJA = no leída + el último mensaje NO es de un humano: lo mandó el
 //                 cliente (role 'user') o un robot (role 'assistant': bot Groq o
 //                 aviso de offline). Es decir, cualquier entrante sin leer cuenta,
@@ -24,7 +25,9 @@ export function classifyPending(opts: {
   conversationState: string | null | undefined;
   offline: boolean;
 }): PendingLevel {
-  const { lastRole, lastMsgAt, lastReadAt, conversationState, offline } = opts;
+  // `offline` ya no influye en la clasificación (el rojo aplica online y offline);
+  // se mantiene en el tipo para no romper a los callers que lo siguen pasando.
+  const { lastRole, lastMsgAt, lastReadAt, conversationState } = opts;
   if (!lastMsgAt) return null;
 
   const unread = !lastReadAt || new Date(lastReadAt) < new Date(lastMsgAt);
@@ -33,8 +36,8 @@ export function classifyPending(opts: {
   // El operador humano fue el último en hablar → la conversación ya está atendida.
   if (lastRole === 'human') return null;
 
-  // 🔴 ROJO: onboarding terminado o cliente ya reconocido, estando online.
-  if (!offline && (conversationState === 'done' || conversationState === 'known_client')) return 'red';
+  // 🔴 ROJO: onboarding terminado o cliente ya reconocido (online u offline).
+  if (conversationState === 'done' || conversationState === 'known_client') return 'red';
 
   // 🟠 NARANJA: cualquier entrante sin leer pendiente de un humano — sea el
   // mensaje crudo del cliente ('user') o una respuesta del bot ('assistant').
