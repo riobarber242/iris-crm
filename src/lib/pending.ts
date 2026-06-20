@@ -7,8 +7,10 @@
 //  · 🔴 ROJO    = no leída + CRM ONLINE (no offline) + conversation_state ∈
 //                 {'done','known_client'} → terminó el onboarding, o es un cliente
 //                 ya reconocido (tiene casino_username) → atención humana directa.
-//  · 🟠 NARANJA = no leída + el último mensaje lo mandó un robot (role
-//                 'assistant': bot Groq o aviso de offline).
+//  · 🟠 NARANJA = no leída + el último mensaje NO es de un humano: lo mandó el
+//                 cliente (role 'user') o un robot (role 'assistant': bot Groq o
+//                 aviso de offline). Es decir, cualquier entrante sin leer cuenta,
+//                 sin importar el estado del contacto ni si el bot respondió.
 //  · Si el último mensaje es de un operador humano (role 'human') → NO pendiente
 //                 (ya está siendo atendida).
 //  · La respuesta de un robot NUNCA limpia el pendiente. ROJO > NARANJA.
@@ -34,8 +36,9 @@ export function classifyPending(opts: {
   // 🔴 ROJO: onboarding terminado o cliente ya reconocido, estando online.
   if (!offline && (conversationState === 'done' || conversationState === 'known_client')) return 'red';
 
-  // 🟠 NARANJA: respondió un robot pero sigue pendiente de un humano.
-  if (lastRole === 'assistant') return 'orange';
+  // 🟠 NARANJA: cualquier entrante sin leer pendiente de un humano — sea el
+  // mensaje crudo del cliente ('user') o una respuesta del bot ('assistant').
+  if (lastRole === 'assistant' || lastRole === 'user') return 'orange';
 
   return null;
 }
