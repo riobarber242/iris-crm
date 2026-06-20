@@ -8,7 +8,16 @@ import { getSessionAgent, requireAgentOrAdmin } from '@/lib/current-agent';
 //  - POST/PUT/DELETE: solo admin y agent (operator → 403).
 // service-role / sin RLS, como el resto del proyecto.
 
-const FIELDS = 'id, name, language, body, created_at';
+const FIELDS = 'id, name, language, body, buttons, created_at';
+
+// Normaliza los botones de respuesta rápida: array de hasta 2 textos no vacíos.
+function parseButtons(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((b) => String(b ?? '').trim())
+    .filter((b) => b.length > 0)
+    .slice(0, 2);
+}
 
 // GET: plantillas del tenant.
 export async function GET() {
@@ -34,13 +43,14 @@ export async function POST(request: Request) {
   const name     = String(body?.name ?? '').trim();
   const text     = String(body?.body ?? '').trim();
   const language = String(body?.language ?? '').trim() || 'es';
+  const buttons  = parseButtons(body?.buttons);
 
   if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 });
   if (!text) return NextResponse.json({ error: 'El cuerpo es requerido' }, { status: 400 });
 
   const { data, error } = await supabaseAdmin
     .from('whatsapp_templates')
-    .insert({ tenant_id: session.tenant_id, name, language, body: text })
+    .insert({ tenant_id: session.tenant_id, name, language, body: text, buttons })
     .select(FIELDS)
     .single();
 
@@ -60,13 +70,14 @@ export async function PUT(request: Request) {
   const name     = String(body?.name ?? '').trim();
   const text     = String(body?.body ?? '').trim();
   const language = String(body?.language ?? '').trim() || 'es';
+  const buttons  = parseButtons(body?.buttons);
 
   if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 });
   if (!text) return NextResponse.json({ error: 'El cuerpo es requerido' }, { status: 400 });
 
   const { data, error } = await supabaseAdmin
     .from('whatsapp_templates')
-    .update({ name, language, body: text })
+    .update({ name, language, body: text, buttons })
     .eq('id', id)
     .eq('tenant_id', session.tenant_id)
     .select(FIELDS)

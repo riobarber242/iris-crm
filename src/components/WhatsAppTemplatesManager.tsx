@@ -9,6 +9,7 @@ type Template = {
   name: string;
   language: string;
   body: string;
+  buttons?: string[];
   created_at: string;
 };
 
@@ -28,6 +29,11 @@ const smallBtn: React.CSSProperties = {
   border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap',
 };
 
+const buttonChip: React.CSSProperties = {
+  background: '#fff', color: '#1a1a1a', fontSize: '12px', fontWeight: 700,
+  border: '1px solid #ddd', borderRadius: '8px', padding: '5px 12px',
+};
+
 // Gestión de plantillas de WhatsApp del tenant (tabla whatsapp_templates).
 // Visible para admin y agent: para otros roles no renderiza nada (la API igual
 // exige admin o agent server-side para crear/editar/borrar).
@@ -45,12 +51,14 @@ export default function WhatsAppTemplatesManager() {
   const [name, setName] = useState('');
   const [language, setLanguage] = useState('es');
   const [body, setBody] = useState('');
+  const [buttons, setButtons] = useState<string[]>(['', '']);
 
   // Edición inline
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editLanguage, setEditLanguage] = useState('es');
   const [editBody, setEditBody] = useState('');
+  const [editButtons, setEditButtons] = useState<string[]>(['', '']);
 
   async function fetchTemplates() {
     try {
@@ -75,13 +83,13 @@ export default function WhatsAppTemplatesManager() {
     try {
       const res = await fetch('/api/whatsapp-templates', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), language: language.trim() || 'es', body: body.trim() }),
+        body: JSON.stringify({ name: name.trim(), language: language.trim() || 'es', body: body.trim(), buttons: buttons.map((b) => b.trim()).filter(Boolean) }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => null);
         setError(d?.error ?? 'Error al crear la plantilla.');
       } else {
-        setName(''); setLanguage('es'); setBody('');
+        setName(''); setLanguage('es'); setBody(''); setButtons(['', '']);
         setShowForm(false);
         await fetchTemplates();
       }
@@ -96,6 +104,7 @@ export default function WhatsAppTemplatesManager() {
     setEditName(t.name);
     setEditLanguage(t.language || 'es');
     setEditBody(t.body);
+    setEditButtons([t.buttons?.[0] ?? '', t.buttons?.[1] ?? '']);
     setError('');
   }
 
@@ -107,7 +116,7 @@ export default function WhatsAppTemplatesManager() {
     try {
       const res = await fetch('/api/whatsapp-templates', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: t.id, name: editName.trim(), language: editLanguage.trim() || 'es', body: editBody.trim() }),
+        body: JSON.stringify({ id: t.id, name: editName.trim(), language: editLanguage.trim() || 'es', body: editBody.trim(), buttons: editButtons.map((b) => b.trim()).filter(Boolean) }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => null);
@@ -165,7 +174,16 @@ export default function WhatsAppTemplatesManager() {
                     <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
                   </div>
                   {!isEditing && (
-                    <p style={{ fontSize: '13px', color: '#555', margin: '8px 0 0 0', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{t.body}</p>
+                    <>
+                      <p style={{ fontSize: '13px', color: '#555', margin: '8px 0 0 0', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{t.body}</p>
+                      {t.buttons && t.buttons.length > 0 && (
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+                          {t.buttons.map((b, i) => (
+                            <span key={i} style={buttonChip}>{b}</span>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -192,6 +210,16 @@ export default function WhatsAppTemplatesManager() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <label style={labelStyle}>Cuerpo</label>
                     <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
+                      <label style={labelStyle}>Botón 1</label>
+                      <input value={editButtons[0]} onChange={(e) => setEditButtons([e.target.value, editButtons[1]])} placeholder="Ej: Sí, recargar" style={inputStyle} />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
+                      <label style={labelStyle}>Botón 2</label>
+                      <input value={editButtons[1]} onChange={(e) => setEditButtons([editButtons[0], e.target.value])} placeholder="Ej: Ahora no" style={inputStyle} />
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
@@ -234,6 +262,16 @@ export default function WhatsAppTemplatesManager() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={labelStyle}>Cuerpo</label>
               <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Texto de la plantilla. Usá {{1}}, {{2}} para variables." style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+            </div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
+                <label style={labelStyle}>Botón 1</label>
+                <input value={buttons[0]} onChange={(e) => setButtons([e.target.value, buttons[1]])} placeholder="Ej: Sí, recargar" style={inputStyle} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
+                <label style={labelStyle}>Botón 2</label>
+                <input value={buttons[1]} onChange={(e) => setButtons([buttons[0], e.target.value])} placeholder="Ej: Ahora no" style={inputStyle} />
+              </div>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
