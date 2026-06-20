@@ -7,7 +7,8 @@ import { classifyPending } from '@/lib/pending';
 //   newPending       (🟠 naranja): último mensaje de un robot, sin leer.
 //   recurringPending (🔴 rojo):    online + onboarding 'done', sin leer.
 // Sin filtro de fecha: mira TODOS los mensajes. Solo la lectura humana limpia.
-// Los agentes solo cuentan sus chats asignados; el admin, todos.
+// Agentes y admin cuentan TODOS los contactos del tenant (sin filtro por
+// assigned_agent_id).
 export async function GET() {
   try {
     const session = await getSessionAgent();
@@ -23,12 +24,12 @@ export async function GET() {
       offline = data?.value === 'true';
     }
 
-    // 1. Contactos con su estado y last_read_at. Agentes: solo los asignados.
-    let contactsQuery = supabaseAdmin
+    // 1. Contactos con su estado y last_read_at. TODOS los del tenant (agente y
+    //    admin ven lo mismo; ya no se filtra por assigned_agent_id).
+    const contactsQuery = supabaseAdmin
       .from('contacts')
       .select('id, conversation_state, last_read_at')
       .eq('tenant_id', session.tenant_id);
-    if (isAgent) contactsQuery = contactsQuery.eq('assigned_agent_id', session.sub);
     const { data: contacts, error: cErr } = await contactsQuery;
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
 
