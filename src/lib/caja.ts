@@ -938,11 +938,25 @@ export async function verificarTraspaso(session: SessionPayload, comprobanteId: 
   if (comp.estado !== 'pendiente') return { ok: false, error: 'El cierre ya fue resuelto' };
   if (!comp.operador_id) return { ok: false, error: 'El cierre no tiene operador asociado' };
 
+  // Destino: el del comprobante, o el agente del tenant si está null (cierres "al
+  // agente" del modelo viejo). Si se resuelve acá, lo persistimos en el
+  // comprobante para que quede consistente. La RPC tiene el mismo fallback.
+  let destinoId = comp.operador_destino_id ?? null;
+  if (!destinoId) {
+    const { data: ag } = await supabaseAdmin
+      .from('agents').select('id').eq('tenant_id', session.tenant_id).eq('role', 'agent')
+      .order('created_at', { ascending: true }).limit(1).maybeSingle();
+    if (!ag) return { ok: false, error: 'No hay un agente para recibir el traspaso' };
+    destinoId = ag.id;
+    await supabaseAdmin.from('comprobantes').update({ operador_destino_id: destinoId })
+      .eq('id', comprobanteId).eq('tenant_id', session.tenant_id);
+  }
+
   let resumen: Record<string, any> = {};
   try {
     const { data, error } = await supabaseAdmin.rpc('fn_acreditar_traspaso', {
       p_tenant_id:      session.tenant_id,
-      p_destino_id:     comp.operador_destino_id ?? null,
+      p_destino_id:     destinoId,
       p_monto:          Math.trunc(Number(comp.monto ?? 0)),
       p_comprobante_id: comprobanteId,
     });

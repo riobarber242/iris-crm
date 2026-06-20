@@ -145,6 +145,11 @@ export default function InternalChatClient() {
   // Comprobantes de cierre ya resueltos (verificados o rechazados) en esta sesión:
   // ocultamos sus botones al instante (el content del mensaje no cambia al resolver).
   const [resueltos, setResueltos] = useState<Set<string>>(new Set());
+  // Acción de cierre armada para confirmar inline (sin window.confirm bloqueante),
+  // id en curso, y errores por comprobante. Todo no bloqueante.
+  const [traspasoConfirm, setTraspasoConfirm] = useState<{ id: string; kind: 'verificar' | 'rechazar' } | null>(null);
+  const [traspasoBusy, setTraspasoBusy] = useState<string | null>(null);
+  const [traspasoErr, setTraspasoErr] = useState<Record<string, string>>({});
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -417,38 +422,32 @@ export default function InternalChatClient() {
     return handleSendText();
   }
 
-  // Verificar un cierre de turno desde el chat. Endpoint compartido (acepta agent
-  // y operador); el backend solo deja pasar al destino exacto del comprobante.
-  async function verificarTraspasoDesdeChat(comprobanteId: string | null) {
-    if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
-    if (!window.confirm('¿Verificar este cierre de turno? Se acreditará el saldo en tu billetera.')) return;
-    try {
-      const res = await fetch('/api/caja/traspaso?accion=verificar', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comprobanteId }),
-      });
-      if (!res.ok) { alert(await res.text().catch(() => '') || 'No se pudo verificar'); return; }
-      setResueltos((s) => new Set(s).add(comprobanteId));
-      alert('Traspaso verificado.');
-    } catch {
-      alert('Error de red al verificar.');
+  // Ejecuta la acción de cierre (verificar/rechazar) ya confirmada inline. Endpoint
+  // compartido (acepta agent y operador); el backend deja pasar solo a quien
+  // corresponde. Sin window.confirm/alert: estado no bloqueante por comprobante.
+  async function ejecutarTraspaso(comprobanteId: string | null, kind: 'verificar' | 'rechazar') {
+    setTraspasoConfirm(null);
+    if (!comprobanteId) {
+      if (comprobanteId !== null) setTraspasoErr((e) => ({ ...e, [comprobanteId]: 'Mensaje sin comprobante asociado.' }));
+      return;
     }
-  }
-
-  // Rechaza el cierre de turno: marca el comprobante 'rechazado', sin mover plata.
-  async function rechazarTraspasoDesdeChat(comprobanteId: string | null) {
-    if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
-    if (!window.confirm('¿Rechazar este cierre de turno? No se acreditará el traspaso (no revierte el cierre del operador).')) return;
+    setTraspasoBusy(comprobanteId);
+    setTraspasoErr((e) => { const n = { ...e }; delete n[comprobanteId]; return n; });
     try {
-      const res = await fetch('/api/caja/traspaso?accion=rechazar', {
+      const res = await fetch(`/api/caja/traspaso?accion=${kind}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comprobanteId }),
       });
-      if (!res.ok) { alert(await res.text().catch(() => '') || 'No se pudo rechazar'); return; }
+      if (!res.ok) {
+        const msg = (await res.text().catch(() => '')) || (kind === 'verificar' ? 'No se pudo verificar' : 'No se pudo rechazar');
+        setTraspasoErr((e) => ({ ...e, [comprobanteId]: msg }));
+        return;
+      }
       setResueltos((s) => new Set(s).add(comprobanteId));
-      alert('Cierre rechazado.');
     } catch {
-      alert('Error de red al rechazar.');
+      setTraspasoErr((e) => ({ ...e, [comprobanteId]: 'Error de red. Reintentá.' }));
+    } finally {
+      setTraspasoBusy(null);
     }
   }
 
@@ -657,25 +656,49 @@ export default function InternalChatClient() {
 
                 {/* Acciones sobre un cierre de turno recibido (no propio). Se ocultan
                     una vez resuelto (verificado o rechazado) en esta sesión. ✓ acredita
-                    el saldo; ✗ marca el comprobante rechazado sin mover plata. */}
-                {traspaso && !isMine && !resueltos.has(traspaso.comprobante_id ?? '') && (
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                    <button
-                      type="button"
-                      onClick={() => verificarTraspasoDesdeChat(traspaso.comprobante_id)}
-                      style={{ background: '#1a7a3a', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
-                    >
-                      ✓ Verificar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => rechazarTraspasoDesdeChat(traspaso.comprobante_id)}
-                      style={{ background: '#c0392b', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
-                    >
-                      ✗ Rechazar
-                    </button>
-                  </div>
-                )}
+                    el saldo; ✗ marca el comprobante rechazado sin mover plata. La
+                    confirmación es inline (no usa window.confirm/alert bloqueantes). */}
+                {traspaso && !isMine && !resueltos.has(traspaso.comprobante_id ?? '') && (() => {
+                  const cid = traspaso.comprobante_id ?? '';
+                  const busy = traspasoBusy === cid;
+                  const armado = traspasoConfirm?.id === cid ? traspasoConfirm.kind : null;
+                  const err = traspasoErr[cid];
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                      {armado ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 700 }}>
+                            {armado === 'verificar' ? '¿Confirmar recepción?' : '¿Rechazar el cierre?'}
+                          </span>
+                          <button type="button" disabled={busy}
+                            onClick={() => ejecutarTraspaso(traspaso.comprobante_id, armado)}
+                            style={{ background: armado === 'verificar' ? '#1a7a3a' : '#c0392b', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+                            {busy ? '…' : 'Sí'}
+                          </button>
+                          <button type="button" disabled={busy}
+                            onClick={() => setTraspasoConfirm(null)}
+                            style={{ background: '#e0e0e0', color: '#333', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: busy ? 'default' : 'pointer' }}>
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button type="button"
+                            onClick={() => setTraspasoConfirm({ id: cid, kind: 'verificar' })}
+                            style={{ background: '#1a7a3a', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}>
+                            ✓ Verificar
+                          </button>
+                          <button type="button"
+                            onClick={() => setTraspasoConfirm({ id: cid, kind: 'rechazar' })}
+                            style={{ background: '#c0392b', color: '#fff', fontWeight: 800, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}>
+                            ✗ Rechazar
+                          </button>
+                        </div>
+                      )}
+                      {err && <span style={{ fontSize: '11px', fontWeight: 700, color: '#c0392b' }}>{err}</span>}
+                    </div>
+                  );
+                })()}
 
                 {/* Hora + estado local (enviando / fallido con reintento) */}
                 <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isMine ? 'flex-end' : 'flex-start' }}
