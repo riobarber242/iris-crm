@@ -95,6 +95,9 @@ export default function FichasClient() {
   const [cierrePage, setCierrePage] = useState(0);
   const [cierreOp, setCierreOp]     = useState('');   // filtro por operador (id)
   const [cierreFecha, setCierreFecha] = useState(''); // filtro por fecha (yyyy-mm-dd)
+  // Confirmación inline del botón Verificar de un pendiente (sin window.confirm
+  // bloqueante): guarda el id del comprobante armado para confirmar.
+  const [confirmVerifId, setConfirmVerifId] = useState<string | null>(null);
 
   async function fetchResumen() {
     try {
@@ -200,15 +203,14 @@ export default function FichasClient() {
     await post({ action: 'borrar_movimiento', movimientoId: id });
   }
 
-  // Verificar un pendiente: descarga (plata → tu billetera) o cierre de turno
-  // (plata del origen → su destino). El backend mueve la plata recién acá.
-  async function verificarPendiente(d: DescargaPend) {
+  // Ejecuta la verificación de un pendiente ya confirmado inline: descarga (plata
+  // → tu billetera) o cierre de turno (acredita al destino). El backend mueve la
+  // plata recién acá. El error, si falla, lo muestra `post` arriba (setError).
+  async function ejecutarVerificacion(d: DescargaPend) {
+    setConfirmVerifId(null);
     if (d.tipo === 'traspaso') {
-      const dest = d.destino_name ? `a ${d.destino_name}` : 'al agente';
-      if (!window.confirm(`Verificar el cierre de turno de ${d.operador_name} por $${fmt(d.monto)}? Se traspasará su saldo ${dest}.`)) return;
       await post({ action: 'verificar_traspaso', comprobanteId: d.id });
     } else {
-      if (!window.confirm(`Verificar la descarga de ${d.operador_name} por $${fmt(d.monto)}? Se moverá de su billetera a la tuya.`)) return;
       await post({ action: 'verificar_descarga', comprobanteId: d.id });
     }
   }
@@ -428,9 +430,25 @@ export default function FichasClient() {
                     )}
                     <span style={{ fontSize: '12px', color: '#aaa' }}>{formatFecha(d.created_at)}</span>
                   </div>
-                  <button onClick={() => verificarPendiente(d)} disabled={busy} style={btn('#C8FF00', '#000')}>
-                    Verificar
-                  </button>
+                  {confirmVerifId === d.id ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#444' }}>
+                        {d.tipo === 'traspaso'
+                          ? `¿Verificar el cierre? Se acreditará ${d.destino_name ? `a ${d.destino_name}` : 'al agente'}.`
+                          : '¿Verificar la descarga? Pasa a tu billetera.'}
+                      </span>
+                      <button onClick={() => ejecutarVerificacion(d)} disabled={busy} style={btn('#C8FF00', '#000')}>
+                        {busy ? '…' : 'Sí'}
+                      </button>
+                      <button onClick={() => setConfirmVerifId(null)} disabled={busy} style={btn('#e0e0e0', '#333')}>
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmVerifId(d.id)} disabled={busy} style={btn('#C8FF00', '#000')}>
+                      Verificar
+                    </button>
+                  )}
                 </div>
               );
             })}
