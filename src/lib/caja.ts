@@ -483,10 +483,34 @@ export async function setBilletera(session: SessionPayload, operadorId: string, 
       if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
       return { ok: false, error: error.message };
     }
+    const anterior = Number(prev?.saldo_actual ?? 0);
     await logActivity({
       session, action: ACTIVITY.CAJA_AJUSTE_MANUAL, objectType: 'operador_billetera', objectId: operadorId,
-      details: { campo: 'billetera', operador_id: operadorId, antes: Number(prev?.saldo_actual ?? 0), despues: v },
+      details: { campo: 'billetera', operador_id: operadorId, antes: anterior, despues: v },
     });
+
+    // Si el saldo cambió, dejar rastro en el ledger (movimiento 'ajuste' con
+    // billetera_delta = nuevo - anterior, para que el saldo corriendo cierre) y
+    // avisar al chat interno. Ambos best-effort: el override ya quedó hecho, así
+    // que un fallo acá (p. ej. migración -5 sin correr) no lo revierte.
+    const delta = v - anterior;
+    if (delta !== 0) {
+      const { data: op } = await supabaseAdmin
+        .from('agents').select('name').eq('id', operadorId).eq('tenant_id', tid).maybeSingle();
+      const opName = op?.name ?? 'operador';
+
+      const { error: movErr } = await supabaseAdmin.from('movimientos').insert({
+        tenant_id: tid, operador_id: operadorId, tipo: 'ajuste', monto: v, bono: null,
+        fichas_delta: 0, billetera_delta: delta, comprobante_id: null, contraparte_id: null,
+        creado_por: session.sub, creado_por_name: session.name,
+      });
+      if (movErr) console.warn('[setBilletera] no se pudo registrar el movimiento de ajuste:', movErr.message);
+
+      await postInternalSystemMessage(
+        session,
+        `💰 ${session.name} ajustó la billetera de ${opName}: $${fmtMonto(anterior)} → $${fmtMonto(v)}`,
+      );
+    }
     return { ok: true, saldo: v };
   } catch (err: any) {
     if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };

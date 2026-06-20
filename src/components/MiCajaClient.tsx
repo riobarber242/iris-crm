@@ -25,7 +25,7 @@ function fechaCorta(iso: string): string {
 }
 
 const TIPO_LABEL: Record<string, string> = {
-  carga: 'Carga', pago: 'Pago', descarga: 'Descarga', sueldo: 'Sueldo', traspaso: 'Traspaso', pago_agente: 'Pago agente',
+  carga: 'Carga', pago: 'Pago', descarga: 'Descarga', sueldo: 'Sueldo', traspaso: 'Traspaso', pago_agente: 'Pago agente', ajuste: 'Ajuste',
 };
 
 // Colores por tipo de movimiento (unificado con FichasClient):
@@ -37,6 +37,7 @@ const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
   descarga:    { bg: '#fff3e0', fg: '#d97706' },
   pago_agente: { bg: '#f0eaff', fg: '#6b3fb0' },
   traspaso:    { bg: '#e6f4ff', fg: '#1d6fb8' },
+  ajuste:      { bg: '#eef1f4', fg: '#475569' },
 };
 
 // Chip de etiqueta de tipo con su color. `tipo` puede venir como 'pago' con la

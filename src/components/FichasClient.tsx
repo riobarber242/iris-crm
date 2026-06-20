@@ -55,9 +55,10 @@ const TIPO_STYLE: Record<string, { bg: string; fg: string }> = {
   descarga:    { bg: '#fff3e0', fg: '#d97706' },
   pago_agente: { bg: '#f0eaff', fg: '#6b3fb0' },
   traspaso:    { bg: '#e6f4ff', fg: '#1d6fb8' },
+  ajuste:      { bg: '#eef1f4', fg: '#475569' },
 };
 const TIPO_LABEL: Record<string, string> = {
-  carga: 'carga', pago: 'pago', sueldo: 'sueldo', descarga: 'descarga', pago_agente: 'pago agente', traspaso: 'traspaso',
+  carga: 'carga', pago: 'pago', sueldo: 'sueldo', descarga: 'descarga', pago_agente: 'pago agente', traspaso: 'traspaso', ajuste: 'ajuste',
 };
 
 // El pago del agente se guarda como tipo 'pago' pero no toca ninguna billetera
