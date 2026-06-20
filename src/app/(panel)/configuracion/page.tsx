@@ -7,6 +7,7 @@ import QuickRepliesManager from '@/components/QuickRepliesManager';
 import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
 import WhatsAppTemplatesManager from '@/components/WhatsAppTemplatesManager';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
+import NotificationVolumeCard from '@/components/NotificationVolumeCard';
 import { getSessionAgent } from '@/lib/current-agent';
 
 // "Configuración": todo lo de la cuenta (números de WhatsApp, notificación de
@@ -45,6 +46,8 @@ export default async function ConfiguracionPage() {
           <WhatsAppTemplatesManager />
         </>
       )}
+
+      {showChangePassword && <NotificationVolumeCard />}
 
       {showChangePassword && <ChangePasswordCard />}
 
