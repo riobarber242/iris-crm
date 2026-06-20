@@ -392,14 +392,20 @@ function DescargaModal({ busy, error, done, onConfirm, onClose }: {
               placeholder="Monto a descargar"
               style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '15px', fontWeight: 700, outline: 'none', background: '#F7F7F7' }}
             />
-            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', fontWeight: 700, color: '#444' }}>
-              Foto del comprobante (obligatoria)
-              <input
-                type="file" accept="image/*"
-                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-                style={{ fontSize: '13px' }}
-              />
-            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#444' }}>Foto del comprobante (obligatoria)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#f0f0f0', color: '#333', fontWeight: 700, fontSize: '13px', padding: '10px 14px', borderRadius: '10px', cursor: 'pointer' }}>
+                  <span style={{ fontSize: '15px' }}>📎</span> Adjuntar foto
+                  <input
+                    type="file" accept="image/*"
+                    onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+                {file && <span style={{ fontSize: '12px', color: '#666', wordBreak: 'break-all' }}>{file.name}</span>}
+              </div>
+            </div>
             {preview && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={preview} alt="comprobante" style={{ maxHeight: '140px', borderRadius: '10px', objectFit: 'contain', alignSelf: 'flex-start' }} />
@@ -732,8 +738,10 @@ export default function MiCajaClient() {
             Cobrar sueldo (${fmt(data.sueldo_diario)})
           </button>
           <button
-            onClick={() => { setActionErr(null); setDescargaDone(false); setDescargaOpen(true); }}
-            style={{ flex: 1, minWidth: '180px', background: '#fff3e0', color: '#d97706', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            onClick={() => { if (!data.turno_cerrado) { setActionErr(null); setDescargaDone(false); setDescargaOpen(true); } }}
+            disabled={data.turno_cerrado}
+            title={data.turno_cerrado ? 'Cerraste tu turno' : undefined}
+            style={{ flex: 1, minWidth: '180px', background: '#fff3e0', color: '#d97706', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: data.turno_cerrado ? 'not-allowed' : 'pointer', opacity: data.turno_cerrado ? 0.5 : 1 }}
             className="nav-3d"
           >
             Descargar al agente
