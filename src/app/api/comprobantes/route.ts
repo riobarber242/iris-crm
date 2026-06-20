@@ -6,6 +6,7 @@ import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
+import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import type { SessionPayload } from '@/lib/session';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
@@ -354,14 +355,19 @@ export async function PATCH(request: Request) {
       // Fire-and-forget: Meta Pixel purchase event
       sendMetaPurchaseEvent(contact.phone, Number(efectiveMonto)).catch(() => {});
 
-      // Check if auto-notification is enabled in settings (default: true)
-      const { data: settingRow } = await supabaseAdmin
-        .from('settings').select('value').eq('key', 'auto_verificacion_msg').eq('tenant_id', session.tenant_id).maybeSingle();
-      const autoMsg = settingRow?.value !== 'false';
+      // Auto-notificación (flag on/off + template editable). Default: activado,
+      // con el texto histórico. Una sola query trae flag y template.
+      const { data: settingRows } = await supabaseAdmin
+        .from('settings').select('key, value')
+        .eq('tenant_id', session.tenant_id)
+        .in('key', [AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY]);
+      const settingsByKey = new Map((settingRows ?? []).map((r: any) => [r.key, r.value]));
+      const autoMsg = settingsByKey.get(AUTO_MSG_FLAG_KEY) !== 'false';
 
       if (autoMsg) {
         const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
-        const msg = `Tu recarga de $${montoFmt} fue confirmada ✅ ¡Ya podés jugar!`;
+        const template = (settingsByKey.get(AUTO_MSG_TEMPLATE_KEY) as string | undefined)?.trim() || AUTO_MSG_DEFAULT_TEMPLATE;
+        const msg = renderAutoMsg(template, montoFmt);
         sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id).catch(() => {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
         });

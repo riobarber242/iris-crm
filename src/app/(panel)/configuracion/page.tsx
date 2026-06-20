@@ -29,7 +29,7 @@ export default async function ConfiguracionPage() {
 
       {showAccountConfig && (
         <>
-          <SectionCard title="Notificación de recarga verificada" description='Envía "Tu recarga de $X fue confirmada ✅" automáticamente al verificar un comprobante.'>
+          <SectionCard title="Notificación de recarga verificada" description="Mensaje que se envía al cliente por WhatsApp al verificar una recarga. Editable, con la variable $monto.">
             <AutoMsgToggle />
           </SectionCard>
 
