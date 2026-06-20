@@ -8,9 +8,10 @@ export default function AutoMsgToggle() {
   const [loading,  setLoading]  = useState(false);
   const [ready,    setReady]    = useState(false); // GET inicial resuelto
 
-  // Template editable.
+  // Template editable. Por defecto cerrado: se muestra solo "Editar mensaje".
   const [template,    setTemplate]    = useState(AUTO_MSG_DEFAULT_TEMPLATE);
   const [tplInitial,  setTplInitial]  = useState(AUTO_MSG_DEFAULT_TEMPLATE);
+  const [editingTpl,  setEditingTpl]  = useState(false);
   const [savingTpl,   setSavingTpl]   = useState(false);
   const [tplMsg,      setTplMsg]      = useState<string | null>(null);
   const [tplErr,      setTplErr]      = useState<string | null>(null);
@@ -56,6 +57,7 @@ export default function AutoMsgToggle() {
       if (!res.ok) { setTplErr((await res.text().catch(() => '')) || 'No se pudo guardar'); return; }
       setTplInitial(template);
       setTplMsg('Guardado.');
+      setEditingTpl(false); // colapsa al guardar
     } catch {
       setTplErr('Error de red');
     } finally {
@@ -105,35 +107,62 @@ export default function AutoMsgToggle() {
         </button>
       </div>
 
-      {/* Editor del mensaje */}
+      {/* Editor del mensaje — cerrado por defecto, se abre con "Editar mensaje" */}
       <div style={{ borderTop: '1px solid #eee', paddingTop: '16px', display: 'flex', flexDirection: 'column', gap: '8px', opacity: enabled ? 1 : 0.6 }}>
         <label style={{ fontSize: '13px', fontWeight: 800, color: '#333' }}>Mensaje</label>
-        <p style={{ fontSize: '12px', color: '#999', margin: 0 }}>
-          Usá <code style={{ background: '#f0f0f0', padding: '1px 5px', borderRadius: '5px' }}>$monto</code> para el importe (ej. <strong>$15.000</strong>).
-        </p>
-        <textarea
-          value={template}
-          onChange={(e) => { setTemplate(e.target.value); setTplMsg(null); setTplErr(null); }}
-          rows={3}
-          maxLength={AUTO_MSG_MAX_LEN}
-          disabled={!ready}
-          placeholder={AUTO_MSG_DEFAULT_TEMPLATE}
-          style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 600, outline: 'none', background: '#F7F7F7', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
-        />
-        <div style={{ background: '#F0FFF4', border: '1px solid #cdeed6', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', color: '#1a7a3a' }}>
-          <span style={{ fontWeight: 800 }}>Vista previa:</span> {preview}
-        </div>
-        {tplErr && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '8px 12px', fontSize: '13px', fontWeight: 600 }}>{tplErr}</div>}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            onClick={saveTemplate}
-            disabled={savingTpl || !ready || !tplDirty || !tplValido}
-            style={{ background: '#C8FF00', color: '#000', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '9px 18px', cursor: (savingTpl || !tplDirty || !tplValido) ? 'not-allowed' : 'pointer', opacity: (tplDirty && tplValido) ? 1 : 0.5, alignSelf: 'flex-start' }}
-          >
-            {savingTpl ? '…' : 'Guardar mensaje'}
-          </button>
-          {tplMsg && <span style={{ fontSize: '13px', fontWeight: 700, color: '#1a7a3a' }}>✓ {tplMsg}</span>}
-        </div>
+
+        {!editingTpl ? (
+          <>
+            <div style={{ background: '#F7F7F7', borderRadius: '10px', padding: '11px 13px', fontSize: '14px', fontWeight: 600, color: '#333', lineHeight: 1.5 }}>
+              {renderAutoMsg(tplInitial, '15.000')}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button
+                onClick={() => { setTplMsg(null); setTplErr(null); setEditingTpl(true); }}
+                disabled={!ready}
+                style={{ background: '#1a1a1a', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '9px 18px', cursor: ready ? 'pointer' : 'not-allowed', opacity: ready ? 1 : 0.6, alignSelf: 'flex-start' }}
+              >
+                Editar mensaje
+              </button>
+              {tplMsg && <span style={{ fontSize: '13px', fontWeight: 700, color: '#1a7a3a' }}>✓ {tplMsg}</span>}
+            </div>
+          </>
+        ) : (
+          <>
+            <p style={{ fontSize: '12px', color: '#999', margin: 0 }}>
+              Usá <code style={{ background: '#f0f0f0', padding: '1px 5px', borderRadius: '5px' }}>$monto</code> para el importe (ej. <strong>$15.000</strong>).
+            </p>
+            <textarea
+              value={template}
+              onChange={(e) => { setTemplate(e.target.value); setTplMsg(null); setTplErr(null); }}
+              rows={3}
+              maxLength={AUTO_MSG_MAX_LEN}
+              autoFocus
+              placeholder={AUTO_MSG_DEFAULT_TEMPLATE}
+              style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 600, outline: 'none', background: '#F7F7F7', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+            />
+            <div style={{ background: '#F0FFF4', border: '1px solid #cdeed6', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', color: '#1a7a3a' }}>
+              <span style={{ fontWeight: 800 }}>Vista previa:</span> {preview}
+            </div>
+            {tplErr && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '8px 12px', fontSize: '13px', fontWeight: 600 }}>{tplErr}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                onClick={saveTemplate}
+                disabled={savingTpl || !tplDirty || !tplValido}
+                style={{ background: '#C8FF00', color: '#000', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '9px 18px', cursor: (savingTpl || !tplDirty || !tplValido) ? 'not-allowed' : 'pointer', opacity: (tplDirty && tplValido) ? 1 : 0.5 }}
+              >
+                {savingTpl ? '…' : 'Guardar mensaje'}
+              </button>
+              <button
+                onClick={() => { setTemplate(tplInitial); setTplErr(null); setTplMsg(null); setEditingTpl(false); }}
+                disabled={savingTpl}
+                style={{ background: '#F0F0F0', color: '#555', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '9px 18px', cursor: savingTpl ? 'not-allowed' : 'pointer' }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
