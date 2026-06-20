@@ -55,6 +55,35 @@ export async function getOrCreateRoom(tenantId: string): Promise<InternalRoom | 
   return null;
 }
 
+// Postea un mensaje en la sala del tenant desde el SERVER (avisos de caja:
+// sueldo, cargas, descargas, cierres). Best-effort: si falla, devuelve null y el
+// caller NO debe abortar su operación principal por esto. Si se pasa imageUrl, el
+// mensaje va como JSON {_type:'image', url, caption}; si no, como texto plano.
+export async function postInternalSystemMessage(
+  session: SessionPayload,
+  text: string,
+  imageUrl?: string | null,
+): Promise<boolean> {
+  try {
+    const room = await getOrCreateRoom(session.tenant_id);
+    if (!room) return false;
+    const content = imageUrl
+      ? JSON.stringify({ _type: 'image', url: imageUrl, caption: text })
+      : text;
+    const { error } = await supabaseAdmin.from('internal_messages').insert({
+      tenant_id:   session.tenant_id,
+      room_id:     room.id,
+      author_id:   session.sub,
+      author_name: session.name,
+      author_role: session.role,
+      content,
+    });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 // Resuelve el room_id pedido validando que pertenezca al tenant de la sesión.
 // Si no se pasa roomId, devuelve (o crea) la sala del tenant. Devuelve null si
 // el roomId no es del tenant (corte de aislamiento).

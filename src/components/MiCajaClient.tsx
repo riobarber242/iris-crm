@@ -64,6 +64,7 @@ type Resumen = {
   sueldo_diario: number; whatsapp_agente: string; operador_name: string;
   resumen_turno: ResumenTurno; operadores_destino: OperadorDestino[];
   traspaso_a_verificar?: { id: string; origen_name: string; monto: number } | null;
+  turno_cerrado?: boolean;
 };
 type Vista = 'resumen' | 'billetera' | 'pozo' | 'hoy' | 'pendientes' | 'cierres';
 
@@ -313,10 +314,6 @@ function CierresDetalle() {
 
 // ── Acciones del operador (Etapa 5: sueldo + descarga · Etapa 6: cierre) ─────────
 
-function hoyAR(): string {
-  return new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
 const modalOverlay: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
   display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
@@ -355,16 +352,25 @@ function SueldoModal({ monto, busy, error, onConfirm, onClose }: {
   );
 }
 
-// Modal de descarga: el operador ingresa el monto; al confirmar se postea el
-// resumen al chat interno del equipo y se crea el comprobante pendiente. Después
-// el operador adjunta el comprobante en el chat interno.
-function DescargaModal({ operadorName, busy, error, done, onConfirm, onClose }: {
-  operadorName: string; busy: boolean; error: string | null; done: boolean;
-  onConfirm: (monto: number) => void; onClose: () => void;
+// Modal de descarga: el operador ingresa el monto y adjunta SÍ o SÍ la foto del
+// comprobante. Al confirmar, la descarga se aplica al toque (mueve la plata al
+// agente) y la imagen se publica en el chat interno. No hay verificación.
+function DescargaModal({ busy, error, done, onConfirm, onClose }: {
+  busy: boolean; error: string | null; done: boolean;
+  onConfirm: (monto: number, file: File) => void; onClose: () => void;
 }) {
   const [montoStr, setMontoStr] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const monto = parseInt(montoStr.replace(/\D/g, ''), 10);
   const montoValido = Number.isInteger(monto) && monto > 0;
+  const listo = montoValido && !!file;
+
+  function onPick(f: File | null) {
+    setFile(f);
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(f ? URL.createObjectURL(f) : null);
+  }
 
   return (
     <div onClick={busy ? undefined : onClose} style={modalOverlay}>
@@ -372,26 +378,32 @@ function DescargaModal({ operadorName, busy, error, done, onConfirm, onClose }: 
         <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Descargar al agente</h3>
 
         {done ? (
-          <>
-            <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
-              Resumen enviado al chat interno. Adjuntá ahí el comprobante para que el agente lo verifique.
-            </div>
-            <Link href="/chat-interno" style={{ ...btnPrimary, textAlign: 'center', textDecoration: 'none' }}>
-              Ir al chat interno
-            </Link>
-          </>
+          <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
+            Descarga registrada. El comprobante se publicó en el chat interno y la plata pasó a la billetera del agente.
+          </div>
         ) : (
           <>
             <p style={{ margin: 0, fontSize: '14px', color: '#444', lineHeight: 1.5 }}>
-              Ingresá el monto a descargar. Se enviará el resumen al chat interno del equipo y se creará el comprobante pendiente. Después adjuntá el comprobante en el chat.
+              Ingresá el monto y adjuntá la foto del comprobante (obligatoria). Al confirmar, la descarga se aplica al instante y se publica en el chat interno.
             </p>
             <input
               type="number" min="1" step="1" value={montoStr} autoFocus
               onChange={(e) => setMontoStr(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && montoValido && !busy) onConfirm(monto); }}
               placeholder="Monto a descargar"
               style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '15px', fontWeight: 700, outline: 'none', background: '#F7F7F7' }}
             />
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', fontWeight: 700, color: '#444' }}>
+              Foto del comprobante (obligatoria)
+              <input
+                type="file" accept="image/*"
+                onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+                style={{ fontSize: '13px' }}
+              />
+            </label>
+            {preview && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt="comprobante" style={{ maxHeight: '140px', borderRadius: '10px', objectFit: 'contain', alignSelf: 'flex-start' }} />
+            )}
             {error && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: 600 }}>{error}</div>}
           </>
         )}
@@ -399,8 +411,8 @@ function DescargaModal({ operadorName, busy, error, done, onConfirm, onClose }: 
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={onClose} disabled={busy} style={btnGhost}>{done ? 'Cerrar' : 'Cancelar'}</button>
           {!done && (
-            <button onClick={() => montoValido && onConfirm(monto)} disabled={busy || !montoValido} style={{ ...btnPrimary, opacity: montoValido ? 1 : 0.5, cursor: montoValido && !busy ? 'pointer' : 'not-allowed' }}>
-              {busy ? '…' : 'Confirmar'}
+            <button onClick={() => listo && file && onConfirm(monto, file)} disabled={busy || !listo} style={{ ...btnPrimary, opacity: listo ? 1 : 0.5, cursor: listo && !busy ? 'pointer' : 'not-allowed' }}>
+              {busy ? '…' : 'Confirmar descarga'}
             </button>
           )}
         </div>
@@ -439,7 +451,7 @@ function CerrarTurnoModal({ resumen, operadores, busy, error, done, onConfirm, o
 
         {done ? (
           <div style={{ background: '#e8fff0', color: '#1a7a3a', borderRadius: '10px', padding: '12px 14px', fontSize: '13px', fontWeight: 700, lineHeight: 1.5 }}>
-            Cierre enviado, esperando verificación del receptor. Tu billetera queda en 0 cuando se verifique.
+            Turno cerrado. Tu billetera quedó en 0 y el receptor confirmará la recepción del traspaso desde el chat interno.
           </div>
         ) : paso === 1 ? (
           <>
@@ -523,13 +535,13 @@ export default function MiCajaClient() {
     } catch {}
   }, []);
 
-  // Verificar el traspaso recibido (el operador es el destino). Reusa la acción
-  // verificar_traspaso del endpoint del operador; el backend solo deja pasar al
-  // destino exacto del comprobante. En éxito, recarga el resumen.
+  // Verificar el traspaso recibido (el operador es el destino). Pega al endpoint
+  // compartido /api/caja/traspaso; el backend solo deja pasar al destino exacto
+  // del comprobante. En éxito, recarga el resumen.
   async function verificarTraspasoRecibido(id: string) {
     setActionBusy(true); setVerifErr(null);
     try {
-      const res = await fetch('/api/caja/operador?accion=verificar_traspaso', {
+      const res = await fetch('/api/caja/traspaso?accion=verificar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comprobanteId: id }),
       });
@@ -559,26 +571,17 @@ export default function MiCajaClient() {
     }
   }
 
-  async function confirmarDescarga(monto: number) {
+  async function confirmarDescarga(monto: number, file: File) {
     if (!data) return;
     setActionBusy(true); setActionErr(null);
     try {
-      // (a) Postear el resumen de la descarga al chat interno del equipo
-      //     (reemplaza el viejo window.open(wa.me)). Best-effort: si el chat
-      //     interno fallara, NO bloqueamos la creación del comprobante de caja.
-      const resumen = `Descarga de ${data.operador_name} $${fmt(monto)} ${hoyAR()}`;
-      try {
-        await fetch('/api/internal/messages', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: resumen }),
-        });
-      } catch { /* no bloquea la descarga */ }
-      // (b) Crear el comprobante de descarga pendiente.
-      const res = await fetch('/api/caja/operador?accion=descarga', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ monto }),
-      });
-      if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo crear la descarga'); return; }
-      // (c) Confirmación dentro del modal.
+      // Descarga inmediata con foto: el server sube la imagen, mueve la plata al
+      // agente y publica el comprobante en el chat interno (un solo request).
+      const form = new FormData();
+      form.append('monto', String(monto));
+      form.append('file', file);
+      const res = await fetch('/api/caja/operador?accion=descarga', { method: 'POST', body: form });
+      if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo registrar la descarga'); return; }
       setDescargaDone(true);
       await load();
     } catch {
@@ -596,18 +599,19 @@ export default function MiCajaClient() {
     if (!data) return;
     setActionBusy(true); setActionErr(null);
     try {
-      // (a) Crear PRIMERO el comprobante de cierre (traspaso) pendiente, para
-      //     tener su id y poder ligarlo al mensaje del chat.
+      // (a) Cerrar el turno YA: vacía la billetera y crea el comprobante de
+      //     traspaso pendiente de verificación del receptor (devuelve su id).
       const res = await fetch('/api/caja/operador?accion=cerrar_turno', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ destinoId }),
       });
       if (!res.ok) { setActionErr(await res.text().catch(() => '') || 'No se pudo cerrar el turno'); return; }
-      const { comprobanteId } = await res.json().catch(() => ({} as any));
+      const { comprobanteId, monto } = await res.json().catch(() => ({} as any));
 
       // (b) Postear el cierre al chat interno con el comprobante_id embebido en
-      //     el content JSON, para poder verificarlo desde el chat. Best-effort:
-      //     si el chat falla, NO revertimos el comprobante ya creado.
-      const text = `🔄 Cierre de turno pendiente — ${data.operador_name} traspasa $${fmt(data.resumen_turno.saldo_a_traspasar)} a ${destinoName}. Esperando verificación.`;
+      //     el content JSON, para que el receptor lo verifique desde el chat.
+      //     Best-effort: si el chat falla, el cierre ya quedó hecho igual.
+      const montoTraspaso = Number(monto ?? data.resumen_turno.saldo_a_traspasar);
+      const text = `🔄 Cierre de turno — ${data.operador_name} traspasa $${fmt(montoTraspaso)} a ${destinoName}. Confirmá la recepción.`;
       try {
         await fetch('/api/internal/messages', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -719,8 +723,10 @@ export default function MiCajaClient() {
       {!off && (
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '2px' }}>
           <button
-            onClick={() => { setActionErr(null); setSueldoOpen(true); }}
-            style={{ flex: 1, minWidth: '180px', background: '#e6f0ff', color: '#1d4ed8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            onClick={() => { if (!data.turno_cerrado) { setActionErr(null); setSueldoOpen(true); } }}
+            disabled={data.turno_cerrado}
+            title={data.turno_cerrado ? 'Cerraste el turno; cobrás el sueldo en tu próximo turno' : undefined}
+            style={{ flex: 1, minWidth: '180px', background: '#e6f0ff', color: '#1d4ed8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: data.turno_cerrado ? 'not-allowed' : 'pointer', opacity: data.turno_cerrado ? 0.5 : 1 }}
             className="nav-3d"
           >
             Cobrar sueldo (${fmt(data.sueldo_diario)})
@@ -733,8 +739,10 @@ export default function MiCajaClient() {
             Descargar al agente
           </button>
           <button
-            onClick={() => { setActionErr(null); setCerrarDone(false); setCerrarOpen(true); }}
-            style={{ flex: 1, minWidth: '180px', background: '#e6f4ff', color: '#1d6fb8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: 'pointer' }}
+            onClick={() => { if (!data.turno_cerrado) { setActionErr(null); setCerrarDone(false); setCerrarOpen(true); } }}
+            disabled={data.turno_cerrado}
+            title={data.turno_cerrado ? 'Ya cerraste tu turno' : undefined}
+            style={{ flex: 1, minWidth: '180px', background: '#e6f4ff', color: '#1d6fb8', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '14px 18px', cursor: data.turno_cerrado ? 'not-allowed' : 'pointer', opacity: data.turno_cerrado ? 0.5 : 1 }}
             className="nav-3d"
           >
             Cerrar turno
@@ -763,7 +771,6 @@ export default function MiCajaClient() {
       )}
       {descargaOpen && (
         <DescargaModal
-          operadorName={data.operador_name}
           busy={actionBusy}
           error={actionErr}
           done={descargaDone}

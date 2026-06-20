@@ -1,6 +1,12 @@
 import { supabaseAdmin } from './db';
 import { logActivity, ACTIVITY } from './activity-log';
+import { postInternalSystemMessage } from './internal-chat';
 import type { SessionPayload } from './session';
+
+// Formato de monto para los avisos del chat interno (es-AR, sin decimales).
+function fmtMonto(n: number): string {
+  return Math.trunc(Number(n) || 0).toLocaleString('es-AR');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Caja de fichas y billeteras por operador (Etapa 2: lógica, sin enganchar).
@@ -248,7 +254,12 @@ export async function aplicarCargaComprobante(
     bono:          p.bono ?? null,
     comprobanteId: p.comprobanteId,
   });
-  if (r.ok) return { ok: true, applied: true };
+  if (r.ok) {
+    // Aviso al chat interno (solo registro, sin botones).
+    const bonoTxt = p.bono && p.bono > 0 ? ` (+${fmtMonto(p.bono)} bono)` : '';
+    await postInternalSystemMessage(session, `🟢 Carga de ${session.name}: $${fmtMonto(monto)}${bonoTxt}`);
+    return { ok: true, applied: true };
+  }
   if (r.degraded) return { ok: true, applied: false };
   return { ok: false, error: r.error };
 }
@@ -515,13 +526,14 @@ export async function borrarMovimiento(session: SessionPayload, movimientoId: st
 // Etapa 5 — Descargas + Sueldo.
 //
 //   cobrarSueldo    → SOLO operador. Descuenta su sueldo_diario de su billetera.
-//   crearDescarga   → SOLO operador. Crea un comprobante tipo 'descarga' pendiente
-//                     (su billetera se descuenta recién al verificarlo el agente).
-//   verificarDescarga → SOLO agente/admin. Mueve el monto de la billetera del
-//                       operador a la del agente que verifica (atómico en SQL).
+//   crearDescarga   → SOLO operador. Descarga INMEDIATA con foto obligatoria:
+//                     mueve la plata a la billetera del agente al instante
+//                     (fn_aplicar_descarga). No hay verificación ni rechazo.
+//   verificarDescarga / rechazarDescarga → LEGADO: solo aplican a descargas
+//                     'pendiente' viejas (congeladas) anteriores a este cambio.
 //
 // Todas respetan caja_enabled: las funciones SQL fn_cobrar_sueldo /
-// fn_verificar_descarga abortan con "La caja está desactivada" si el flag está
+// fn_aplicar_descarga abortan con "La caja está desactivada" si el flag está
 // OFF (defensa en profundidad además del pre-check de acá).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -563,10 +575,11 @@ export type DescargaCreateResult =
   | { ok: true;  comprobanteId: string }
   | { ok: false; error: string; degraded?: boolean };
 
-// Crea el comprobante de descarga PENDIENTE (lo inicia el operador). No mueve
-// saldos todavía: la billetera se descuenta cuando el agente lo verifica
-// (verificarDescarga). Guarda operador_id = quién la pidió, sin contacto/imagen.
-export async function crearDescarga(session: SessionPayload, montoRaw: number): Promise<DescargaCreateResult> {
+// Aplica una descarga INMEDIATA (lo inicia el operador). Mueve la plata YA: baja
+// el disponible del operador y acredita al agente del tenant (fn_aplicar_descarga),
+// sin congelar ni verificación. Requiere SÍ o SÍ la foto del comprobante
+// (imageUrl), que se guarda en el comprobante y se publica en el chat interno.
+export async function crearDescarga(session: SessionPayload, montoRaw: number, imageUrl: string): Promise<DescargaCreateResult> {
   if (session.role !== 'operator') {
     return { ok: false, error: 'Solo un operador puede iniciar una descarga' };
   }
@@ -577,43 +590,52 @@ export async function crearDescarga(session: SessionPayload, montoRaw: number): 
   if (!Number.isFinite(monto) || monto <= 0) {
     return { ok: false, error: 'Ingresá un monto válido (mayor a 0)' };
   }
+  if (!imageUrl || !String(imageUrl).trim()) {
+    return { ok: false, error: 'Adjuntá la foto del comprobante para descargar' };
+  }
+
+  // Agente del tenant que recibe la descarga.
+  const { data: ag } = await supabaseAdmin
+    .from('agents').select('id').eq('tenant_id', session.tenant_id).eq('role', 'agent')
+    .order('created_at', { ascending: true }).limit(1).maybeSingle();
+  if (!ag) return { ok: false, error: 'No hay un agente para recibir la descarga' };
 
   try {
+    // Comprobante ya resuelto (la descarga es automática, no se verifica).
     const { data, error } = await supabaseAdmin
       .from('comprobantes')
       .insert({
         contact_id:  null,
-        image_url:   null,
+        image_url:   imageUrl,
         monto,
-        estado:      'pendiente',
+        estado:      'verificado',
         tipo:        'descarga',
         operador_id: session.sub,
+        resolved_at: new Date().toISOString(),
         tenant_id:   session.tenant_id,
       })
       .select('id')
       .single();
     if (error) {
-      // Sin la migración stage5 (operador_id) o stage4 (tipo/contact_id nullable)
-      // esto no puede funcionar: lo decimos claro.
       if (/operador_id|tipo|contact_id|null value|column|schema cache/i.test(error.message)) {
         return { ok: false, error: 'La caja no está inicializada (falta correr supabase-caja-fichas-stage5.sql).', degraded: true };
       }
       return { ok: false, error: error.message };
     }
 
-    // Congelar el monto en la billetera del operador (no se descuenta hasta que
-    // el agente verifique). Si la RPC falla (saldo disponible insuficiente, etc.),
-    // borramos el comprobante recién creado para no dejarlo huérfano sin congelar.
-    const { error: freezeErr } = await supabaseAdmin.rpc('fn_cobrar_descarga', {
+    // Mover la plata YA (operador → agente). Si falla (saldo insuficiente, etc.),
+    // borramos el comprobante para no dejarlo huérfano.
+    const { error: rpcErr } = await supabaseAdmin.rpc('fn_aplicar_descarga', {
       p_tenant_id:      session.tenant_id,
       p_operador_id:    session.sub,
+      p_agente_id:      ag.id,
       p_monto:          monto,
       p_comprobante_id: data.id,
     });
-    if (freezeErr) {
+    if (rpcErr) {
       await supabaseAdmin.from('comprobantes').delete().eq('id', data.id).eq('tenant_id', session.tenant_id);
-      if (isMissingCajaError(freezeErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
-      return { ok: false, error: freezeErr.message };
+      if (isMissingCajaError(rpcErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: rpcErr.message };
     }
 
     await logActivity({
@@ -621,7 +643,7 @@ export async function crearDescarga(session: SessionPayload, montoRaw: number): 
       action:     ACTIVITY.COMPROBANTE_ENVIADO,
       objectType: 'comprobante',
       objectId:   data.id,
-      details:    { tipo: 'descarga', monto, operador_id: session.sub, congelado: true },
+      details:    { tipo: 'descarga', monto, operador_id: session.sub, agente_id: ag.id, auto: true },
     });
     return { ok: true, comprobanteId: data.id };
   } catch (err: any) {
@@ -779,10 +801,12 @@ export type CerrarTurnoResult =
   | { ok: true;  comprobanteId: string; monto: number }
   | { ok: false; error: string; degraded?: boolean };
 
-// Cierra el turno: crea el comprobante de traspaso PENDIENTE (lo inicia el
-// operador). El monto es su saldo actual (lo que queda = lo que se traspasa). El
-// destino es otro operador, o null = depositar al agente (admin del tenant, que
-// fn_cerrar_turno resuelve al verificar). Guard: un solo cierre pendiente a la vez.
+// Cierra el turno INMEDIATAMENTE para quien cierra: fn_cerrar_turno vacía lo
+// disponible de su billetera (saldo_actual = saldo_congelado), marca el turno
+// cerrado y registra el cierre + el movimiento de salida. El comprobante queda
+// PENDIENTE pero para el RECEPTOR (no traba al que cerró): el destino acredita la
+// plata recién al verificar (fn_acreditar_traspaso). El destino es otro operador,
+// o el agente del tenant si es null; se resuelve y se guarda en el comprobante.
 export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string | null): Promise<CerrarTurnoResult> {
   if (session.role !== 'operator') {
     return { ok: false, error: 'Solo un operador puede cerrar su turno' };
@@ -803,21 +827,23 @@ export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string 
     if (!dest) return { ok: false, error: 'El operador destino no existe' };
   }
 
-  // Guard: no permitir dos cierres pendientes encimados.
-  {
-    const { data: pend } = await supabaseAdmin
-      .from('comprobantes').select('id')
-      .eq('tenant_id', session.tenant_id).eq('operador_id', session.sub)
-      .eq('tipo', 'traspaso').eq('estado', 'pendiente').limit(1).maybeSingle();
-    if (pend) return { ok: false, error: 'Ya tenés un cierre de turno pendiente de verificación' };
+  // Resolver el destino DEFINITIVO: si no se eligió operador, va al agente del
+  // tenant. Se guarda en el comprobante para que el receptor exacto lo verifique.
+  let destinoFinal = destinoId;
+  if (!destinoFinal) {
+    const { data: ag } = await supabaseAdmin
+      .from('agents').select('id').eq('tenant_id', session.tenant_id).eq('role', 'agent')
+      .order('created_at', { ascending: true }).limit(1).maybeSingle();
+    if (!ag) return { ok: false, error: 'No hay un agente para recibir el traspaso' };
+    destinoFinal = ag.id;
   }
 
-  // Saldo actual = lo que se traspasa (snapshot para mostrar; fn_cerrar_turno
-  // relee el saldo real al verificar y zerea la billetera).
+  // Lo que se traspasa = lo DISPONIBLE (saldo_actual - saldo_congelado). El
+  // congelado se queda en la billetera. fn_cerrar_turno recalcula con lock.
   const { data: bill } = await supabaseAdmin
-    .from('operador_billetera').select('saldo_actual')
+    .from('operador_billetera').select('saldo_actual, saldo_congelado')
     .eq('tenant_id', session.tenant_id).eq('operador_id', session.sub).maybeSingle();
-  const monto = Number(bill?.saldo_actual ?? 0);
+  const monto = Math.max(0, Number(bill?.saldo_actual ?? 0) - Number(bill?.saldo_congelado ?? 0));
 
   try {
     const { data, error } = await supabaseAdmin
@@ -829,7 +855,7 @@ export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string 
         estado:              'pendiente',
         tipo:                'traspaso',
         operador_id:         session.sub,
-        operador_destino_id: destinoId,
+        operador_destino_id: destinoFinal,
         tenant_id:           session.tenant_id,
       })
       .select('id')
@@ -840,14 +866,37 @@ export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string 
       }
       return { ok: false, error: error.message };
     }
+
+    // Ejecutar el cierre YA: vacía la billetera del que cierra y registra el
+    // cierre. Si el SQL falla, borramos el comprobante para no dejarlo huérfano.
+    const { data: rpcData, error: rpcErr } = await supabaseAdmin.rpc('fn_cerrar_turno', {
+      p_tenant_id:           session.tenant_id,
+      p_operador_id:         session.sub,
+      p_operador_destino_id: destinoFinal,
+      p_comprobante_id:      data.id,
+    });
+    if (rpcErr) {
+      await supabaseAdmin.from('comprobantes').delete().eq('id', data.id).eq('tenant_id', session.tenant_id);
+      if (isMissingCajaError(rpcErr)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      return { ok: false, error: rpcErr.message };
+    }
+
+    // El traspaso REAL lo calcula la función con lock; guardarlo en el comprobante
+    // para que el receptor acredite el monto exacto (no el snapshot pre-lock).
+    const traspasoReal = Math.trunc(Number((rpcData as any)?.total_traspaso ?? monto));
+    if (traspasoReal !== monto) {
+      await supabaseAdmin.from('comprobantes').update({ monto: traspasoReal })
+        .eq('id', data.id).eq('tenant_id', session.tenant_id);
+    }
+
     await logActivity({
       session,
       action:     ACTIVITY.COMPROBANTE_ENVIADO,
       objectType: 'comprobante',
       objectId:   data.id,
-      details:    { tipo: 'traspaso', monto, operador_id: session.sub, operador_destino_id: destinoId },
+      details:    { tipo: 'traspaso', monto: traspasoReal, operador_id: session.sub, operador_destino_id: destinoFinal },
     });
-    return { ok: true, comprobanteId: data.id, monto };
+    return { ok: true, comprobanteId: data.id, monto: traspasoReal };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Error al cerrar el turno' };
   }
@@ -857,16 +906,17 @@ export type TraspasoVerifyResult =
   | { ok: true;  resumen: Record<string, any> }
   | { ok: false; error: string; degraded?: boolean };
 
-// Verifica un comprobante de traspaso (cierre de turno). Recién acá fn_cerrar_turno
-// mueve la plata e inserta el cierre. Lo verifica agente/admin o el operador que es
-// el destino del comprobante. Consistencia: si el SQL falla (caja apagada, etc.),
-// NO se marca verificado.
+// Verifica un comprobante de traspaso (cierre de turno): el RECEPTOR confirma que
+// la plata le entró. El cierre del origen YA ocurrió al cerrar; acá solo se
+// acredita al destino (fn_acreditar_traspaso). Lo verifica agente/admin o el
+// operador que es el destino del comprobante. Si el SQL falla, NO se marca
+// verificado.
 export async function verificarTraspaso(session: SessionPayload, comprobanteId: string): Promise<TraspasoVerifyResult> {
   if (!comprobanteId) return { ok: false, error: 'Falta el comprobante' };
 
   const { data: comp, error: compErr } = await supabaseAdmin
     .from('comprobantes')
-    .select('id, tipo, estado, operador_id, operador_destino_id')
+    .select('id, tipo, estado, monto, operador_id, operador_destino_id')
     .eq('id', comprobanteId).eq('tenant_id', session.tenant_id)
     .maybeSingle();
   if (compErr) {
@@ -890,11 +940,11 @@ export async function verificarTraspaso(session: SessionPayload, comprobanteId: 
 
   let resumen: Record<string, any> = {};
   try {
-    const { data, error } = await supabaseAdmin.rpc('fn_cerrar_turno', {
-      p_tenant_id:           session.tenant_id,
-      p_operador_id:         comp.operador_id,
-      p_operador_destino_id: comp.operador_destino_id ?? null,
-      p_comprobante_id:      comprobanteId,
+    const { data, error } = await supabaseAdmin.rpc('fn_acreditar_traspaso', {
+      p_tenant_id:      session.tenant_id,
+      p_destino_id:     comp.operador_destino_id ?? null,
+      p_monto:          Math.trunc(Number(comp.monto ?? 0)),
+      p_comprobante_id: comprobanteId,
     });
     if (error) {
       if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };

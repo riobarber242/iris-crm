@@ -417,13 +417,13 @@ export default function InternalChatClient() {
     return handleSendText();
   }
 
-  // Verificar un cierre de turno desde el chat. Llama al endpoint del operador
-  // (operator-only); el backend solo deja pasar al destino exacto del comprobante.
+  // Verificar un cierre de turno desde el chat. Endpoint compartido (acepta agent
+  // y operador); el backend solo deja pasar al destino exacto del comprobante.
   async function verificarTraspasoDesdeChat(comprobanteId: string | null) {
     if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
     if (!window.confirm('¿Verificar este cierre de turno? Se acreditará el saldo en tu billetera.')) return;
     try {
-      const res = await fetch('/api/caja/operador?accion=verificar_traspaso', {
+      const res = await fetch('/api/caja/traspaso?accion=verificar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comprobanteId }),
       });
@@ -438,9 +438,9 @@ export default function InternalChatClient() {
   // Rechaza el cierre de turno: marca el comprobante 'rechazado', sin mover plata.
   async function rechazarTraspasoDesdeChat(comprobanteId: string | null) {
     if (!comprobanteId) { alert('Este mensaje no tiene un comprobante asociado.'); return; }
-    if (!window.confirm('¿Rechazar este cierre de turno? No se moverá plata; el operador podrá volver a cerrar.')) return;
+    if (!window.confirm('¿Rechazar este cierre de turno? No se acreditará el traspaso (no revierte el cierre del operador).')) return;
     try {
-      const res = await fetch('/api/caja/operador?accion=rechazar_traspaso', {
+      const res = await fetch('/api/caja/traspaso?accion=rechazar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ comprobanteId }),
       });

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno, verificarTraspaso, rechazarTraspaso } from '@/lib/caja';
+import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
+import { postInternalSystemMessage } from '@/lib/internal-chat';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -232,7 +233,7 @@ export async function GET(request: Request) {
 
   // ── Resumen (default): números de las 4 cards + datos para sueldo/descarga ──
   const { startISO, endISO } = rangoHoyArgentina();
-  const [saldoRes, pozoRes, hoyRes, pendRes, sueldoRes, waRes, turnoRes, operadoresRes] = await Promise.all([
+  const [saldoRes, pozoRes, hoyRes, pendRes, sueldoRes, waRes, turnoRes, operadoresRes, cierreHoyRes] = await Promise.all([
     supabaseAdmin.from('operador_billetera').select('saldo_actual, turno_inicio_at').eq('tenant_id', tid).eq('operador_id', yo).maybeSingle(),
     supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tid).maybeSingle(),
     supabaseAdmin.from('movimientos').select('id', { count: 'exact', head: true })
@@ -246,7 +247,13 @@ export async function GET(request: Request) {
       .eq('tenant_id', tid).eq('operador_id', yo).gte('created_at', startISO),
     // Otros operadores del tenant: posibles destinos del traspaso.
     supabaseAdmin.from('agents').select('id, name').eq('tenant_id', tid).eq('role', 'operator').neq('id', yo),
+    // ¿Ya cerró su turno en el día AR vigente? Bloquea sueldo y "Cerrar turno".
+    supabaseAdmin.from('cierres_turno').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).eq('operador_id', yo).gte('turno_fin_at', startISO),
   ]);
+
+  // Turno cerrado: hay un cierre del operador en el día AR vigente.
+  const turno_cerrado = (cierreHoyRes.count ?? 0) > 0;
 
   // sueldo_diario / whatsapp_agente degradan a default si falta la migración stage5.
   const sueldo_diario  = Number(sueldoRes.data?.sueldo_diario ?? 0);
@@ -302,7 +309,7 @@ export async function GET(request: Request) {
       mi_saldo: 0, pozo: 0, mov_hoy_count: 0,
       pendientes_count: pendRes.count ?? 0,
       sueldo_diario, whatsapp_agente, operador_name: session.name,
-      resumen_turno, operadores_destino, traspaso_a_verificar,
+      resumen_turno, operadores_destino, traspaso_a_verificar, turno_cerrado,
     });
   }
 
@@ -318,14 +325,18 @@ export async function GET(request: Request) {
     resumen_turno,
     operadores_destino,
     traspaso_a_verificar,
+    turno_cerrado,
   });
 }
 
 // POST — acciones que el OPERADOR inicia sobre sí mismo (Etapas 5–6).
 //   ?accion=sueldo       → cobra su sueldo_diario (fn_cobrar_sueldo).
-//   ?accion=descarga     → crea un comprobante de descarga pendiente para el agente.
-//   ?accion=cerrar_turno → crea un comprobante de traspaso pendiente (cierre).
-// Todas exigen role==='operator' (defensa server-side, además del middleware).
+//   ?accion=descarga     → descarga INMEDIATA con foto obligatoria (multipart):
+//                          mueve la plata al agente y la publica en el chat.
+//   ?accion=cerrar_turno → cierra el turno YA (vacía su billetera) y deja el
+//                          traspaso pendiente de verificación del receptor.
+// La verificación/rechazo del cierre vive en /api/caja/traspaso (agent u operador
+// destino). Todas exigen role==='operator' (defensa server-side + middleware).
 export async function POST(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -338,13 +349,42 @@ export async function POST(request: Request) {
   if (accion === 'sueldo') {
     const r = await cobrarSueldo(session);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    // Aviso al chat interno (solo registro, sin botones).
+    await postInternalSystemMessage(session, `💙 ${session.name} cobró su sueldo: $${(r.monto ?? 0).toLocaleString('es-AR')}`);
     return NextResponse.json({ ok: true, monto: r.monto, saldo: r.saldo });
   }
 
+  // Descarga INMEDIATA: requiere SÍ o SÍ la foto del comprobante (multipart).
+  // Se sube la imagen, se aplica la descarga (operador → agente) y se publica en
+  // el chat interno con la imagen adjunta (solo registro, sin botones).
   if (accion === 'descarga') {
-    const body = await request.json().catch(() => ({} as any));
-    const r = await crearDescarga(session, Number(body.monto));
+    let form: FormData;
+    try { form = await request.formData(); }
+    catch { return new NextResponse('Falta la foto del comprobante', { status: 400 }); }
+
+    const monto = Number(form.get('monto'));
+    const file = form.get('file') as File | null;
+    if (!Number.isFinite(monto) || monto <= 0) return new NextResponse('Monto inválido', { status: 400 });
+    if (!file) return new NextResponse('Adjuntá la foto del comprobante para descargar', { status: 400 });
+
+    // Subir la imagen al bucket 'comprobantes' (service-role).
+    const ext = (file.type.split('/')[1] ?? 'jpg').replace('jpeg', 'jpg');
+    const path = `caja/${session.tenant_id}/descargas/${Date.now()}.${ext}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { error: upErr } = await supabaseAdmin.storage
+      .from('comprobantes').upload(path, buffer, { contentType: file.type, upsert: true });
+    if (upErr) return new NextResponse('No se pudo subir la foto del comprobante', { status: 500 });
+    const imageUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
+
+    const r = await crearDescarga(session, monto, imageUrl);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+
+    // Publicar el comprobante en el chat interno con la imagen adjunta.
+    await postInternalSystemMessage(
+      session,
+      `🟠 Descarga de ${session.name}: $${monto.toLocaleString('es-AR')}`,
+      imageUrl,
+    );
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId });
   }
 
@@ -355,27 +395,6 @@ export async function POST(request: Request) {
     const r = await cerrarTurno(session, destinoId);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId, monto: r.monto });
-  }
-
-  // Verificar un cierre de turno del que ESTE operador es el destino. La
-  // autorización fina (debe ser el operador_destino_id del comprobante) vive en
-  // verificarTraspaso; acá ya pasó el gate role==='operator' de la ruta. El
-  // staff verifica por /api/fichas; este endpoint es para el operador destino.
-  if (accion === 'verificar_traspaso') {
-    const body = await request.json().catch(() => ({} as any));
-    const r = await verificarTraspaso(session, String(body.comprobanteId ?? ''));
-    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
-    return NextResponse.json({ ok: true, resumen: r.resumen });
-  }
-
-  // Rechazar un cierre de turno: marca el comprobante 'rechazado', sin mover
-  // plata. Mismo permiso que verificar (destino del comprobante); la autorización
-  // fina vive en rechazarTraspaso.
-  if (accion === 'rechazar_traspaso') {
-    const body = await request.json().catch(() => ({} as any));
-    const r = await rechazarTraspaso(session, String(body.comprobanteId ?? ''));
-    if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
-    return NextResponse.json({ ok: true });
   }
 
   return new NextResponse('Acción inválida', { status: 400 });
