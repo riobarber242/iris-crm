@@ -32,9 +32,18 @@ export async function POST(request: Request) {
   const nombre = (contact.name ?? '').trim() || (contact.casino_username ?? '').trim() || contact.phone;
   const vars   = def.variables.map((v) => (v === 'nombre' ? nombre : ''));
 
+  // Botones configurados para esta plantilla en la BD del tenant (si existe).
+  const { data: tpl } = await supabaseAdmin
+    .from('whatsapp_templates')
+    .select('buttons')
+    .eq('tenant_id', session.tenant_id)
+    .eq('name', def.name)
+    .maybeSingle();
+  const buttons: string[] = Array.isArray(tpl?.buttons) ? tpl.buttons : [];
+
   let failureReason: string | null = null;
   try {
-    await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id, contact.whatsapp_number_id);
+    await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id, contact.whatsapp_number_id, buttons);
   } catch (err: any) {
     failureReason =
       err?.response?.data?.error?.message ||

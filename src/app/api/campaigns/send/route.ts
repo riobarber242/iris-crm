@@ -88,6 +88,18 @@ export async function POST(request: Request) {
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
 
+  // Botones de respuesta rápida de la plantilla (viven en whatsapp_templates).
+  let buttons: string[] = [];
+  if (isTemplate && campaign.template_name) {
+    const { data: tpl } = await supabaseAdmin
+      .from('whatsapp_templates')
+      .select('buttons')
+      .eq('tenant_id', session.tenant_id)
+      .eq('name', campaign.template_name)
+      .maybeSingle();
+    if (Array.isArray(tpl?.buttons)) buttons = tpl.buttons;
+  }
+
   let sent = 0;
   const sentContactIds: string[] = [];
 
@@ -108,6 +120,7 @@ export async function POST(request: Request) {
           undefined,
           session.tenant_id,
           contact.whatsapp_number_id,
+          buttons,
         );
       } else {
         await sendWhatsAppText(contact.phone, campaign.message, session.tenant_id, contact.whatsapp_number_id);

@@ -166,6 +166,7 @@ export async function sendWhatsAppTemplate(
   phoneNumberId?: string,
   tenantId?: string,
   numberId?: string | null,
+  buttons?: string[],
 ) {
   const creds   = await resolveCreds(tenantId, numberId);
   const token   = creds.token;
@@ -181,12 +182,30 @@ export async function sendWhatsAppTemplate(
     template: { name: templateName, language: { code: languageCode } },
   };
 
+  const components: any[] = [];
+
   if (variables.length > 0) {
-    body.template.components = [{
+    components.push({
       type: 'body',
       parameters: variables.map((text) => ({ type: 'text', text })),
-    }];
+    });
   }
+
+  // Botones de respuesta rápida: un componente por botón. El texto no se envía
+  // (Meta usa el de la plantilla aprobada); solo importa la cantidad/índice, que
+  // debe coincidir con los botones de la plantilla aprobada en Meta.
+  if (buttons && buttons.length > 0) {
+    buttons.forEach((_text, index) => {
+      components.push({
+        type: 'button',
+        sub_type: 'quick_reply',
+        index,
+        parameters: [{ type: 'payload', payload: `btn_${index}` }],
+      });
+    });
+  }
+
+  if (components.length > 0) body.template.components = components;
 
   try {
     await withTransientRetry(`sendWhatsAppTemplate → ${to}`, () =>
