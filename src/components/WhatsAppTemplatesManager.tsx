@@ -60,6 +60,10 @@ export default function WhatsAppTemplatesManager() {
   const [editBody, setEditBody] = useState('');
   const [editButtons, setEditButtons] = useState<string[]>(['', '']);
 
+  // Envío a Meta (estado por fila).
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [submitResult, setSubmitResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
+
   async function fetchTemplates() {
     try {
       const res = await fetch('/api/whatsapp-templates');
@@ -131,6 +135,28 @@ export default function WhatsAppTemplatesManager() {
     setSaving(false);
   }
 
+  async function handleSubmitToMeta(t: Template) {
+    if (!confirm(`¿Enviar la plantilla "${t.name}" a Meta para aprobación?`)) return;
+    setSubmitting(t.id);
+    setSubmitResult((p) => { const n = { ...p }; delete n[t.id]; return n; });
+    try {
+      const res = await fetch('/api/whatsapp-templates/submit-to-meta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: t.id }),
+      });
+      const d = await res.json().catch(() => null);
+      setSubmitResult((p) => ({
+        ...p,
+        [t.id]: res.ok
+          ? { ok: true, msg: '✅ Enviada, pendiente de aprobación' }
+          : { ok: false, msg: d?.error ?? 'Error al enviar a Meta' },
+      }));
+    } catch {
+      setSubmitResult((p) => ({ ...p, [t.id]: { ok: false, msg: 'Error de red.' } }));
+    }
+    setSubmitting(null);
+  }
+
   async function handleDelete(t: Template) {
     if (!confirm(`¿Eliminar la plantilla "${t.name}"?`)) return;
     setError('');
@@ -183,6 +209,11 @@ export default function WhatsAppTemplatesManager() {
                           ))}
                         </div>
                       )}
+                      {submitResult[t.id] && (
+                        <p style={{ fontSize: '12px', fontWeight: 700, margin: '8px 0 0 0', color: submitResult[t.id].ok ? '#1a7a3a' : '#E53935' }}>
+                          {submitResult[t.id].msg}
+                        </p>
+                      )}
                     </>
                   )}
                 </div>
@@ -190,6 +221,9 @@ export default function WhatsAppTemplatesManager() {
                 {!isEditing && (
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     <button onClick={() => startEdit(t)} style={smallBtn}>Editar</button>
+                    <button onClick={() => handleSubmitToMeta(t)} disabled={submitting === t.id} style={{ ...smallBtn, background: '#f0fff4', color: '#1a7a3a', border: '1px solid #86efac' }}>
+                      {submitting === t.id ? 'Enviando…' : 'Enviar a Meta'}
+                    </button>
                     <button onClick={() => handleDelete(t)} style={{ ...smallBtn, background: '#fff', color: '#E53935', border: '1px solid #f08080' }}>Eliminar</button>
                   </div>
                 )}

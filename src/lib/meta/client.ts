@@ -265,26 +265,38 @@ export async function createMessageTemplate(def: {
   language: string;
   category: string;
   bodyText: string;
-}): Promise<any> {
-  const token   = getToken();
-  const wabaId  = getBusinessAccountId();
+  buttons?: string[];
+}, creds?: { token?: string; wabaId?: string }): Promise<any> {
+  // Creds por tenant (envío desde el panel) o globales de env (fallback).
+  const token   = creds?.token  ?? getToken();
+  const wabaId  = creds?.wabaId ?? getBusinessAccountId();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   // Cantidad de placeholders distintos {{n}} en el cuerpo.
   const placeholders = new Set((def.bodyText.match(/\{\{(\d+)\}\}/g) ?? []));
   const sample = ['Juan', 'valor2', 'valor3', 'valor4'].slice(0, placeholders.size);
 
+  const components: any[] = [
+    {
+      type: 'BODY',
+      text: def.bodyText,
+      ...(placeholders.size > 0 ? { example: { body_text: [sample] } } : {}),
+    },
+  ];
+
+  // Botones de respuesta rápida (Meta: hasta 3 QUICK_REPLY por plantilla).
+  if (def.buttons && def.buttons.length > 0) {
+    components.push({
+      type: 'BUTTONS',
+      buttons: def.buttons.slice(0, 3).map((text) => ({ type: 'QUICK_REPLY', text })),
+    });
+  }
+
   const body: any = {
     name:     def.name,
     language: def.language,
     category: def.category,
-    components: [
-      {
-        type: 'BODY',
-        text: def.bodyText,
-        ...(placeholders.size > 0 ? { example: { body_text: [sample] } } : {}),
-      },
-    ],
+    components,
   };
 
   try {

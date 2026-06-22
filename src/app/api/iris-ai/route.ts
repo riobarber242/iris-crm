@@ -216,6 +216,19 @@ const STAFF_TOOLS: Tool[] = [
     },
   },
   {
+    name: 'create_meta_template_guide',
+    description:
+      'Asesora para crear una plantilla de WhatsApp aprobable por Meta. Recibe el texto que el agente quiere enviar y devuelve: un nombre sugerido (minúsculas con guiones bajos), una advertencia si el texto tiene términos que Meta suele rechazar (gratis, ganás, premio, etc.) y una sugerencia de botones de respuesta rápida. Usala cuando el usuario quiera crear/registrar una plantilla nueva o pregunte si su texto va a ser aprobado por Meta.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        texto:  { type: 'string', description: 'Texto del cuerpo de la plantilla que el agente quiere enviar.' },
+        nombre: { type: 'string', description: 'Nombre tentativo opcional para la plantilla.' },
+      },
+      required: ['texto'],
+    },
+  },
+  {
     name: 'propose_bot_config',
     description:
       'Genera un BORRADOR de configuración del bot de WhatsApp del negocio (system prompt + mensaje de offline) a partir de una descripción en lenguaje natural, usando el system prompt actual como referencia de estilo (voseo argentino, respuestas cortas, sin markdown, términos neutros como recarga/saldo — nunca "casino"). NO aplica nada: mostrale al usuario ambos textos completos y pedile confirmación explícita antes de usar apply_bot_config.',
@@ -1029,6 +1042,34 @@ async function applyBotConfig(tid: string, input: any, session: any) {
   };
 }
 
+// Términos que Meta suele rechazar en plantillas MARKETING de este rubro.
+const META_RISKY_WORDS = [
+  'gratis', 'ganás', 'ganas', 'ganá', 'premio', 'premios', 'regalo',
+  'garantizado', 'seguro', 'jackpot', 'dinero fácil', 'dinero facil', '100%',
+];
+
+// Asesora para crear una plantilla aprobable por Meta. Sin DB: pura heurística.
+function createMetaTemplateGuide(input: any) {
+  const texto = String(input?.texto ?? '').trim();
+  if (!texto) return { error: 'Falta el texto de la plantilla.' };
+  const base = String(input?.nombre ?? texto.slice(0, 40));
+  const nombre_sugerido =
+    base.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'plantilla_nueva';
+  const lower = texto.toLowerCase();
+  const palabras_riesgosas = META_RISKY_WORDS.filter((w) => lower.includes(w));
+  return {
+    nombre_sugerido,
+    riesgo_rechazo: palabras_riesgosas.length > 0,
+    palabras_riesgosas,
+    recomendacion_texto: palabras_riesgosas.length > 0
+      ? `Meta puede rechazarla por: ${palabras_riesgosas.join(', ')}. Reformulá con términos neutros (recarga, saldo, beneficio).`
+      : 'El texto no tiene términos obviamente riesgosos para Meta.',
+    sugerencia_botones: ['Sí, recargar', 'Ahora no'],
+    nota: 'Las plantillas MARKETING requieren aprobación de Meta. El nombre solo admite minúsculas, números y guiones bajos.',
+  };
+}
+
 async function runTool(
   name: string,
   input: any,
@@ -1076,6 +1117,8 @@ async function runTool(
       return getAvailableTemplates();
     case 'get_campaign_stats':
       return getCampaignStats(tid, clampLimit(input?.limit));
+    case 'create_meta_template_guide':
+      return createMetaTemplateGuide(input);
     case 'propose_bot_config':
       return proposeBotConfig(tid, input, client);
     case 'apply_bot_config':
