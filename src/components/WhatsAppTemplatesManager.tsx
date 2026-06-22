@@ -64,9 +64,12 @@ export default function WhatsAppTemplatesManager() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
-  // Negocio verificado en Meta (gate visual del botón "Enviar a Meta").
-  // Se persiste en localStorage para no re-tildarlo cada vez.
+  // Negocio verificado en Meta: ahora es SOLO informativo (ya no gatea el botón).
+  // Se persiste en localStorage + settings por tenant para recordarlo.
   const [verified, setVerified] = useState(false);
+
+  // Categoría con la que se manda la plantilla a Meta al pedir aprobación.
+  const [submitCategory, setSubmitCategory] = useState('MARKETING');
 
   async function fetchTemplates() {
     try {
@@ -97,8 +100,7 @@ export default function WhatsAppTemplatesManager() {
 
   function toggleVerified(v: boolean) {
     setVerified(v);
-    // localStorage se mantiene por compatibilidad; el servidor es la fuente de
-    // verdad que gatea el envío a Meta.
+    // Solo informativo: se guarda en localStorage + servidor, sin afectar el botón.
     try { localStorage.setItem('meta_business_verified', v ? 'true' : 'false'); } catch {}
     fetch('/api/tenant-settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -166,14 +168,13 @@ export default function WhatsAppTemplatesManager() {
   }
 
   async function handleSubmitToMeta(t: Template) {
-    if (!verified) return;
-    if (!confirm(`¿Enviar la plantilla "${t.name}" a Meta para aprobación?`)) return;
+    if (!confirm(`¿Enviar la plantilla "${t.name}" a Meta para aprobación (categoría ${submitCategory})?`)) return;
     setSubmitting(t.id);
     setSubmitResult((p) => { const n = { ...p }; delete n[t.id]; return n; });
     try {
       const res = await fetch('/api/whatsapp-templates/submit-to-meta', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId: t.id }),
+        body: JSON.stringify({ templateId: t.id, category: submitCategory }),
       });
       const d = await res.json().catch(() => null);
       setSubmitResult((p) => ({
@@ -214,10 +215,25 @@ export default function WhatsAppTemplatesManager() {
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#333', background: '#FAFAFA', borderRadius: '10px', padding: '10px 14px' }}>
-          <input type="checkbox" checked={verified} onChange={(e) => toggleVerified(e.target.checked)} />
-          Mi negocio está verificado en Meta Business Manager
-        </label>
+        <p style={{ fontSize: '13px', color: '#555', background: '#FFFBEA', border: '1px solid #FCE8A6', borderRadius: '10px', padding: '10px 14px', margin: 0, lineHeight: 1.5 }}>
+          💡 Sin verificación de negocio en Meta podés crear hasta 250 plantillas y enviarlas a hasta 250 contactos por semana. Una vez que verifiques tu negocio en Meta Business Manager ese límite desaparece.
+        </p>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#333', background: '#FAFAFA', borderRadius: '10px', padding: '10px 14px' }}>
+            <input type="checkbox" checked={verified} onChange={(e) => toggleVerified(e.target.checked)} />
+            Mi negocio está verificado en Meta Business Manager
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#333' }}>
+            Categoría al enviar a Meta:
+            <select value={submitCategory} onChange={(e) => setSubmitCategory(e.target.value)} style={{ ...inputStyle, width: 'auto', padding: '8px 12px' }}>
+              <option value="MARKETING">MARKETING</option>
+              <option value="UTILITY">UTILITY</option>
+              <option value="AUTHENTICATION">AUTHENTICATION</option>
+            </select>
+          </label>
+        </div>
 
         {loading && <p style={{ color: '#999', fontSize: '13px', margin: 0 }}>Cargando plantillas...</p>}
 
@@ -259,13 +275,11 @@ export default function WhatsAppTemplatesManager() {
                     <button onClick={() => startEdit(t)} style={smallBtn}>Editar</button>
                     <button
                       onClick={() => handleSubmitToMeta(t)}
-                      disabled={!verified || submitting === t.id}
-                      title={verified ? 'Enviar esta plantilla a Meta para aprobación' : 'Verificá tu negocio en Meta para usar esta función'}
+                      disabled={submitting === t.id}
+                      title="Enviar esta plantilla a Meta para aprobación"
                       style={{
                         ...smallBtn,
-                        ...(verified
-                          ? { background: '#f0fff4', color: '#1a7a3a', border: '1px solid #86efac' }
-                          : { background: '#F0F0F0', color: '#bbb', border: '1px solid #e0e0e0', cursor: 'not-allowed' }),
+                        background: '#f0fff4', color: '#1a7a3a', border: '1px solid #86efac',
                       }}
                     >
                       {submitting === t.id ? 'Enviando…' : 'Enviar a Meta'}
