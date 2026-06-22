@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
+import { getTenantSetting } from '@/lib/bot-config';
 import { resolveCreds, createMessageTemplate } from '@/lib/meta/client';
 
 // Resuelve el WABA del tenant con la misma prioridad que el resto del proyecto:
@@ -23,6 +24,16 @@ async function resolveWaba(tenantId: string): Promise<string | null> {
 export async function POST(request: Request) {
   const session = await requireAgentOrAdmin();
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
+
+  // Gate server-side: el negocio debe estar marcado como verificado en Meta. El
+  // toggle del front solo guarda el flag; la restricción real se aplica acá.
+  const verified = await getTenantSetting(session.tenant_id, 'meta_business_verified');
+  if (verified !== 'true') {
+    return NextResponse.json(
+      { error: 'Tu negocio no está verificado en Meta. Activá el toggle en Configuración → Plantillas.' },
+      { status: 403 },
+    );
+  }
 
   const body = await request.json().catch(() => null);
   const templateId = body?.templateId as string | undefined;

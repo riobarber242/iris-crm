@@ -80,14 +80,30 @@ export default function WhatsAppTemplatesManager() {
     if (canManage) fetchTemplates();
   }, [canManage]);
 
-  // localStorage solo existe en el cliente: se lee tras el montaje.
+  // localStorage da el valor inmediato (sin parpadeo); el servidor es la fuente
+  // de verdad por tenant y su valor SIEMPRE gana (sube o baja el checkbox).
   useEffect(() => {
     try { setVerified(localStorage.getItem('meta_business_verified') === 'true'); } catch {}
+    (async () => {
+      try {
+        const res = await fetch('/api/tenant-settings?key=meta_business_verified');
+        if (res.ok) {
+          const d = await res.json();
+          setVerified(d?.value === 'true');
+        }
+      } catch {}
+    })();
   }, []);
 
   function toggleVerified(v: boolean) {
     setVerified(v);
+    // localStorage se mantiene por compatibilidad; el servidor es la fuente de
+    // verdad que gatea el envío a Meta.
     try { localStorage.setItem('meta_business_verified', v ? 'true' : 'false'); } catch {}
+    fetch('/api/tenant-settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'meta_business_verified', value: v ? 'true' : 'false' }),
+    }).catch(() => {});
   }
 
   if (!canManage) return null;
