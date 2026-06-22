@@ -39,9 +39,18 @@ export async function POST(request: Request) {
     .eq('id', templateId).eq('tenant_id', session.tenant_id).maybeSingle();
   if (!tpl) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 });
 
-  const { token } = await resolveCreds(session.tenant_id);
-  const wabaId = await resolveWaba(session.tenant_id);
+  const tenantId = session.tenant_id;
+  const creds = await resolveCreds(tenantId);
+  const wabaId = await resolveWaba(tenantId);
   if (!wabaId) return NextResponse.json({ error: 'No hay WABA configurado para este tenant.' }, { status: 400 });
+
+  // Logging TEMPORAL de diagnóstico (quitar tras resolver el problema del WABA).
+  // No imprime el token completo: solo longitud y últimos 6 chars para identificar
+  // de qué origen viene (fila de whatsapp_numbers vs token global de env).
+  console.log('[META-DEBUG] tenantId:', tenantId);
+  console.log('[META-DEBUG] wabaId:', wabaId);
+  console.log('[META-DEBUG] token source length:', creds.token?.length, 'token ends:', creds.token?.slice(-6));
+  console.log('[META-DEBUG] phoneId:', creds.phoneId);
 
   try {
     const res = await createMessageTemplate(
@@ -52,7 +61,7 @@ export async function POST(request: Request) {
         bodyText: tpl.body,
         buttons:  Array.isArray(tpl.buttons) ? tpl.buttons : [],
       },
-      { token, wabaId },
+      { token: creds.token, wabaId },
     );
     return NextResponse.json({ ok: true, meta_id: res?.id ?? null, status: res?.status ?? 'PENDING' });
   } catch (err: any) {
