@@ -59,11 +59,21 @@ Columnas: Usuario, Teléfono, Estado, Recargas (cantidad) y Monto total. Sirve p
 
   campanas: {
     titulo: 'Campañas (mensajes masivos)',
-    contenido: `Crear: botón "+ Nueva campaña". Completá: Nombre; Tipo de mensaje: "✏️ Texto libre" (solo llega a contactos que escribieron en las últimas 24 hs — regla de WhatsApp) o "📋 Template Meta" (llega a cualquier contacto, requiere una plantilla aprobada en Meta Business Manager); Destinatarios (Todos, Cliente activo, Inactivo, Inactivo sin recargar 30+/45+ días, Nuevo) y el selector "Línea" para apuntar a una sola línea de WhatsApp; Límite de contactos (opcional). Debajo del filtro ves el conteo estimado de destinatarios.
+    contenido: `Crear: botón "+ Nueva campaña". El wizard tiene 4 pasos:
 
-Para templates: el "Nombre del template" debe coincidir EXACTO con el de Meta Business Manager, más el idioma y las variables {{1}}, {{2}}… — el botón "+ {{nombre}}" hace que cada contacto reciba su propio nombre. El botón "♻️ Reactivación" precarga una campaña típica de reactivación con filtro de 30+ días.
+PASO 1 — PLANTILLA: Elegí "✏️ Texto libre" (solo llega a contactos que escribieron en las últimas 24 hs, regla de WhatsApp) o "📋 Template Meta" (llega a cualquier contacto, requiere plantilla aprobada en Meta Business Manager). Las plantillas se configuran en "Configuración → Plantillas de WhatsApp".
 
-La campaña se guarda como borrador: se manda con "Enviar campaña" (pide confirmación — no se puede deshacer) y se puede "Eliminar" mientras sea borrador. Cada contacto recibe por SU línea de WhatsApp. Abajo está el "Historial de envíos" (colapsable) con las campañas completadas: filtros rápidos de 7 días / 15 días / 1 mes / 3 meses / 1 año, y por cada una: fecha, tipo, template y destinatarios alcanzados.`,
+PASO 2 — DESTINATARIOS: Filtrá por tipo (Todos, Cliente activo, Inactivo, Inactivo sin recargar N días, Nuevo) y por línea de WhatsApp. El campo de inactividad acepta de 1 a 365 días (default 30). Tildá "Excluir contactos de campañas anteriores" para no repetir destinatarios. Abajo del filtro ves el conteo estimado en tiempo real.
+
+PASO 3 — CONFIGURACIÓN: Ajustá los intervalos entre mensajes (mínimo y máximo en segundos) y las pausas automáticas (cada cuántos mensajes pausar y cuántos segundos). Para números nuevos (menos de 30 días): intervalos 45-90 seg, pausas cada 20 mensajes. Para números consolidados: intervalos 20-60 seg, pausas cada 50 mensajes.
+
+PASO 4 — CONFIRMAR: Revisá el resumen y enviá. Una vez confirmado no se puede deshacer.
+
+Para templates: el nombre debe coincidir EXACTO con el de Meta Business Manager, más idioma y variables {{1}}, {{2}}… El botón "+ {{nombre}}" personaliza con el nombre de cada contacto. El botón "♻️ Reactivación" precarga una campaña típica con filtro de 30 días.
+
+HISTORIAL: Colapsable abajo de la pantalla. Filtros de 7 días / 15 días / 1 mes / 3 meses / 1 año. Por cada campaña ves: fecha, tipo, template, enviados, entregados, leídos, respuestas (btn1/btn2) y fallidos. Si hay muchos fallidos, bajá la velocidad en la próxima campaña.
+
+CALENTAMIENTO DE NÚMEROS: Un número nuevo o sin uso por +15 días necesita calentamiento. Empezá con 20-30 mensajes por día y subí gradual. Saltear el calentamiento puede resultar en baneo del número.`,
   },
 
   dashboard: {
