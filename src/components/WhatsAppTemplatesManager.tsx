@@ -64,6 +64,10 @@ export default function WhatsAppTemplatesManager() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
+  // Negocio verificado en Meta (gate visual del botón "Enviar a Meta").
+  // Se persiste en localStorage para no re-tildarlo cada vez.
+  const [verified, setVerified] = useState(false);
+
   async function fetchTemplates() {
     try {
       const res = await fetch('/api/whatsapp-templates');
@@ -75,6 +79,16 @@ export default function WhatsAppTemplatesManager() {
   useEffect(() => {
     if (canManage) fetchTemplates();
   }, [canManage]);
+
+  // localStorage solo existe en el cliente: se lee tras el montaje.
+  useEffect(() => {
+    try { setVerified(localStorage.getItem('meta_business_verified') === 'true'); } catch {}
+  }, []);
+
+  function toggleVerified(v: boolean) {
+    setVerified(v);
+    try { localStorage.setItem('meta_business_verified', v ? 'true' : 'false'); } catch {}
+  }
 
   if (!canManage) return null;
 
@@ -136,6 +150,7 @@ export default function WhatsAppTemplatesManager() {
   }
 
   async function handleSubmitToMeta(t: Template) {
+    if (!verified) return;
     if (!confirm(`¿Enviar la plantilla "${t.name}" a Meta para aprobación?`)) return;
     setSubmitting(t.id);
     setSubmitResult((p) => { const n = { ...p }; delete n[t.id]; return n; });
@@ -183,6 +198,11 @@ export default function WhatsAppTemplatesManager() {
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: '#333', background: '#FAFAFA', borderRadius: '10px', padding: '10px 14px' }}>
+          <input type="checkbox" checked={verified} onChange={(e) => toggleVerified(e.target.checked)} />
+          Mi negocio está verificado en Meta Business Manager
+        </label>
+
         {loading && <p style={{ color: '#999', fontSize: '13px', margin: 0 }}>Cargando plantillas...</p>}
 
         {!loading && templates.length === 0 && (
@@ -221,7 +241,17 @@ export default function WhatsAppTemplatesManager() {
                 {!isEditing && (
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     <button onClick={() => startEdit(t)} style={smallBtn}>Editar</button>
-                    <button onClick={() => handleSubmitToMeta(t)} disabled={submitting === t.id} style={{ ...smallBtn, background: '#f0fff4', color: '#1a7a3a', border: '1px solid #86efac' }}>
+                    <button
+                      onClick={() => handleSubmitToMeta(t)}
+                      disabled={!verified || submitting === t.id}
+                      title={verified ? 'Enviar esta plantilla a Meta para aprobación' : 'Verificá tu negocio en Meta para usar esta función'}
+                      style={{
+                        ...smallBtn,
+                        ...(verified
+                          ? { background: '#f0fff4', color: '#1a7a3a', border: '1px solid #86efac' }
+                          : { background: '#F0F0F0', color: '#bbb', border: '1px solid #e0e0e0', cursor: 'not-allowed' }),
+                      }}
+                    >
                       {submitting === t.id ? 'Enviando…' : 'Enviar a Meta'}
                     </button>
                     <button onClick={() => handleDelete(t)} style={{ ...smallBtn, background: '#fff', color: '#E53935', border: '1px solid #f08080' }}>Eliminar</button>
