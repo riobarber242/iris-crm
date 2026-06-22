@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -63,15 +63,24 @@ export async function POST(request: Request) {
     tenant_id:          session.tenant_id,
   };
 
-  // Insert con exclude_campaign_ids; si la columna no existe todavía, reintenta
-  // sin ella para no perder la campaña (mismo patrón que recipient_ids).
+  // Config de ritmo del wizard. Columnas nuevas (supabase-campaign-tracking.sql):
+  // si todavía no están migradas, el reintento de abajo las descarta.
+  const configRow = {
+    interval_min_sec: interval_min_sec != null ? Number(interval_min_sec) : 1,
+    interval_max_sec: interval_max_sec != null ? Number(interval_max_sec) : 3,
+    pause_every:      pause_every ? Number(pause_every) : null,
+    pause_seconds:    pause_seconds ? Number(pause_seconds) : null,
+  };
+
+  // Insert con columnas opcionales (exclude_campaign_ids + config); si alguna no
+  // existe todavía, reintenta sin ellas para no perder la campaña.
   const { data, error } = await supabaseAdmin
     .from('campaigns')
-    .insert({ ...baseRow, exclude_campaign_ids: excludeIds })
+    .insert({ ...baseRow, ...configRow, exclude_campaign_ids: excludeIds })
     .select('*').single();
 
   if (error) {
-    console.warn('[campaigns] Insert con exclude_campaign_ids falló, reintento sin ella:', error.message);
+    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin ellas:', error.message);
     const { data: retry, error: rErr } = await supabaseAdmin
       .from('campaigns').insert(baseRow).select('*').single();
     if (rErr) return new NextResponse(rErr.message, { status: 500 });

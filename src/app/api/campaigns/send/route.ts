@@ -3,6 +3,14 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 
+// El envío hace sleeps entre mensajes (intervalo configurable + pausas). Subimos
+// el límite de ejecución de la función para listas grandes. OJO: aun así el plan
+// de Vercel impone un techo — para listas muy grandes conviene send_limit o
+// trocear el envío.
+export const maxDuration = 300;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function resolveContacts(filter: string, tenantId: string, targetNumberId: string | null) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
@@ -100,6 +108,12 @@ export async function POST(request: Request) {
     if (Array.isArray(tpl?.buttons)) buttons = tpl.buttons;
   }
 
+  // ── Config de ritmo de envío (con defaults seguros si faltan columnas) ───────
+  const intervalMin = Math.max(0, Number(campaign.interval_min_sec ?? 1) || 0);
+  const intervalMax = Math.max(intervalMin, Number(campaign.interval_max_sec ?? 3) || 0);
+  const pauseEvery  = Math.max(0, Number(campaign.pause_every ?? 0) || 0);
+  const pauseSecs   = Math.max(0, Number(campaign.pause_seconds ?? 0) || 0);
+
   let sent = 0;
   const sentContactIds: string[] = [];
 
@@ -111,8 +125,9 @@ export async function POST(request: Request) {
 
       // Cada contacto recibe por SU número (el último por el que habló);
       // sin número asignado, resolveCreds cae al default del tenant.
+      let wamid: string | null = null;
       if (isTemplate) {
-        await sendWhatsAppTemplate(
+        wamid = await sendWhatsAppTemplate(
           contact.phone,
           campaign.template_name,
           campaign.template_language ?? 'es',
@@ -136,12 +151,32 @@ export async function POST(request: Request) {
         content:    msgContent,
         tenant_id:  session.tenant_id,
       });
+
+      // Registrar el envío para trackear ticks y respuestas de botón por wamid.
+      if (isTemplate && wamid) {
+        const { error: cmsErr } = await supabaseAdmin.from('campaign_message_status').insert({
+          campaign_id: campaignId,
+          contact_id:  contact.id,
+          tenant_id:   session.tenant_id,
+          wamid,
+          status:      'sent',
+        });
+        if (cmsErr) console.warn('[campaign send] No se registró campaign_message_status (¿tabla?):', cmsErr.message);
+      }
+
       sent++;
       sentContactIds.push(contact.id);
     } catch {
       console.error(`[campaign send] Falló envío a ${contact.phone}`);
     }
-    await new Promise((r) => setTimeout(r, 150));
+
+    // Pausa automática cada N mensajes; si no, intervalo aleatorio entre min y max.
+    if (pauseEvery > 0 && pauseSecs > 0 && sent > 0 && sent % pauseEvery === 0) {
+      await sleep(pauseSecs * 1000);
+    } else {
+      const delayMs = (intervalMin + Math.random() * (intervalMax - intervalMin)) * 1000;
+      await sleep(delayMs);
+    }
   }
 
   // Registrar destinatarios para que futuras campañas puedan excluirlos. Si la

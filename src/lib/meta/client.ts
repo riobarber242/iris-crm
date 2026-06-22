@@ -167,7 +167,7 @@ export async function sendWhatsAppTemplate(
   tenantId?: string,
   numberId?: string | null,
   buttons?: string[],
-) {
+): Promise<string | null> {
   const creds   = await resolveCreds(tenantId, numberId);
   const token   = creds.token;
   // Un phoneNumberId explícito (ej. plantilla con número dedicado) tiene prioridad
@@ -208,9 +208,12 @@ export async function sendWhatsAppTemplate(
   if (components.length > 0) body.template.components = components;
 
   try {
-    await withTransientRetry(`sendWhatsAppTemplate → ${to}`, () =>
+    // Devolvemos el wamid (como sendWhatsAppText) para poder trackear ticks y
+    // respuestas de botón de las campañas. null si no vino en la respuesta.
+    const res = await withTransientRetry(`sendWhatsAppTemplate → ${to}`, () =>
       axios.post(`${BASE_URL}/${phoneId}/messages`, body, { headers }),
     );
+    return res.data?.messages?.[0]?.id ?? null;
   } catch (err: any) {
     logApiError('sendWhatsAppTemplate', err);
     throw err;

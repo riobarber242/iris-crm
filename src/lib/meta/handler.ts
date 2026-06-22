@@ -258,6 +258,39 @@ async function processStatus(status: any) {
     .eq('whatsapp_message_id', wamid);
   if (error) console.warn(`[status] No se pudo actualizar status=${newStat} wamid=${wamid}:`, error.message);
   else       console.log(`[status] wamid=${wamid} → ${newStat}`);
+
+  // ── Tracking de campañas ────────────────────────────────────────────────────
+  // Si este wamid pertenece a un envío de campaña, refleja el tick en
+  // campaign_message_status e incrementa el contador de la campaña UNA sola vez
+  // por transición (delivered/read/failed), idempotente ante reenvíos de Meta.
+  try {
+    const { data: cms } = await supabaseAdmin
+      .from('campaign_message_status')
+      .select('id, campaign_id, status, delivered_at, read_at')
+      .eq('wamid', wamid)
+      .maybeSingle();
+    if (cms?.campaign_id) {
+      const patch: Record<string, any> = { status: newStat };
+      let counterCol: string | null = null;
+      if (newStat === 'delivered' && !cms.delivered_at) {
+        patch.delivered_at = new Date().toISOString();
+        counterCol = 'delivered_count';
+      } else if (newStat === 'read' && !cms.read_at) {
+        patch.read_at = new Date().toISOString();
+        counterCol = 'read_count';
+      } else if (newStat === 'failed' && cms.status !== 'failed') {
+        counterCol = 'failed_count';
+      }
+
+      await supabaseAdmin.from('campaign_message_status').update(patch).eq('id', cms.id);
+      if (counterCol) {
+        const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col: counterCol });
+        if (incErr) console.warn(`[status] increment_campaign_counter ${counterCol} falló:`, incErr.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[status] Tracking de campaña falló (¿tabla campaign_message_status?):', err);
+  }
 }
 
 // ─── Core message processor ───────────────────────────────────────────────────
@@ -313,6 +346,45 @@ async function processMessage(
         if (error) console.warn('[webhook] No se pudo guardar reacción entrante (¿falta columna?):', error.message);
       } catch (err) {
         console.error('[webhook] Excepción guardando reacción entrante:', err);
+      }
+    }
+    return;
+  }
+
+  // ── Respuesta de botón (quick-reply de una plantilla de campaña) ────────────
+  // El mensaje trae button.payload (btn_0/btn_1) y context.id = wamid del
+  // template que enviamos. Lo matcheamos contra campaign_message_status para
+  // registrar la respuesta y contar btn1/btn2. Solo cuenta el PRIMER click de
+  // cada destinatario (idempotente ante reenvíos del webhook o re-clicks). No
+  // dispara el bot.
+  if (type === 'button') {
+    const ctxWamid = message.context?.id as string | undefined;
+    const payload  = (message.button?.payload ?? '') as string;
+    const btnText  = (message.button?.text ?? '') as string;
+    console.log(`[webhook] Botón entrante: payload="${payload}" text="${btnText}" context=${ctxWamid}`);
+    if (ctxWamid) {
+      try {
+        const { data: cms } = await supabaseAdmin
+          .from('campaign_message_status')
+          .select('id, campaign_id, btn_payload')
+          .eq('wamid', ctxWamid)
+          .maybeSingle();
+        if (cms?.campaign_id) {
+          const firstClick = !cms.btn_payload;
+          await supabaseAdmin
+            .from('campaign_message_status')
+            .update({ btn_payload: payload, btn_text: btnText })
+            .eq('id', cms.id);
+          if (firstClick) {
+            const col = payload === 'btn_0' ? 'btn1_count' : payload === 'btn_1' ? 'btn2_count' : null;
+            if (col) {
+              const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col });
+              if (incErr) console.warn(`[button] increment_campaign_counter ${col} falló:`, incErr.message);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[button] Tracking de botón falló (¿tabla campaign_message_status?):', err);
       }
     }
     return;
