@@ -96,17 +96,21 @@ En la lista podés editar cada miembro (lápiz): nombre, email, rol, horario, pe
   },
 
   mi_bot: {
-    titulo: 'Mi Bot (prompt y números de WhatsApp)',
-    contenido: `Sección "System Prompt de tu Bot": el texto que define la personalidad y reglas del bot automático que responde a tus clientes por WhatsApp. Editá el texto y tocá "Guardar cambios" (máximo 4000 caracteres; el contador está abajo a la derecha). "Restaurar por defecto" vuelve al prompt original. TIP: también podés pedirme a mí los cambios en palabras simples ("quiero un bot más amable que derive a humano si se enojan") — te propongo el texto, lo revisás y recién con tu confirmación lo aplico.
+    titulo: 'Mi Bot (control del bot, prompt y modo offline)',
+    contenido: `Sección "Control del bot": prendé o pausá el bot automático que responde a tus clientes por WhatsApp (también está el toggle rápido en la barra superior).
 
-Sección "Números de WhatsApp" (solo admin): las líneas conectadas al panel. "+ Agregar número" pide Label (ej: "Línea 2"), el Phone number ID de Meta, y opcionalmente un access token propio y el WABA ID (vacíos = usan los globales). Por cada línea: "Verificar" (consulta a Meta y muestra el número real ✅ o el error), "Editar" (label/token/WABA), "Hacer default" (solo una línea puede ser default) y Activar/Desactivar. No se puede desactivar la línea default ni la única activa. Cada conversación responde por el último número al que escribió el cliente.`,
+Sección "System Prompt de tu Bot": el texto que define la personalidad y reglas del bot automático. Editá el texto y tocá "Guardar cambios" (máximo 4000 caracteres; el contador está abajo a la derecha). "Restaurar por defecto" vuelve al prompt original. TIP: también podés pedirme a mí los cambios en palabras simples ("quiero un bot más amable que derive a humano si se enojan") — te propongo el texto, lo revisás y recién con tu confirmación lo aplico.
+
+Sección "Modo offline": cuando lo activás, el bot deja de atender y responde a todos los clientes con un único mensaje fijo de cierre (también está el toggle rápido en la barra superior). Los números de WhatsApp y las plantillas se administran en Configuración, no acá.`,
   },
 
   configuracion: {
-    titulo: 'Configuración (ajustes del sistema)',
-    contenido: `Secciones de la página: "Control del bot" (prender o pausar el bot automático — también está el toggle rápido en la barra superior, junto al de modo offline); "Notificación de recarga verificada" (manda automáticamente "Tu recarga de $X fue confirmada ✅" al verificar un comprobante); "Clasificación de contactos" (fuerza la actualización de estados sin esperar el cron diario); "Respuestas rápidas" (las plantillas que el equipo usa desde el chat con el botón ⚡: crear, editar y borrar); "Prompt del bot" y "Variables de sistema" (configuración interna).
+    titulo: 'Configuración (ajustes de la cuenta)',
+    contenido: `Secciones de la página (admin y agente): "Notificación de recarga verificada" (mensaje que se manda al cliente al verificar una recarga, editable con la variable $monto); "Clasificación de contactos" (fuerza la actualización de estados sin esperar el cron diario); "Respuestas rápidas" (plantillas de mensajes que el equipo usa desde el chat con el botón ⚡: crear, editar y borrar); "Números de WhatsApp" (las líneas conectadas al panel); "Plantillas de WhatsApp" (plantillas para campañas Template Meta).
 
-El modo offline (toggle en la barra superior) hace que el bot responda a todos con el mensaje de cierre ("no estamos operando") hasta que lo desactives.`,
+"Números de WhatsApp": "+ Agregar número" pide Label (ej: "Línea 2"), el Phone number ID de Meta, y opcionalmente un access token propio y el WABA ID (vacíos = usan los globales). Por cada línea: "Verificar" (consulta a Meta y muestra el número real ✅ o el error), "Editar" (label/token/WABA), "Hacer default" (solo una línea puede ser default) y Activar/Desactivar. No se puede desactivar la línea default ni la única activa. Cada conversación responde por el último número al que escribió el cliente.
+
+"Plantillas de WhatsApp": mensajes predefinidos para campañas Template Meta. "+ Agregar plantilla" (nombre, idioma, cuerpo con variables {{1}}, botones opcionales) y "Enviar a Meta" para mandarla a aprobación. El control del bot y el modo offline NO están acá: se manejan en "Mi Bot".`,
   },
 };
 
