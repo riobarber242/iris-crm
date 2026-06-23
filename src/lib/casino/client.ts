@@ -34,7 +34,7 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
   const token = process.env.CASINO_API_TOKEN;
   if (!token) return { ok: false, error: 'CASINO_API_TOKEN no configurado' };
 
-  const user = String(username ?? '').trim().toLowerCase();
+  const user = String(username ?? '').trim();
   if (!user) return { ok: false, error: 'Falta el nombre del player' };
 
   const monto = Math.trunc(Number(amount));
