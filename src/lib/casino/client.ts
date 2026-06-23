@@ -26,7 +26,10 @@ async function getCasinoToken(): Promise<string | null> {
       body: JSON.stringify({ usernameOrEmailAddress: AGENT_USERNAME, password: AGENT_PASSWORD }),
     });
     if (!res.ok) {
-      console.error(`[Casino] Authenticate HTTP ${res.status}`);
+      // Log temporal de diagnóstico: status + primeros 200 chars del body. NO
+      // expone la password (está en el request, no en la respuesta).
+      const body = await res.text().catch(() => '');
+      console.error(`[Casino] Authenticate HTTP ${res.status} — body:`, body.slice(0, 200));
       return null;
     }
     const data = await res.json();
