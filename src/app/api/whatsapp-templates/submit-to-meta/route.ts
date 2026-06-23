@@ -41,14 +41,35 @@ export async function POST(request: Request) {
 
   const tenantId = session.tenant_id;
   const creds = await resolveCreds(tenantId);
-  const wabaId = await resolveWaba(tenantId);
+
+  // Derivar el WABA real del token desde SU phone number id: garantiza que token y
+  // WABA pertenezcan al mismo negocio (evita el "object does not exist" por descalce
+  // entre el waba_id de la DB y el token efectivo).
+  let wabaId: string | null = null;
+  let wabaSource = 'derived';
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v21.0/${creds.phoneId}?fields=whatsapp_business_account`,
+      { headers: { Authorization: `Bearer ${creds.token}` } },
+    );
+    if (r.ok) {
+      const j = await r.json();
+      wabaId = j?.whatsapp_business_account?.id ?? null;
+    }
+  } catch { /* cae al fallback de abajo */ }
+
+  // Fallback: el resolveWaba actual (fila default / legacy / env).
+  if (!wabaId) {
+    wabaSource = 'fallback';
+    wabaId = await resolveWaba(tenantId);
+  }
   if (!wabaId) return NextResponse.json({ error: 'No hay WABA configurado para este tenant.' }, { status: 400 });
 
   // Logging TEMPORAL de diagnóstico (quitar tras resolver el problema del WABA).
   // No imprime el token completo: solo longitud y últimos 6 chars para identificar
   // de qué origen viene (fila de whatsapp_numbers vs token global de env).
   console.log('[META-DEBUG] tenantId:', tenantId);
-  console.log('[META-DEBUG] wabaId:', wabaId);
+  console.log('[META-DEBUG] wabaId:', wabaId, 'source:', wabaSource);
   console.log('[META-DEBUG] token source length:', creds.token?.length, 'token ends:', creds.token?.slice(-6));
   console.log('[META-DEBUG] phoneId:', creds.phoneId);
 

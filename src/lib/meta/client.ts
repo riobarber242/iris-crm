@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { supabaseAdmin } from '../db';
 
-const BASE_URL = 'https://graph.facebook.com/v18.0';
+const BASE_URL = 'https://graph.facebook.com/v21.0';
 
 function getToken(): string {
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
