@@ -6,7 +6,7 @@ import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
-import { applyCasinoDeposit } from '@/lib/casino/client';
+import { creditPlayer } from '@/lib/casino/client';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import type { SessionPayload } from '@/lib/session';
 
@@ -315,16 +315,34 @@ export async function PATCH(request: Request) {
         });
     if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
 
-    // Integración casino (celuapuestas): al verificar una CARGA, acreditar el
-    // monto al player vía DoDeposit. Si falla, NO se verifica (sin reintentos
-    // automáticos). Gateado por el flag casino_deposit_enabled del tenant; con el
-    // flag OFF, applyCasinoDeposit devuelve applied:false y no toca nada.
-    if (!esPago) {
-      const dep = await applyCasinoDeposit(session, comprobante, Number(efectiveMonto ?? 0));
-      if (!dep.ok) return new NextResponse(dep.error, { status: 400 });
-      if (dep.applied) {
-        updatePayload.casino_deposited_at = dep.depositedAt;
-        updatePayload.casino_deposit_ref  = dep.ref ?? null;
+    // Integración casino (celuapuestas): al verificar una CARGA, acreditar al
+    // player con creditPlayer (lookup de targetId + DoDeposit). Si falla, NO se
+    // verifica (sin reintentos automáticos). Se conserva el kill switch
+    // (casino_deposit_enabled) y la idempotencia (casino_deposited_at).
+    if (!esPago && !comprobante.casino_deposited_at) {
+      const { data: flagRow } = await supabaseAdmin
+        .from('settings').select('value')
+        .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
+      const montoCasino = Number(efectiveMonto ?? 0);
+      if (flagRow?.value === 'true' && montoCasino > 0) {
+        // El username del player = contacts.name. El PATCH trae el comprobante con
+        // select('*') (sin join), así que el nombre se busca aparte.
+        const { data: ct } = await supabaseAdmin
+          .from('contacts').select('name')
+          .eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).maybeSingle();
+        const username = String(ct?.name ?? '').trim();
+        if (!username) {
+          return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
+        }
+        const cred = await creditPlayer(username, montoCasino);
+        if (!cred.success) {
+          return new NextResponse(cred.error ?? 'No se pudo acreditar en el casino. La recarga NO se verificó.', { status: 400 });
+        }
+        updatePayload.casino_deposited_at = new Date().toISOString();
+        await logActivity({
+          session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
+          details: { ok: true, username, amount: montoCasino },
+        });
       }
     }
   }

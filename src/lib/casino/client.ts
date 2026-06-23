@@ -1,208 +1,118 @@
-import axios from 'axios';
-import { supabaseAdmin } from '../db';
-import { logActivity, ACTIVITY } from '../activity-log';
-import type { SessionPayload } from '../session';
+// src/lib/casino/client.ts
+// Endpoints verificados el 23/06/2026 capturando requests reales del panel admin.celuapuestas.bond
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Integración con el casino (celuapuestas): al verificar una CARGA en Iris,
-// acreditar el monto al player vía el endpoint DoDeposit (framework ABP).
-//
-// Credenciales por env (v1, solo tenant Casino 17Star):
-//   CASINO_API_TOKEN    — System User JWT del agente, con permiso para depositar.
-//   CASINO_API_BASE_URL — base del casino (default https://admin.celuapuestas.bond).
-//
-// Reglas de negocio fijadas: 1 ficha = 1 peso ARS (amount = monto tal cual);
-// username del player = contacts.name; si DoDeposit falla NO se verifica y NO se
-// reintenta automáticamente.
-// ─────────────────────────────────────────────────────────────────────────────
+const CASINO_BASE_URL = process.env.CASINO_API_BASE_URL!;
+const CASINO_TOKEN = process.env.CASINO_API_TOKEN!;
+const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
+const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
 
-const DEFAULT_BASE_URL = 'https://admin.celuapuestas.bond';
-const FLAG_KEY = 'casino_deposit_enabled';
-
-// Agente del casino (gonza0106) bajo el cual se buscan los players y se acreditan
-// los depósitos. v1 hardcodeado; si hay varios agentes/tenants, mover a env/config.
-const AGENT_ID = 'cmoj1nya83zdnmhqizvk1hpbt';
-const AGENT_USERNAME = 'gonza0106';
-
-function getBaseUrl(): string {
-  return (process.env.CASINO_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+function casinoHeaders() {
+  return {
+    'Authorization': `Bearer ${CASINO_TOKEN}`,
+    'Content-Type': 'application/json',
+  };
 }
 
-export type DoDepositResult =
-  | { ok: true; ref: string | null }
-  | { ok: false; error: string };
-
-type LookupResult = { ok: true; targetId: string } | { ok: false; error: string };
-
-// Resuelve el targetId (id interno del player en el casino) buscando por username
-// dentro de los hijos del agente: GET …/Players/GetAgentWithChildren?parentId=<agente>.
-// El match de username es case-insensitive. La estructura exacta de la respuesta
-// no está documentada: buscamos el array y los campos en variantes conocidas.
-async function getPlayerTargetId(username: string): Promise<LookupResult> {
-  const token = process.env.CASINO_API_TOKEN;
-  if (!token) return { ok: false, error: 'CASINO_API_TOKEN no configurado' };
-
-  const user = String(username ?? '').trim();
-  if (!user) return { ok: false, error: 'Falta el nombre del player' };
-
-  try {
-    const res = await axios.get(
-      `${getBaseUrl()}/api/services/app/Players/GetAgentWithChildren`,
-      {
-        params:  { parentId: AGENT_ID },
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        timeout: 15000,
-        validateStatus: () => true,
-      },
-    );
-    if (res.status !== 200) return { ok: false, error: `Lookup de player falló (HTTP ${res.status})` };
-
-    // El array de hijos puede venir directo o envuelto en el envelope ABP.
-    const data: any = res.data;
-    const arr: any[] =
-      Array.isArray(data)                     ? data
-      : Array.isArray(data?.result)           ? data.result
-      : Array.isArray(data?.result?.children) ? data.result.children
-      : Array.isArray(data?.result?.items)    ? data.result.items
-      : Array.isArray(data?.children)         ? data.children
-      : Array.isArray(data?.items)            ? data.items
-      : [];
-
-    const target = user.toLowerCase();
-    const player = arr.find((p: any) =>
-      String(p?.username ?? p?.userName ?? p?.name ?? '').trim().toLowerCase() === target,
-    );
-    if (!player) return { ok: false, error: 'Player no encontrado en el casino' };
-
-    const id = player.userId ?? player.id ?? player.targetId ?? null;
-    if (id == null) return { ok: false, error: 'El player se encontró pero no trae userId en el lookup' };
-    return { ok: true, targetId: String(id) };
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? 'Error en el lookup del player' };
-  }
-}
-
-// Llama al endpoint DoDeposit. OJO: ABP devuelve HTTP 500 con success:false en
-// errores de negocio (ej. "Entidad no encontrada"), así que la fuente de verdad
-// es body.success, NO el status HTTP.
-export async function doDeposit(username: string, amount: number): Promise<DoDepositResult> {
-  const token = process.env.CASINO_API_TOKEN;
-  if (!token) return { ok: false, error: 'CASINO_API_TOKEN no configurado' };
-
-  const user = String(username ?? '').trim();
-  if (!user) return { ok: false, error: 'Falta el nombre del player' };
-
-  const monto = Math.trunc(Number(amount));
-  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto inválido' };
-
-  // 1) Resolver el targetId (id interno del player). Si no se encuentra, no se deposita.
-  const lookup = await getPlayerTargetId(user);
-  if (!lookup.ok) return { ok: false, error: lookup.error };
-
-  // 2) Acreditar el depósito con el body completo que espera el casino.
-  try {
-    const res = await axios.post(
-      `${getBaseUrl()}/api/services/app/Players/DoDeposit`,
-      {
-        username:      user,
-        userName:      user,
-        userType:      1,
-        agentId:       AGENT_ID,
-        agentUserName: AGENT_USERNAME,
-        amount:        monto,
-        targetId:      lookup.targetId,
-      },
-      {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        timeout: 15000,
-        validateStatus: () => true, // parseamos el envelope ABP, no el status HTTP
-      },
-    );
-
-    const data: any = res.data;
-    const isObj = data !== null && typeof data === 'object';
-
-    // ÉXITO: el casino devuelve HTTP 200 con un body HTML (string), NO el envelope
-    // JSON de error. Tratamos 200 como éxito salvo que venga un fallo EXPLÍCITO
-    // (envelope ABP con success:false o unAuthorizedRequest). Los errores reales
-    // (ej. "Entidad no encontrada") llegan con HTTP 500 + success:false.
-    const fallaExplicita = isObj && (data.success === false || data.unAuthorizedRequest === true);
-    if (res.status === 200 && !fallaExplicita) {
-      const ref = isObj ? (data.result?.id ?? data.result?.transactionId ?? null) : null;
-      return { ok: true, ref: ref != null ? String(ref) : null };
-    }
-
-    if (isObj && data.unAuthorizedRequest) {
-      return { ok: false, error: 'El token del casino no está autorizado (revisá CASINO_API_TOKEN).' };
-    }
-    // data.error puede ser string ("Entidad no encontrada") u objeto {message,...}.
-    const err = isObj
-      ? (data.error?.message ?? data.error ?? `Respuesta inesperada del casino (HTTP ${res.status})`)
-      : `Respuesta inesperada del casino (HTTP ${res.status})`;
-    return { ok: false, error: String(err) };
-  } catch (err: any) {
-    return { ok: false, error: err?.message ?? 'Error de red al acreditar en el casino' };
-  }
-}
-
-// Flag por tenant. Default OFF (sin fila, error o value != 'true' → false).
-export async function isCasinoDepositEnabled(tenantId: string): Promise<boolean> {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('settings').select('value')
-      .eq('key', FLAG_KEY).eq('tenant_id', tenantId).maybeSingle();
-    if (error) return false;
-    return data?.value === 'true';
-  } catch {
-    return false;
-  }
-}
-
-export type CasinoDepositResult =
-  | { ok: true; applied: boolean; ref?: string | null; depositedAt?: string }
-  | { ok: false; error: string };
-
-// Orquesta el depósito al verificar una CARGA: flag → idempotencia → username →
-// llamada. `applied:false` con `ok:true` significa "no correspondía depositar"
-// (flag off, no es carga, ya depositado o monto<=0): el caller verifica normal.
-// `ok:false` es un fallo real: el caller NO debe verificar.
-export async function applyCasinoDeposit(
-  session: SessionPayload,
-  comprobante: { id: string; tipo?: string | null; contact_id?: string | null; casino_deposited_at?: string | null },
-  monto: number,
-): Promise<CasinoDepositResult> {
-  if (!(await isCasinoDepositEnabled(session.tenant_id))) return { ok: true, applied: false };
-  if ((comprobante.tipo ?? 'carga') !== 'carga') return { ok: true, applied: false };
-  // Idempotencia: un comprobante se acredita en el casino UNA sola vez.
-  if (comprobante.casino_deposited_at) return { ok: true, applied: false };
-
-  const amount = Math.trunc(Number(monto));
-  if (!Number.isFinite(amount) || amount <= 0) return { ok: true, applied: false };
-
-  if (!comprobante.contact_id) {
-    return { ok: false, error: 'El comprobante no tiene contacto para acreditar en el casino.' };
-  }
-
-  const { data: contact } = await supabaseAdmin
-    .from('contacts').select('name')
-    .eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).maybeSingle();
-  const username = String(contact?.name ?? '').trim();
-  if (!username) {
-    return { ok: false, error: 'El contacto no tiene nombre cargado para usar como usuario del casino.' };
-  }
-
-  const dep = await doDeposit(username, amount);
-  if (!dep.ok) {
-    await logActivity({
-      session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobante.id,
-      details: { ok: false, username, amount, error: dep.error },
-    });
-    return { ok: false, error: `No se pudo acreditar en el casino: ${dep.error} La recarga NO se verificó.` };
-  }
-
-  await logActivity({
-    session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobante.id,
-    details: { ok: true, username, amount, ref: dep.ref },
+export async function getPlayerTargetId(username: string): Promise<string | null> {
+  const params = new URLSearchParams({
+    parentId: '-1',
+    username: AGENT_USERNAME,
+    userId: 'NaN',
+    userType: '2',
+    searchText: username,
+    onlyHidden: 'false',
+    offset: '0',
+    rowQty: '20',
+    searchInAllTree: 'false',
   });
-  return { ok: true, applied: true, ref: dep.ref, depositedAt: new Date().toISOString() };
+
+  const url = `${CASINO_BASE_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
+
+  const res = await fetch(url, { method: 'GET', headers: casinoHeaders() });
+
+  if (!res.ok) {
+    console.error(`[Casino] GetAgentWithChildren HTTP ${res.status}`);
+    return null;
+  }
+
+  const data = await res.json();
+  console.log('[Casino] GetAgentWithChildren shape:', JSON.stringify(data, null, 2).substring(0, 2000));
+
+  let items: any[] = [];
+  if (Array.isArray(data)) items = data;
+  else if (Array.isArray(data?.result)) items = data.result;
+  else if (Array.isArray(data?.result?.items)) items = data.result.items;
+  else if (Array.isArray(data?.items)) items = data.items;
+  else if (Array.isArray(data?.data)) items = data.data;
+
+  console.log(`[Casino] items: ${items.length}, buscando: ${username}`);
+
+  const player = items.find((p: any) =>
+    (p?.userName ?? p?.username ?? p?.UserName ?? '') === username
+  );
+
+  if (!player) {
+    console.error(`[Casino] Player "${username}" no encontrado. Primeros 3:`, items.slice(0, 3));
+    return null;
+  }
+
+  const targetId = player?.id ?? player?.Id ?? player?.userId ?? player?.targetId ?? null;
+  console.log(`[Casino] targetId: ${targetId}`);
+  return targetId ? String(targetId) : null;
+}
+
+export interface DoDepositResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function doDeposit(params: {
+  username: string;
+  userName: string;
+  userType: number;
+  agentId: string;
+  agentUserName: string;
+  amount: number;
+  targetId: string;
+}): Promise<DoDepositResult> {
+  const url = `${CASINO_BASE_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: casinoHeaders(),
+    body: JSON.stringify(params),
+  });
+
+  if (res.status === 201) return { success: true };
+
+  let errorBody = '';
+  try {
+    const text = await res.text();
+    if (text.trim().startsWith('{')) {
+      const json = JSON.parse(text);
+      errorBody = json?.error?.message ?? json?.message ?? text.substring(0, 200);
+    } else {
+      errorBody = `HTTP ${res.status} - respuesta no JSON`;
+    }
+  } catch {
+    errorBody = `HTTP ${res.status}`;
+  }
+
+  console.error(`[Casino] DoDeposit falló: ${errorBody}`);
+  return { success: false, error: errorBody };
+}
+
+export async function creditPlayer(username: string, amount: number): Promise<DoDepositResult> {
+  const targetId = await getPlayerTargetId(username);
+  if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
+
+  return doDeposit({
+    username,
+    userName: username,
+    userType: 1,
+    agentId: AGENT_ID,
+    agentUserName: AGENT_USERNAME,
+    amount,
+    targetId,
+  });
 }
