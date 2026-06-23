@@ -34,7 +34,7 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
   const token = process.env.CASINO_API_TOKEN;
   if (!token) return { ok: false, error: 'CASINO_API_TOKEN no configurado' };
 
-  const user = String(username ?? '').trim();
+  const user = String(username ?? '').trim().toLowerCase();
   if (!user) return { ok: false, error: 'Falta el nombre del player' };
 
   const monto = Math.trunc(Number(amount));
@@ -52,6 +52,12 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
     );
 
     const data: any = res.data ?? {};
+    // Diagnóstico temporal: ante HTTP 200 logueamos el body crudo COMPLETO para
+    // conocer la estructura real de la respuesta de ÉXITO (distinta del envelope
+    // de error que ya conocemos) y corregir después la detección de success.
+    if (res.status === 200) {
+      console.log('[doDeposit] HTTP 200 — body crudo:', JSON.stringify(res.data));
+    }
     if (data.success === true) {
       const ref = data.result?.id ?? data.result?.transactionId ?? null;
       return { ok: true, ref: ref != null ? String(ref) : null };
