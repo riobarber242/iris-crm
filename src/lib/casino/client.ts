@@ -19,6 +19,11 @@ import type { SessionPayload } from '../session';
 const DEFAULT_BASE_URL = 'https://admin.celuapuestas.bond';
 const FLAG_KEY = 'casino_deposit_enabled';
 
+// Agente del casino (gonza0106) bajo el cual se buscan los players y se acreditan
+// los depósitos. v1 hardcodeado; si hay varios agentes/tenants, mover a env/config.
+const AGENT_ID = 'cmoj1nya83zdnmhqizvk1hpbt';
+const AGENT_USERNAME = 'gonza0106';
+
 function getBaseUrl(): string {
   return (process.env.CASINO_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
 }
@@ -26,6 +31,56 @@ function getBaseUrl(): string {
 export type DoDepositResult =
   | { ok: true; ref: string | null }
   | { ok: false; error: string };
+
+type LookupResult = { ok: true; targetId: string } | { ok: false; error: string };
+
+// Resuelve el targetId (id interno del player en el casino) buscando por username
+// dentro de los hijos del agente: GET …/Players/GetAgentWithChildren?parentId=<agente>.
+// El match de username es case-insensitive. La estructura exacta de la respuesta
+// no está documentada: buscamos el array y los campos en variantes conocidas.
+async function getPlayerTargetId(username: string): Promise<LookupResult> {
+  const token = process.env.CASINO_API_TOKEN;
+  if (!token) return { ok: false, error: 'CASINO_API_TOKEN no configurado' };
+
+  const user = String(username ?? '').trim();
+  if (!user) return { ok: false, error: 'Falta el nombre del player' };
+
+  try {
+    const res = await axios.get(
+      `${getBaseUrl()}/api/services/app/Players/GetAgentWithChildren`,
+      {
+        params:  { parentId: AGENT_ID },
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+        validateStatus: () => true,
+      },
+    );
+    if (res.status !== 200) return { ok: false, error: `Lookup de player falló (HTTP ${res.status})` };
+
+    // El array de hijos puede venir directo o envuelto en el envelope ABP.
+    const data: any = res.data;
+    const arr: any[] =
+      Array.isArray(data)                     ? data
+      : Array.isArray(data?.result)           ? data.result
+      : Array.isArray(data?.result?.children) ? data.result.children
+      : Array.isArray(data?.result?.items)    ? data.result.items
+      : Array.isArray(data?.children)         ? data.children
+      : Array.isArray(data?.items)            ? data.items
+      : [];
+
+    const target = user.toLowerCase();
+    const player = arr.find((p: any) =>
+      String(p?.username ?? p?.userName ?? p?.name ?? '').trim().toLowerCase() === target,
+    );
+    if (!player) return { ok: false, error: 'Player no encontrado en el casino' };
+
+    const id = player.userId ?? player.id ?? player.targetId ?? null;
+    if (id == null) return { ok: false, error: 'El player se encontró pero no trae userId en el lookup' };
+    return { ok: true, targetId: String(id) };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'Error en el lookup del player' };
+  }
+}
 
 // Llama al endpoint DoDeposit. OJO: ABP devuelve HTTP 500 con success:false en
 // errores de negocio (ej. "Entidad no encontrada"), así que la fuente de verdad
@@ -40,10 +95,23 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
   const monto = Math.trunc(Number(amount));
   if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Monto inválido' };
 
+  // 1) Resolver el targetId (id interno del player). Si no se encuentra, no se deposita.
+  const lookup = await getPlayerTargetId(user);
+  if (!lookup.ok) return { ok: false, error: lookup.error };
+
+  // 2) Acreditar el depósito con el body completo que espera el casino.
   try {
     const res = await axios.post(
       `${getBaseUrl()}/api/services/app/Players/DoDeposit`,
-      { username: user, amount: monto, agentId: 'cmoj1nya83zdnmhqizvk1hpbt' },
+      {
+        username:      user,
+        userName:      user,
+        userType:      1,
+        agentId:       AGENT_ID,
+        agentUserName: AGENT_USERNAME,
+        amount:        monto,
+        targetId:      lookup.targetId,
+      },
       {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         timeout: 15000,
