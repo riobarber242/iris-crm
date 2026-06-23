@@ -39,6 +39,7 @@ async function getCasinoToken(): Promise<string | null> {
       console.error('[Casino] Authenticate no devolvió accessToken');
       return null;
     }
+    console.log('[Casino] accessToken (20):', String(token).slice(0, 20));
     // Margen de 60s para no usar un token a punto de vencer.
     const ttlMs = (expireInSeconds > 60 ? expireInSeconds - 60 : Math.max(expireInSeconds, 0)) * 1000;
     tokenCache = { token, expiresAt: now + ttlMs };
@@ -80,7 +81,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
   }
 
   const data = await res.json();
-  console.log('[Casino] GetAgentWithChildren shape:', JSON.stringify(data, null, 2).substring(0, 2000));
+  console.log('[Casino] GetAgentWithChildren shape:', JSON.stringify(data, null, 2).substring(0, 3000));
 
   let items: any[] = [];
   if (Array.isArray(data)) items = data;
@@ -121,25 +122,30 @@ export async function doDeposit(params: {
 }): Promise<DoDepositResult> {
   const url = `${CASINO_BASE_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
 
+  const reqBody = JSON.stringify(params);
+  console.log('[Casino] DoDeposit body:', reqBody);
+
   const res = await fetch(url, {
     method: 'POST',
     headers: await casinoHeaders(),
-    body: JSON.stringify(params),
+    body: reqBody,
   });
+
+  const respText = await res.text().catch(() => '');
+  console.log(`[Casino] DoDeposit resp status=${res.status} body:`, respText.slice(0, 1000));
 
   if (res.status === 201) return { success: true };
 
   let errorBody = '';
-  try {
-    const text = await res.text();
-    if (text.trim().startsWith('{')) {
-      const json = JSON.parse(text);
-      errorBody = json?.error?.message ?? json?.message ?? text.substring(0, 200);
-    } else {
-      errorBody = `HTTP ${res.status} - respuesta no JSON`;
+  if (respText.trim().startsWith('{')) {
+    try {
+      const json = JSON.parse(respText);
+      errorBody = json?.error?.message ?? json?.message ?? respText.substring(0, 200);
+    } catch {
+      errorBody = respText.substring(0, 200);
     }
-  } catch {
-    errorBody = `HTTP ${res.status}`;
+  } else {
+    errorBody = `HTTP ${res.status} - respuesta no JSON`;
   }
 
   console.error(`[Casino] DoDeposit falló: ${errorBody}`);
