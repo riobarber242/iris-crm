@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
-import { sendWhatsAppText, resolveCreds } from './client';
+import { sendWhatsAppText, resolveCreds, withTransientRetry } from './client';
 import { getOfflineMsg } from '../bot-config';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
@@ -103,7 +103,7 @@ const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. T
 const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te respondemos cuando volvamos 🙏';
 
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
-// Step 1: GET graph.facebook.com/v18.0/{mediaId}?fields=url  → temporary download URL
+// Step 1: GET graph.facebook.com/v21.0/{mediaId}?fields=url  → temporary download URL
 // Step 2: GET that download URL with Bearer token             → image buffer
 // Step 3: Upload buffer to Supabase Storage (service role)   → stored file
 // Step 4: Construct permanent public URL manually             → saved to DB
@@ -123,11 +123,13 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   // ── Step 1: resolve download URL from Graph API ──────────────────────────
   let downloadUrl: string;
   try {
-    const metaRes = await axios.get(`https://graph.facebook.com/v18.0/${mediaId}`, {
-      headers: { Authorization: `Bearer ${waToken}` },
-      params:  { fields: 'url' },
-      timeout: 15000,
-    });
+    const metaRes = await withTransientRetry(`saveComprobanteImage Step1 ${mediaId}`, () =>
+      axios.get(`https://graph.facebook.com/v21.0/${mediaId}`, {
+        headers: { Authorization: `Bearer ${waToken}` },
+        params:  { fields: 'url' },
+        timeout: 15000,
+      }),
+    );
     downloadUrl = metaRes.data?.url as string;
     if (!downloadUrl) throw new Error('Graph API no devolvió url en la respuesta');
     console.log(`[saveComprobanteImage] Step1 ✓ downloadUrl: ${downloadUrl.slice(0, 80)}`);
@@ -141,11 +143,13 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   let buffer: Buffer;
   let contentType: string;
   try {
-    const imgRes = await axios.get<ArrayBuffer>(downloadUrl, {
-      responseType: 'arraybuffer',
-      headers:      { Authorization: `Bearer ${waToken}` },
-      timeout:      30000,
-    });
+    const imgRes = await withTransientRetry(`saveComprobanteImage Step2 ${mediaId}`, () =>
+      axios.get<ArrayBuffer>(downloadUrl, {
+        responseType: 'arraybuffer',
+        headers:      { Authorization: `Bearer ${waToken}` },
+        timeout:      30000,
+      }),
+    );
     buffer      = Buffer.from(imgRes.data);
     contentType = (imgRes.headers['content-type'] as string) || 'image/jpeg';
     console.log(`[saveComprobanteImage] Step2 ✓ ${buffer.length} bytes, contentType=${contentType}`);

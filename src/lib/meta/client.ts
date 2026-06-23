@@ -98,7 +98,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Hasta 3 intentos en total (esperas de 2s y 5s). Corre dentro del webhook en
 // Vercel: el peor caso suma ~7s de espera, dentro del tiempo de ejecución de
 // la función — NO alargar estas esperas sin revisar ese límite.
-async function withTransientRetry<T>(context: string, fn: () => Promise<T>): Promise<T> {
+export async function withTransientRetry<T>(context: string, fn: () => Promise<T>): Promise<T> {
   const attempts = RETRY_DELAYS_MS.length + 1;
   for (let i = 0; ; i++) {
     try {
