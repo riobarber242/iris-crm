@@ -43,7 +43,7 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
   try {
     const res = await axios.post(
       `${getBaseUrl()}/api/services/app/Players/DoDeposit`,
-      { username: user, amount: monto },
+      { username: user, amount: monto, agentId: 'cmoj1nya83zdnmhqizvk1hpbt' },
       {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         timeout: 15000,
