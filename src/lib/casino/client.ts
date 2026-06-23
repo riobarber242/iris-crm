@@ -2,13 +2,54 @@
 // Endpoints verificados el 23/06/2026 capturando requests reales del panel admin.celuapuestas.bond
 
 const CASINO_BASE_URL = process.env.CASINO_API_BASE_URL!;
-const CASINO_TOKEN = process.env.CASINO_API_TOKEN!;
 const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
 const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
+const AGENT_PASSWORD = process.env.CASINO_AGENT_PASSWORD ?? '';
 
-function casinoHeaders() {
+// Cache en memoria del access token (por instancia/lambda). Se renueva vía
+// TokenAuth/Authenticate cuando vence, con un margen de 60s.
+let tokenCache: { token: string; expiresAt: number } | null = null;
+
+// Devuelve un access token válido del casino. Autentica con usuario+contraseña y
+// cachea el token hasta su expiración (expireInSeconds). Fallback: si NO hay
+// contraseña configurada, usa el token estático de env (CASINO_API_TOKEN).
+async function getCasinoToken(): Promise<string | null> {
+  const now = Date.now();
+  if (tokenCache && now < tokenCache.expiresAt) return tokenCache.token;
+
+  if (!AGENT_PASSWORD) return process.env.CASINO_API_TOKEN ?? null;
+
+  try {
+    const res = await fetch(`${CASINO_BASE_URL}/api/TokenAuth/Authenticate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usernameOrEmailAddress: AGENT_USERNAME, password: AGENT_PASSWORD }),
+    });
+    if (!res.ok) {
+      console.error(`[Casino] Authenticate HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    const token: string | null = data?.result?.accessToken ?? null;
+    const expireInSeconds = Number(data?.result?.expireInSeconds ?? 0);
+    if (!token) {
+      console.error('[Casino] Authenticate no devolvió accessToken');
+      return null;
+    }
+    // Margen de 60s para no usar un token a punto de vencer.
+    const ttlMs = (expireInSeconds > 60 ? expireInSeconds - 60 : Math.max(expireInSeconds, 0)) * 1000;
+    tokenCache = { token, expiresAt: now + ttlMs };
+    return token;
+  } catch (err: any) {
+    console.error('[Casino] Authenticate error:', err?.message ?? err);
+    return null;
+  }
+}
+
+async function casinoHeaders() {
+  const token = await getCasinoToken();
   return {
-    'Authorization': `Bearer ${CASINO_TOKEN}`,
+    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
 }
@@ -28,7 +69,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
 
   const url = `${CASINO_BASE_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
 
-  const res = await fetch(url, { method: 'GET', headers: casinoHeaders() });
+  const res = await fetch(url, { method: 'GET', headers: await casinoHeaders() });
 
   if (!res.ok) {
     console.error(`[Casino] GetAgentWithChildren HTTP ${res.status}`);
@@ -79,7 +120,7 @@ export async function doDeposit(params: {
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: casinoHeaders(),
+    headers: await casinoHeaders(),
     body: JSON.stringify(params),
   });
 
