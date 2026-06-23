@@ -51,22 +51,26 @@ export async function doDeposit(username: string, amount: number): Promise<DoDep
       },
     );
 
-    const data: any = res.data ?? {};
-    // Diagnóstico temporal: ante HTTP 200 logueamos el body crudo COMPLETO para
-    // conocer la estructura real de la respuesta de ÉXITO (distinta del envelope
-    // de error que ya conocemos) y corregir después la detección de success.
-    if (res.status === 200) {
-      console.log('[doDeposit] HTTP 200 — body crudo:', JSON.stringify(res.data));
-    }
-    if (data.success === true) {
-      const ref = data.result?.id ?? data.result?.transactionId ?? null;
+    const data: any = res.data;
+    const isObj = data !== null && typeof data === 'object';
+
+    // ÉXITO: el casino devuelve HTTP 200 con un body HTML (string), NO el envelope
+    // JSON de error. Tratamos 200 como éxito salvo que venga un fallo EXPLÍCITO
+    // (envelope ABP con success:false o unAuthorizedRequest). Los errores reales
+    // (ej. "Entidad no encontrada") llegan con HTTP 500 + success:false.
+    const fallaExplicita = isObj && (data.success === false || data.unAuthorizedRequest === true);
+    if (res.status === 200 && !fallaExplicita) {
+      const ref = isObj ? (data.result?.id ?? data.result?.transactionId ?? null) : null;
       return { ok: true, ref: ref != null ? String(ref) : null };
     }
-    if (data.unAuthorizedRequest) {
+
+    if (isObj && data.unAuthorizedRequest) {
       return { ok: false, error: 'El token del casino no está autorizado (revisá CASINO_API_TOKEN).' };
     }
     // data.error puede ser string ("Entidad no encontrada") u objeto {message,...}.
-    const err = data.error?.message ?? data.error ?? `Respuesta inesperada del casino (HTTP ${res.status})`;
+    const err = isObj
+      ? (data.error?.message ?? data.error ?? `Respuesta inesperada del casino (HTTP ${res.status})`)
+      : `Respuesta inesperada del casino (HTTP ${res.status})`;
     return { ok: false, error: String(err) };
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Error de red al acreditar en el casino' };
