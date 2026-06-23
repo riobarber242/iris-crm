@@ -18,6 +18,7 @@ export const ACTIVITY = {
   MOVIMIENTO_CAJA:        'movimiento_caja',        // movimiento de caja (carga/pago/descarga/sueldo/traspaso)
   CAJA_AJUSTE_MANUAL:     'caja_ajuste_manual',     // override del agente (set stock/billetera, borrar movimiento)
   CAJA_RESET:             'caja_reset',             // reset total de la caja (modo prueba)
+  CASINO_DEPOSIT:         'casino_deposit',         // acreditó (o intentó) un depósito en el casino externo (DoDeposit)
 
   MESSAGE_SENT:           'message_sent',          // respondió una conversación
   CONVERSATION_ATTENDED:  'conversation_attended', // atendió (abrió chat con mensajes sin leer)

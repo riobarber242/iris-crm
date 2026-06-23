@@ -6,6 +6,7 @@ import { sendWhatsAppText } from '@/lib/meta/client';
 import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
+import { applyCasinoDeposit } from '@/lib/casino/client';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import type { SessionPayload } from '@/lib/session';
 
@@ -313,6 +314,19 @@ export async function PATCH(request: Request) {
           bono:  efectiveBono,
         });
     if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
+
+    // Integración casino (celuapuestas): al verificar una CARGA, acreditar el
+    // monto al player vía DoDeposit. Si falla, NO se verifica (sin reintentos
+    // automáticos). Gateado por el flag casino_deposit_enabled del tenant; con el
+    // flag OFF, applyCasinoDeposit devuelve applied:false y no toca nada.
+    if (!esPago) {
+      const dep = await applyCasinoDeposit(session, comprobante, Number(efectiveMonto ?? 0));
+      if (!dep.ok) return new NextResponse(dep.error, { status: 400 });
+      if (dep.applied) {
+        updatePayload.casino_deposited_at = dep.depositedAt;
+        updatePayload.casino_deposit_ref  = dep.ref ?? null;
+      }
+    }
   }
 
   let { data, error } = await supabaseAdmin
@@ -324,6 +338,8 @@ export async function PATCH(request: Request) {
   if (error && /resolved_by|resolved_at|column|schema cache/i.test(error.message)) {
     const fallback: Record<string, any> = { estado };
     if (updatePayload.monto !== undefined) fallback.monto = updatePayload.monto;
+    if (updatePayload.casino_deposited_at !== undefined) fallback.casino_deposited_at = updatePayload.casino_deposited_at;
+    if (updatePayload.casino_deposit_ref  !== undefined) fallback.casino_deposit_ref  = updatePayload.casino_deposit_ref;
     ({ data, error } = await supabaseAdmin
       .from('comprobantes').update(fallback).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single());
   }
