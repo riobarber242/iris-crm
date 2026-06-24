@@ -19,11 +19,22 @@ async function getCasinoToken(): Promise<string | null> {
 
   if (!AGENT_PASSWORD) return process.env.CASINO_API_TOKEN ?? null;
 
+  // skinDomain = host de CASINO_API_BASE_URL (sin protocolo ni path).
+  const skinDomain = CASINO_BASE_URL.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
   try {
     const res = await fetch(`${CASINO_BASE_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usernameOrEmailAddress: AGENT_USERNAME, password: AGENT_PASSWORD }),
+      body: JSON.stringify({
+        userNameOrEmailAddress: AGENT_USERNAME,
+        password: AGENT_PASSWORD,
+        rememberClient: false,
+        twoFactorRememberClientToken: null,
+        singleSignIn: false,
+        returnUrl: null,
+        skinDomain,
+      }),
     });
     // Log temporal de diagnóstico: status + primeros 500 chars del body RAW (para
     // ver si el casino devuelve HTML en vez de JSON). No expone la password (va en
