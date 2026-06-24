@@ -86,7 +86,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
     onlyHidden: 'false',
     offset: '0',
     rowQty: '20',
-    searchInAllTree: 'false',
+    searchInAllTree: 'true',
   });
 
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
@@ -98,7 +98,18 @@ export async function getPlayerTargetId(username: string): Promise<string | null
     return null;
   }
 
-  const data = await res.json();
+  // Logueamos el body RAW antes de parsear: si el casino bloquea la IP de
+  // egress (Vercel/US) devuelve su SPA en HTML con status 200, y JSON.parse
+  // tiraría un error no capturado (→ 500). Con esto vemos exactamente qué llega.
+  const text = await res.text();
+  console.log('[Casino] GetAgentWithChildren raw body (200 chars):', text.slice(0, 200));
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    console.error('[Casino] GetAgentWithChildren: body no es JSON (¿HTML/bloqueo?) — primeros 500:', text.slice(0, 500));
+    return null;
+  }
   console.log('[Casino] GetAgentWithChildren shape:', JSON.stringify(data, null, 2).substring(0, 3000));
 
   let items: any[] = [];

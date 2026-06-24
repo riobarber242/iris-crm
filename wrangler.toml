@@ -1,3 +1,9 @@
 name = "casino-proxy"
 main = "casino-proxy-worker.js"
 compatibility_date = "2024-01-01"
+
+# Smart Placement: Cloudflare ubica el Worker cerca del ORIGEN al que más
+# llama (el casino), no cerca del caller (el lambda de Vercel en US). Así el
+# egress hacia admin.celuapuestas.bond sale desde una región no bloqueada.
+[placement]
+mode = "smart"
