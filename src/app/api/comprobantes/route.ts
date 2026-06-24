@@ -328,9 +328,9 @@ export async function PATCH(request: Request) {
         // El username del player = contacts.name. El PATCH trae el comprobante con
         // select('*') (sin join), así que el nombre se busca aparte.
         const { data: ct } = await supabaseAdmin
-          .from('contacts').select('name')
+          .from('contacts').select('name, casino_username')
           .eq('id', comprobante.contact_id).eq('tenant_id', session.tenant_id).maybeSingle();
-        const username = String(ct?.name ?? '').trim();
+        const username = String(ct?.casino_username ?? ct?.name ?? '').trim();
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }

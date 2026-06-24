@@ -1,48 +1,47 @@
 // src/lib/casino/client.ts
-// Endpoints verificados el 23/06/2026 capturando requests reales del panel admin.celuapuestas.bond
+// Todas las llamadas al casino (admin.celuapuestas.bond) pasan por un Cloudflare
+// Worker proxy (casino-proxy) que agrega Origin/Referer y desbloquea el acceso.
+// El proxy se autentica con el header X-Proxy-Secret.
 
-const CASINO_BASE_URL = process.env.CASINO_API_BASE_URL!;
+const PROXY_URL = process.env.CASINO_PROXY_URL!;
+const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
 const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
-const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
 const AGENT_PASSWORD = process.env.CASINO_AGENT_PASSWORD ?? '';
+const SKIN_DOMAIN = 'admin.celuapuestas.bond';
 
 // Cache en memoria del access token (por instancia/lambda). Se renueva vía
 // TokenAuth/Authenticate cuando vence, con un margen de 60s.
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
-// Devuelve un access token válido del casino. Autentica con usuario+contraseña y
-// cachea el token hasta su expiración (expireInSeconds). Fallback: si NO hay
-// contraseña configurada, usa el token estático de env (CASINO_API_TOKEN).
+// Header común que autentica cada request contra el Worker proxy.
+function proxyHeaders(extra?: Record<string, string>) {
+  return {
+    'Content-Type': 'application/json',
+    'X-Proxy-Secret': PROXY_SECRET,
+    ...extra,
+  };
+}
+
+// Devuelve un access token válido del casino. Autentica con usuario+contraseña a
+// través del proxy y cachea el token hasta su expiración (expireInSeconds) con un
+// margen de 60s.
 async function getCasinoToken(): Promise<string | null> {
   const now = Date.now();
   if (tokenCache && now < tokenCache.expiresAt) return tokenCache.token;
 
-  if (!AGENT_PASSWORD) return process.env.CASINO_API_TOKEN ?? null;
-
-  // skinDomain = host de CASINO_API_BASE_URL (sin protocolo ni path).
-  const skinDomain = CASINO_BASE_URL.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!AGENT_PASSWORD) return null;
 
   try {
-    const res = await fetch(`${CASINO_BASE_URL}/api/TokenAuth/Authenticate`, {
+    const res = await fetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Referer': process.env.CASINO_API_BASE_URL!,
-        'Origin': process.env.CASINO_API_BASE_URL!,
-      },
+      headers: proxyHeaders(),
       body: JSON.stringify({
         userNameOrEmailAddress: AGENT_USERNAME,
         password: AGENT_PASSWORD,
-        rememberClient: false,
-        twoFactorRememberClientToken: null,
-        singleSignIn: false,
-        returnUrl: null,
-        skinDomain,
+        skinDomain: SKIN_DOMAIN,
       }),
     });
-    // Log temporal de diagnóstico: status + primeros 500 chars del body RAW (para
-    // ver si el casino devuelve HTML en vez de JSON). No expone la password (va en
-    // el request, no en la respuesta).
+
     const rawBody = await res.text().catch(() => '');
     console.log(`[Casino] Authenticate status=${res.status} — body(500):`, rawBody.slice(0, 500));
 
@@ -74,10 +73,7 @@ async function getCasinoToken(): Promise<string | null> {
 
 async function casinoHeaders() {
   const token = await getCasinoToken();
-  return {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  };
+  return proxyHeaders({ 'Authorization': `Bearer ${token}` });
 }
 
 export async function getPlayerTargetId(username: string): Promise<string | null> {
@@ -93,7 +89,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
     searchInAllTree: 'false',
   });
 
-  const url = `${CASINO_BASE_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
+  const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
 
   const res = await fetch(url, { method: 'GET', headers: await casinoHeaders() });
 
@@ -135,19 +131,11 @@ export interface DoDepositResult {
   error?: string;
 }
 
-export async function doDeposit(params: {
-  username: string;
-  userName: string;
-  userType: number;
-  agentId: string;
-  agentUserName: string;
-  amount: number;
-  targetId: string;
-}): Promise<DoDepositResult> {
+export async function doDeposit(targetId: string, amount: number): Promise<DoDepositResult> {
   // El query param ?username= lleva el username del AGENTE (no el del player).
-  const url = `${CASINO_BASE_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
+  const url = `${PROXY_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
 
-  const reqBody = JSON.stringify(params);
+  const reqBody = JSON.stringify({ targetId: Number(targetId), amount });
   console.log('[Casino] DoDeposit URL:', url);
   console.log('[Casino] DoDeposit body completo:', reqBody);
 
@@ -182,13 +170,5 @@ export async function creditPlayer(username: string, amount: number): Promise<Do
   const targetId = await getPlayerTargetId(username);
   if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
 
-  return doDeposit({
-    username,
-    userName: username,
-    userType: 1,
-    agentId: AGENT_ID,
-    agentUserName: AGENT_USERNAME,
-    amount,
-    targetId,
-  });
+  return doDeposit(targetId, amount);
 }
