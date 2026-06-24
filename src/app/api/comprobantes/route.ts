@@ -7,6 +7,7 @@ import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
 import { creditPlayer } from '@/lib/casino/client';
+import { notifyContactAgents } from '@/lib/push';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import type { SessionPayload } from '@/lib/session';
 
@@ -170,6 +171,26 @@ export async function POST(request: Request) {
     objectId:   data.id,
     details:    { tipo, contact_id: msg.contact_id, source_message_id: messageId },
   });
+
+  // ── Push: avisar a los agentes que entró una nueva carga/pago a verificar ──
+  // Espeja el patrón del webhook (handler.ts → notifyContactAgents). Best-effort:
+  // nunca debe romper la creación del comprobante si el push falla.
+  try {
+    const { data: contact } = await supabaseAdmin
+      .from('contacts')
+      .select('name, phone, assigned_agent_id')
+      .eq('id', msg.contact_id)
+      .eq('tenant_id', session.tenant_id)
+      .maybeSingle();
+    const quien = contact?.name || contact?.phone || 'Un contacto';
+    await notifyContactAgents(contact?.assigned_agent_id ?? null, session.tenant_id, {
+      title: tipo === 'carga' ? 'Nueva carga para verificar' : 'Nuevo pago para verificar',
+      body:  `${quien} envió un comprobante para verificar.`,
+      url:   tipo === 'carga' ? '/cargas' : '/pagos',
+    });
+  } catch (err) {
+    console.warn('[comprobantes] push notifyContactAgents falló (ignorado):', err);
+  }
 
   return NextResponse.json(data, { status: 201 });
 }
