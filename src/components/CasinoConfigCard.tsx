@@ -102,6 +102,18 @@ export default function CasinoConfigCard() {
         </button>
       </div>
 
+      {/* Indicador de estado (según switch + URL guardada) */}
+      <div style={{
+        fontSize: '13px', fontWeight: 700, marginTop: '-6px', wordBreak: 'break-all',
+        color: !enabled ? '#777' : (baseUrl.trim() ? '#1a7a3a' : '#9a6b00'),
+      }}>
+        {!enabled
+          ? '⚫ Desactivado'
+          : baseUrl.trim()
+            ? `🟢 Conectado a: ${baseUrl.trim()}`
+            : '🟡 Activado sin URL configurada'}
+      </div>
+
       {/* URL del casino */}
       <div>
         <label style={labelStyle}>URL del casino</label>

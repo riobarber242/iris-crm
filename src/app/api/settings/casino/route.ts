@@ -43,7 +43,10 @@ export async function GET() {
   // El password NUNCA se devuelve: solo si hay uno guardado (para el placeholder).
   return NextResponse.json({
     enabled: enabledRaw === 'true',
-    casino_api_base_url: String(baseUrl ?? '').trim(),
+    // Fallback al env var CASINO_API_BASE_URL si todavía no hay valor en settings
+    // (Etapa 1: la integración real usa env vars). Un '' guardado explícitamente
+    // NO cae al fallback (solo el null = sin fila).
+    casino_api_base_url: String((baseUrl ?? process.env.CASINO_API_BASE_URL) ?? '').trim(),
     has_password: !!(password && String(password).trim()),
   });
 }
@@ -94,7 +97,10 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     enabled: enabledRaw === 'true',
-    casino_api_base_url: String(baseUrl ?? '').trim(),
+    // Fallback al env var CASINO_API_BASE_URL si todavía no hay valor en settings
+    // (Etapa 1: la integración real usa env vars). Un '' guardado explícitamente
+    // NO cae al fallback (solo el null = sin fila).
+    casino_api_base_url: String((baseUrl ?? process.env.CASINO_API_BASE_URL) ?? '').trim(),
     has_password: !!(password && String(password).trim()),
   });
 }
