@@ -123,9 +123,11 @@ export async function getPlayerTargetId(username: string): Promise<string | null
     return null;
   }
 
-  const targetId = player?.id ?? player?.Id ?? player?.userId ?? player?.targetId ?? null;
-  console.log(`[Casino] targetId: ${targetId}`);
-  return targetId ? String(targetId) : null;
+  // El campo correcto del response de GetAgentWithChildren es accountId (número,
+  // ej: 19923006), NO userId. Ese accountId es el targetId que espera DoDeposit.
+  const accountId = player?.accountId ?? player?.AccountId ?? null;
+  console.log(`[Casino] accountId extraído: ${accountId} (player.userName=${player?.userName ?? player?.UserName})`);
+  return accountId != null ? String(accountId) : null;
 }
 
 export interface DoDepositResult {
@@ -142,10 +144,12 @@ export async function doDeposit(params: {
   amount: number;
   targetId: string;
 }): Promise<DoDepositResult> {
+  // El query param ?username= lleva el username del AGENTE (no el del player).
   const url = `${CASINO_BASE_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
 
   const reqBody = JSON.stringify(params);
-  console.log('[Casino] DoDeposit body:', reqBody);
+  console.log('[Casino] DoDeposit URL:', url);
+  console.log('[Casino] DoDeposit body completo:', reqBody);
 
   const res = await fetch(url, {
     method: 'POST',
@@ -154,7 +158,7 @@ export async function doDeposit(params: {
   });
 
   const respText = await res.text().catch(() => '');
-  console.log(`[Casino] DoDeposit resp status=${res.status} body:`, respText.slice(0, 1000));
+  console.log(`[Casino] DoDeposit resp status=${res.status} body completo:`, respText);
 
   if (res.status === 201) return { success: true };
 
