@@ -287,7 +287,10 @@ export default function FichasClient() {
         </div>
       )}
 
-      {/* Stock del pozo */}
+      {/* Stock del pozo (interno de IRIS). Mutuamente excluyente con "Saldo
+          casino": si el tenant tiene el casino activado se oculta el pozo y se
+          muestra el saldo del casino en su lugar. */}
+      {!casinoEnabled && (
       <div style={{ background: '#0a0a0a', borderRadius: '18px', padding: '24px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
         <div>
           <p style={{ margin: 0, fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#aaff00' }}>
@@ -340,6 +343,7 @@ export default function FichasClient() {
           </span>
         </div>
       </div>
+      )}
 
       {/* Cargar fichas al pozo */}
       <div style={{ background: '#fff', borderRadius: '16px', padding: '18px 20px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
