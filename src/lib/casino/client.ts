@@ -25,7 +25,11 @@ async function getCasinoToken(): Promise<string | null> {
   try {
     const res = await fetch(`${CASINO_BASE_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Referer': process.env.CASINO_API_BASE_URL!,
+        'Origin': process.env.CASINO_API_BASE_URL!,
+      },
       body: JSON.stringify({
         userNameOrEmailAddress: AGENT_USERNAME,
         password: AGENT_PASSWORD,
