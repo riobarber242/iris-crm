@@ -6,6 +6,7 @@
 const PROXY_URL = process.env.CASINO_PROXY_URL!;
 const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
 const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
+const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
 const AGENT_PASSWORD = process.env.CASINO_AGENT_PASSWORD ?? '';
 const SKIN_DOMAIN = 'admin.celuapuestas.bond';
 
@@ -142,11 +143,23 @@ export interface DoDepositResult {
   error?: string;
 }
 
-export async function doDeposit(targetId: string, amount: number): Promise<DoDepositResult> {
+export async function doDeposit(params: { username: string; targetId: string; amount: number }): Promise<DoDepositResult> {
   // El query param ?username= lleva el username del AGENTE (no el del player).
   const url = `${PROXY_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
 
-  const reqBody = JSON.stringify({ targetId: Number(targetId), amount });
+  // Body COMPLETO con contexto del agente. El casino lo exige: con el body
+  // simplificado { targetId, amount } devuelve "Entidad no encontrada"; con este
+  // devuelve 201 "Deposit Succesfull" (verificado en prod). targetId = accountId
+  // (número), NO el userId string.
+  const reqBody = JSON.stringify({
+    username: params.username,
+    userName: params.username,
+    userType: 1,
+    agentId: AGENT_ID,
+    agentUserName: AGENT_USERNAME,
+    amount: params.amount,
+    targetId: Number(params.targetId),
+  });
   console.log('[Casino] DoDeposit URL:', url);
   console.log('[Casino] DoDeposit body completo:', reqBody);
 
@@ -181,5 +194,5 @@ export async function creditPlayer(username: string, amount: number): Promise<Do
   const targetId = await getPlayerTargetId(username);
   if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
 
-  return doDeposit(targetId, amount);
+  return doDeposit({ username, targetId, amount });
 }
