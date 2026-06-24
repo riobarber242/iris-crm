@@ -8,6 +8,7 @@ import WhatsAppNumbersManager from '@/components/WhatsAppNumbersManager';
 import WhatsAppTemplatesManager from '@/components/WhatsAppTemplatesManager';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
 import NotificationVolumeCard from '@/components/NotificationVolumeCard';
+import CasinoConfigCard from '@/components/CasinoConfigCard';
 import { getSessionAgent } from '@/lib/current-agent';
 
 // "Configuración": todo lo de la cuenta (números de WhatsApp, notificación de
@@ -23,6 +24,8 @@ export default async function ConfiguracionPage() {
   const role = session?.role;
   const showAccountConfig = role === 'admin' || role === 'agent';
   const showChangePassword = role === 'agent' || role === 'operator';
+  // Configuración del casino: SOLO rol 'agent'.
+  const showCasinoConfig = role === 'agent';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -45,6 +48,12 @@ export default async function ConfiguracionPage() {
 
           <WhatsAppTemplatesManager />
         </>
+      )}
+
+      {showCasinoConfig && (
+        <SectionCard title="Configuración del casino" description="Activá la integración con el casino y configurá la URL y las credenciales del agente.">
+          <CasinoConfigCard />
+        </SectionCard>
       )}
 
       {showChangePassword && <NotificationVolumeCard />}
