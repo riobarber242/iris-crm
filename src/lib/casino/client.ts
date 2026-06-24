@@ -77,6 +77,36 @@ async function casinoHeaders() {
   return proxyHeaders({ 'Authorization': `Bearer ${token}` });
 }
 
+// Saldo de fichas del agente del casino (gonza0106). Baja al verificar cargas
+// (deposita a un jugador) y sube al verificar pagos. Endpoint:
+//   GET /api/services/app/Agent/GetAgentBalance?agentId=...&username=...
+// Respuesta: { result: <number>, success: true }. Devuelve null si falla.
+export async function getAgentBalance(): Promise<number | null> {
+  const params = new URLSearchParams({ agentId: AGENT_ID, username: AGENT_USERNAME });
+  const url = `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`;
+
+  try {
+    const res = await fetch(url, { method: 'GET', headers: await casinoHeaders() });
+    if (!res.ok) {
+      console.error(`[Casino] GetAgentBalance HTTP ${res.status}`);
+      return null;
+    }
+    const text = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      console.error('[Casino] GetAgentBalance: body no es JSON (¿HTML/bloqueo?) — primeros 200:', text.slice(0, 200));
+      return null;
+    }
+    const balance = Number(data?.result);
+    return Number.isFinite(balance) ? balance : null;
+  } catch (err: any) {
+    console.error('[Casino] GetAgentBalance error:', err?.message ?? err);
+    return null;
+  }
+}
+
 export async function getPlayerTargetId(username: string): Promise<string | null> {
   const params = new URLSearchParams({
     parentId: '-1',

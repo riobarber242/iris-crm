@@ -78,6 +78,11 @@ export default function FichasClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
+  // Saldo de fichas del agente en el casino (admin.celuapuestas.bond). Solo se
+  // muestra en tenants con casino_deposit_enabled=true (lo decide el backend).
+  const [casinoEnabled, setCasinoEnabled] = useState(false);
+  const [casinoBalance, setCasinoBalance] = useState<number | null>(null);
+
   const [cargar, setCargar]   = useState('');
   const [busy, setBusy]       = useState(false);
 
@@ -113,18 +118,33 @@ export default function FichasClient() {
     }
   }
 
+  // Saldo del casino: best-effort, gateado por tenant en el backend. Se refresca
+  // junto con el resumen (mismo poll + mismo INSERT en `movimientos`, que es lo
+  // que se escribe al verificar una carga/pago).
+  async function fetchCasinoBalance() {
+    try {
+      const res = await fetch('/api/casino/balance');
+      if (!res.ok) return;
+      const j = await res.json();
+      setCasinoEnabled(!!j.enabled);
+      if (j.enabled && typeof j.balance === 'number') setCasinoBalance(j.balance);
+    } catch {}
+  }
+
   useEffect(() => {
     fetchResumen();
+    fetchCasinoBalance();
     // Poll de respaldo (antes Fichas solo cargaba al entrar) + realtime: todo
     // movimiento de caja escribe en `movimientos` y refresca pozo/billeteras
     // al instante. Si el canal no está disponible, el poll cubre igual.
-    const t = setInterval(fetchResumen, 15_000);
+    const refreshAll = () => { fetchResumen(); fetchCasinoBalance(); };
+    const t = setInterval(refreshAll, 15_000);
 
     const sb = getSupabaseBrowser();
     let ch: any = null;
     if (sb) {
       ch = sb.channel('realtime-fichas')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => fetchResumen())
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, refreshAll)
         .subscribe();
     }
 
@@ -242,6 +262,28 @@ export default function FichasClient() {
       {data?.degraded && (
         <div style={{ background: '#FFF6E0', color: '#9a6b00', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
           La caja no está inicializada en la base. Corré <code>supabase-caja-fichas.sql</code> en Supabase para empezar a usarla.
+        </div>
+      )}
+
+      {/* Saldo en el casino (admin.celuapuestas.bond) — sincronizado en vivo.
+          Estilo distinto al pozo interno (degradé teal→índigo) para que quede
+          claro que es plata del casino, no fichas internas. */}
+      {casinoEnabled && (
+        <div style={{ background: 'linear-gradient(135deg, #0b3d3a 0%, #16324f 55%, #2a1a5e 100%)', border: '1px solid #2f6f6a', borderRadius: '18px', padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#5fe3c8' }}>
+              🎰 Saldo casino
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '40px', fontWeight: 900, color: '#fff', lineHeight: 1 }}>
+              {casinoBalance != null ? casinoBalance.toLocaleString('es-AR', { maximumFractionDigits: 2 }) : '—'}
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#9fb6c8' }}>
+              fichas del agente en el casino · sincronizado en vivo
+            </p>
+          </div>
+          <span style={{ fontSize: '11px', color: '#7fa0b8', maxWidth: '210px', textAlign: 'right', lineHeight: 1.4 }}>
+            Baja al verificar una carga (le diste fichas a un jugador) y sube al verificar un pago.
+          </span>
         </div>
       )}
 
