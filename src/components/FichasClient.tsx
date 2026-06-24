@@ -345,7 +345,9 @@ export default function FichasClient() {
       </div>
       )}
 
-      {/* Cargar fichas al pozo */}
+      {/* Cargar fichas al pozo — solo en modo manual (casino desactivado). Con el
+          casino activo, el saldo lo maneja el casino y no se recarga a mano. */}
+      {!casinoEnabled && (
       <div style={{ background: '#fff', borderRadius: '16px', padding: '18px 20px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Cargar fichas</p>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -361,6 +363,7 @@ export default function FichasClient() {
           </button>
         </div>
       </div>
+      )}
 
       {/* Operadores en turno: los que tienen el turno abierto, con su saldo, el
           congelado por descargas pendientes y un badge si tienen una sin verificar. */}
