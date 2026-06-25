@@ -443,9 +443,13 @@ export async function PATCH(request: Request) {
         if (bonoNotif > 0) {
           msg += ` + $${bonoNotif.toLocaleString('es-AR')} de regalo 🎁`;
         }
-        sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id).catch(() => {
+        // await: en serverless, un fire-and-forget no await-eado puede no
+        // completarse porque el runtime suspende la instancia al retornar.
+        try {
+          await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
+        } catch {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
-        });
+        }
       }
     }
   }
