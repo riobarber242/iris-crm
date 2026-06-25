@@ -74,6 +74,13 @@ export default async function ConversationPage({ params }: any) {
 
   const recargas = await fetchRecargasResumen(id);
 
+  // ¿El casino está activado para este tenant? Gatea el botón "Crear usuario
+  // casino" en el header (mismo flag que usa /api/casino/balance).
+  const { data: casinoFlag } = await supabaseAdmin
+    .from('settings').select('value')
+    .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
+  const casinoDepositEnabled = casinoFlag?.value === 'true';
+
   return (
     <div className="chat-page-fill">
 
@@ -109,6 +116,8 @@ export default async function ConversationPage({ params }: any) {
         <ContactHeader
           contactId={contact.id}
           phone={contact.phone}
+          contactName={contact.name ?? null}
+          casinoDepositEnabled={casinoDepositEnabled}
           initialCasinoUsername={contact.casino_username}
           initialBlocked={contact.blocked ?? false}
           initialStatus={contact.status ?? 'nuevo'}

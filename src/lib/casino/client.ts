@@ -9,6 +9,8 @@ const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
 const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
 const AGENT_PASSWORD = process.env.CASINO_AGENT_PASSWORD ?? '';
 const SKIN_DOMAIN = 'admin.celuapuestas.bond';
+// skinId fijo de CeluApuestas (Casino 17Star). Lo exige AddPlayer.
+const SKIN_ID = process.env.CASINO_SKIN_ID ?? 'eeafa00307a1';
 
 // Cache en memoria del access token (por instancia/lambda). Se renueva vía
 // TokenAuth/Authenticate cuando vence, con un margen de 60s.
@@ -225,4 +227,51 @@ export async function creditPlayer(username: string, amount: number): Promise<Do
   if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
 
   return doDeposit({ username, targetId, amount });
+}
+
+export interface CreatePlayerResult {
+  success: boolean;
+  username?: string;
+  error?: string;
+  /** El casino rechazó por nombre de usuario ya existente (para reintentar correlativo). */
+  taken?: boolean;
+}
+
+// Crea un jugador en el casino. POST /api/services/app/Players/AddPlayer con
+// { userName, password, skinIds: [SKIN_ID] }. Devuelve success en status 201.
+// La contraseña debe tener ≥8 chars, 1 dígito, 1 mayúscula y 1 minúscula.
+export async function createPlayer(userName: string, password: string): Promise<CreatePlayerResult> {
+  const url = `${PROXY_URL}/api/services/app/Players/AddPlayer`;
+  const reqBody = JSON.stringify({ userName, password, skinIds: [SKIN_ID] });
+  console.log('[Casino] AddPlayer URL:', url, '— userName:', userName);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody });
+  } catch (err: any) {
+    console.error('[Casino] AddPlayer error de red:', err?.message ?? err);
+    return { success: false, error: 'Error de red al crear el usuario en el casino' };
+  }
+
+  const respText = await res.text().catch(() => '');
+  console.log(`[Casino] AddPlayer resp status=${res.status} body:`, respText.slice(0, 500));
+
+  if (res.status === 201) return { success: true, username: userName };
+
+  let errorBody = '';
+  if (respText.trim().startsWith('{')) {
+    try {
+      const json = JSON.parse(respText);
+      errorBody = json?.error?.message ?? json?.message ?? respText.slice(0, 200);
+    } catch {
+      errorBody = respText.slice(0, 200);
+    }
+  } else {
+    errorBody = `HTTP ${res.status} - respuesta no JSON`;
+  }
+
+  // Heurística para detectar "usuario ya existe" y poder reintentar correlativo.
+  const taken = /exist|registr|ya .*us|taken|duplicad|en uso/i.test(errorBody);
+  console.error(`[Casino] AddPlayer falló: ${errorBody}${taken ? ' (usuario tomado)' : ''}`);
+  return { success: false, error: errorBody, taken };
 }
