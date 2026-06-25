@@ -5,7 +5,7 @@ import { getOfflineMsg } from '../bot-config';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
 import { inferProvinciaFromPhone } from '../phone-province';
-import { decideBotResponse } from './bot-decision';
+import { decideBotResponse, BOT_FLOW_STATES } from './bot-decision';
 import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
 
@@ -578,15 +578,27 @@ async function processMessage(
   // (La imagen/comprobante ya se subió y guardó arriba, antes de guardar el mensaje.)
 
   // ── MODO OFFLINE ─────────────────────────────────────────────────────────
-  // · OFFLINE + bot APAGADO → aviso directo a todos, sin flujo.
-  // · OFFLINE + bot PRENDIDO → onboarding normal, pero el mensaje de cierre
-  //   (handoff) cambia al aviso de "no hay operadores" (ver handoffMsg). El bot
-  //   sigue trabajando igual; solo cambia el cierre.
+  // El onboarding SIEMPRE corre para contactos bot-owned (nuevos o ya en un
+  // onboarding iniciado por el bot), aunque haya offline_mode: así un cliente
+  // nuevo se onboardea igual y al terminar recibe el cierre con "esperá al
+  // operador" (handoffMsg → OFFLINE_HANDOFF_MSG, ver más abajo).
+  // Los contactos conocidos/preexistentes sí reciben el aviso de offline y corta.
+  // OJO: tiene que ser `isNew || inBotFlow`, no solo `isNew`: isNew es true una
+  // única vez (primer mensaje); los mensajes 2..N del onboarding traen isNew=false
+  // pero un conversation_state bot-owned, y deben seguir el flujo igual.
   const offline = await getOfflineMode(tenantId);
   if (offline) {
-    console.log('[bot] OFFLINE — aviso directo a todos');
-    if (!contact.blocked) await replyAndSave(await getOfflineMsg(tenantId));
-    return;
+    const inBotFlow = BOT_FLOW_STATES.has(contact.conversation_state ?? '');
+    const botOwned  = isNew || inBotFlow;
+    // Solo se onboardea en offline si el bot está prendido. Si el bot está
+    // apagado (kill switch) o es un contacto conocido/preexistente, mandamos el
+    // aviso de offline y cortamos (comportamiento previo, sin regresión).
+    if (!botEnabled || !botOwned) {
+      console.log('[bot] OFFLINE — bot apagado o contacto conocido → aviso directo, corta');
+      if (!contact.blocked) await replyAndSave(await getOfflineMsg(tenantId));
+      return;
+    }
+    console.log('[bot] OFFLINE — contacto nuevo/onboarding con bot prendido → sigue el flujo');
   }
 
   // ── Cliente ya reconocido (fast path, ANTES de cualquier flujo) ─────────────
