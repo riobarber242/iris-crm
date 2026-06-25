@@ -414,16 +414,7 @@ export default function ContactsClient() {
       {filtered.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div className="contact-row contact-header">
-            <span className="c-check">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
-                onChange={toggleAll}
-                title="Seleccionar todos"
-                style={{ cursor: 'pointer' }}
-              />
-            </span>
+            <span className="c-check" />
             <span>Usuario casino</span>
             <span>Teléfono</span>
             <span>Línea</span>
@@ -548,32 +539,49 @@ export default function ContactsClient() {
       )}
 
       {/* Barra flotante de selección múltiple */}
-      {selectedIds.size > 0 && (
+      {filtered.length > 0 && (
         <div style={{
           position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
           background: '#1a1a1a', color: '#fff', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
           padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
         }}>
           <span style={{ fontSize: '14px', fontWeight: 700 }}>
-            {selectedIds.size} contacto{selectedIds.size !== 1 ? 's' : ''} seleccionado{selectedIds.size !== 1 ? 's' : ''}
+            {selectedIds.size > 0
+              ? `${selectedIds.size} contacto${selectedIds.size !== 1 ? 's' : ''} seleccionado${selectedIds.size !== 1 ? 's' : ''}`
+              : 'Seleccionar contactos'}
           </span>
           <button
-            onClick={() => setSelectedIds(new Set())}
-            style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
-          >
-            Limpiar
-          </button>
-          <button
-            onClick={handleDeleteBulk}
-            disabled={deletingBulk}
+            onClick={toggleAll}
+            title={allSelected ? 'Deseleccionar todos' : 'Seleccionar todos'}
             style={{
-              background: '#E53935', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none',
-              borderRadius: '10px', padding: '9px 16px', cursor: deletingBulk ? 'not-allowed' : 'pointer',
-              opacity: deletingBulk ? 0.6 : 1,
+              background: someSelected && !allSelected ? 'rgba(255,255,255,0.18)' : 'none',
+              border: '1px solid rgba(255,255,255,0.35)', color: '#fff', fontSize: '13px', fontWeight: 700,
+              borderRadius: '10px', padding: '8px 14px', cursor: 'pointer',
             }}
           >
-            {deletingBulk ? 'Eliminando…' : 'Eliminar seleccionados 🗑️'}
+            {allSelected ? '☑ Todos' : '☐ Todos'}
           </button>
+          {selectedIds.size > 0 && (
+            <>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Limpiar
+              </button>
+              <button
+                onClick={handleDeleteBulk}
+                disabled={deletingBulk}
+                style={{
+                  background: '#E53935', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none',
+                  borderRadius: '10px', padding: '9px 16px', cursor: deletingBulk ? 'not-allowed' : 'pointer',
+                  opacity: deletingBulk ? 0.6 : 1,
+                }}
+              >
+                {deletingBulk ? 'Eliminando…' : 'Eliminar seleccionados 🗑️'}
+              </button>
+            </>
+          )}
         </div>
       )}
 
