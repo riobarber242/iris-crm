@@ -155,3 +155,41 @@ export async function PATCH(request: Request) {
   if (freshErr) return new NextResponse(freshErr.message, { status: 500 });
   return NextResponse.json(sanitize(fresh));
 }
+
+// DELETE: borra una línea del tenant. Mismas guardas que el "desactivar" del
+// PATCH: no se puede borrar el número default (mover el default primero) ni el
+// único número activo (dejaría al tenant sin números para enviar).
+export async function DELETE(request: Request) {
+  const { session, error } = await requireAdminOrAgent();
+  if (error) return error;
+
+  const body = await request.json().catch(() => null);
+  const id = body?.id as string | undefined;
+  if (!id) return new NextResponse('Falta id', { status: 400 });
+
+  const { data: num } = await supabaseAdmin
+    .from('whatsapp_numbers')
+    .select('id, is_default, active')
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!num) return new NextResponse('Número no encontrado', { status: 404 });
+
+  if (num.is_default) {
+    return new NextResponse('El número default no se puede eliminar: marcá otro como default primero', { status: 400 });
+  }
+  if (num.active) {
+    const { count } = await supabaseAdmin.from('whatsapp_numbers')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', session.tenant_id).eq('active', true);
+    if ((count ?? 0) <= 1) {
+      return new NextResponse('No se puede eliminar el único número activo', { status: 400 });
+    }
+  }
+
+  const { error: delErr } = await supabaseAdmin.from('whatsapp_numbers')
+    .delete().eq('id', id).eq('tenant_id', session.tenant_id);
+  if (delErr) return new NextResponse(delErr.message, { status: 500 });
+
+  return NextResponse.json({ ok: true });
+}

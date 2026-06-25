@@ -13,6 +13,8 @@ type WaNumber = {
   is_default: boolean;
   created_at: string;
   has_token: boolean;
+  // Solo frontend: el número real resuelto al Verificar contra Meta (no viene del GET).
+  display_phone_number?: string;
 };
 
 const inputStyle: React.CSSProperties = {
@@ -65,6 +67,11 @@ export default function WhatsAppNumbersManager() {
   // Verificación contra Meta
   const [verifying, setVerifying] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<Record<string, { ok: boolean; text: string }>>({});
+  // Número real (display_phone_number) por línea, resuelto al verificar.
+  const [phoneMap, setPhoneMap] = useState<Record<string, string>>({});
+
+  // Eliminación: id de la línea con confirmación inline abierta.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   async function fetchNumbers() {
     try {
@@ -160,6 +167,9 @@ export default function WhatsAppNumbersManager() {
       const data = await res.json().catch(() => null);
       if (res.ok && data?.ok) {
         setVerifyResult((prev) => ({ ...prev, [n.id]: { ok: true, text: `✅ ${data.display_phone_number ?? 'OK'}` } }));
+        if (data.display_phone_number) {
+          setPhoneMap((prev) => ({ ...prev, [n.id]: data.display_phone_number }));
+        }
       } else {
         setVerifyResult((prev) => ({ ...prev, [n.id]: { ok: false, text: `❌ ${data?.error ?? 'Error verificando'}` } }));
       }
@@ -167,6 +177,21 @@ export default function WhatsAppNumbersManager() {
       setVerifyResult((prev) => ({ ...prev, [n.id]: { ok: false, text: '❌ Error de red' } }));
     }
     setVerifying(null);
+  }
+
+  async function handleDelete(n: WaNumber) {
+    setError('');
+    try {
+      const res = await fetch('/api/whatsapp-numbers', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: n.id }),
+      });
+      if (!res.ok) { setError(await res.text()); return; }
+      await fetchNumbers();
+      setConfirmDeleteId(null);
+    } catch {
+      setError('Error de red.');
+    }
   }
 
   const activos = numbers.filter((n) => n.active).length;
@@ -208,6 +233,11 @@ export default function WhatsAppNumbersManager() {
                   <p style={{ fontSize: '12px', color: '#888', margin: '4px 0 0 0', fontFamily: 'monospace' }}>
                     {n.phone_number_id}
                   </p>
+                  {phoneMap[n.id] && (
+                    <p style={{ fontSize: '13px', fontWeight: 700, color: '#111', margin: '2px 0 0 0' }}>
+                      {phoneMap[n.id]}
+                    </p>
+                  )}
                   <p style={{ fontSize: '11px', color: '#aaa', margin: '3px 0 0 0' }}>
                     Token: {n.has_token ? 'propio' : 'global (env)'}
                     {n.waba_id && <> · WABA: {n.waba_id}</>}
@@ -245,8 +275,34 @@ export default function WhatsAppNumbersManager() {
                       {n.active ? 'Desactivar' : 'Activar'}
                     </button>
                   )}
+                  {!n.is_default && (
+                    <button
+                      onClick={() => setConfirmDeleteId(n.id)}
+                      title="Eliminar línea"
+                      style={{ ...smallBtn, color: '#E53935' }}
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {confirmDeleteId === n.id && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', background: '#fff0f0', border: '1px solid #f0b0b0', borderRadius: '10px', padding: '10px 12px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#a02020' }}>
+                    ¿Eliminar esta línea? Esta acción no se puede deshacer.
+                  </span>
+                  <button
+                    onClick={() => handleDelete(n)}
+                    style={{ ...smallBtn, background: '#E53935', color: '#fff' }}
+                  >
+                    Sí, eliminar
+                  </button>
+                  <button onClick={() => setConfirmDeleteId(null)} style={smallBtn}>
+                    Cancelar
+                  </button>
+                </div>
+              )}
 
               {vr && (
                 <p style={{ fontSize: '12px', fontWeight: 600, margin: 0, color: vr.ok ? '#1a7a3a' : '#E53935' }}>
