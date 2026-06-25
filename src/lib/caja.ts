@@ -274,7 +274,7 @@ export async function aplicarCargaComprobante(
 //                      (no se descuenta a ningún operador).
 export async function aplicarPagoComprobante(
   session: SessionPayload,
-  p: { comprobanteId: string; monto: number; pagoAgente?: boolean },
+  p: { comprobanteId: string; monto: number; pagoAgente?: boolean; casinoEnabled?: boolean },
 ): Promise<VerifyCajaResult> {
   if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
 
@@ -295,6 +295,51 @@ export async function aplicarPagoComprobante(
   } catch (err: any) {
     if (isMissingCajaError(err)) return { ok: true, applied: false };
     return { ok: false, error: err?.message ?? 'Error verificando movimientos' };
+  }
+
+  // Casino habilitado: el pozo de fichas NO es la fuente de verdad (el stock vive
+  // en el casino). Un pago solo descuenta la billetera del operador que verifica;
+  // el pozo NO se toca (fichas_delta=0). Mismo patrón de RPC directa que el pago
+  // del agente. Un pago del agente con casino on no mueve nada (no descuenta a
+  // ningún operador y no hay pozo que reponer).
+  if (p.casinoEnabled) {
+    if (p.pagoAgente) return { ok: true, applied: false };
+    try {
+      const { data, error } = await supabaseAdmin.rpc('fn_aplicar_movimiento', {
+        p_tenant:          session.tenant_id,
+        p_operador:        session.sub,
+        p_tipo:            'pago',
+        p_monto:           monto,
+        p_bono:            null,
+        p_fichas_delta:    0,       // pozo intacto (el stock vive en el casino)
+        p_billetera_delta: -monto,  // baja la billetera del operador que verifica
+        p_comprobante:     p.comprobanteId,
+        p_contraparte:     null,
+        p_creado_por:      session.sub,
+        p_creado_por_name: session.name,
+      });
+      if (error) {
+        if (isMissingCajaError(error)) return { ok: true, applied: false };
+        return { ok: false, error: error.message };
+      }
+      const res = data as { movimiento_id: string; stock_actual: number; saldo_actual: number };
+      await logActivity({
+        session,
+        action:     ACTIVITY.MOVIMIENTO_CAJA,
+        objectType: 'movimiento',
+        objectId:   res.movimiento_id,
+        details: {
+          tipo: 'pago', casino: true, monto,
+          fichas_delta: 0, billetera_delta: -monto,
+          comprobante_id: p.comprobanteId,
+          stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
+        },
+      });
+      return { ok: true, applied: true };
+    } catch (err: any) {
+      if (isMissingCajaError(err)) return { ok: true, applied: false };
+      return { ok: false, error: err?.message ?? 'Error al aplicar el pago (casino)' };
+    }
   }
 
   // Pago del agente: las fichas suben igual, pero la billetera no se toca.

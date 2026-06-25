@@ -337,8 +337,9 @@ export async function PATCH(request: Request) {
     const movRes = esPago
       ? await aplicarPagoComprobante(session, {
           comprobanteId,
-          monto:      Number(efectiveMonto ?? 0),
-          pagoAgente: !!comprobante.pago_agente,
+          monto:        Number(efectiveMonto ?? 0),
+          pagoAgente:   !!comprobante.pago_agente,
+          casinoEnabled: casinoDepositEnabled,
         })
       : casinoDepositEnabled
       ? { ok: true as const, applied: false }
