@@ -356,6 +356,10 @@ export async function PATCH(request: Request) {
     // (casino_deposit_enabled) y la idempotencia (casino_deposited_at).
     if (!esPago && !comprobante.casino_deposited_at) {
       const montoCasino = Number(efectiveMonto ?? 0);
+      // El bono (fichas) se acredita al player JUNTO con el monto. El gate sigue
+      // siendo montoCasino > 0: solo depositamos si hay recarga real; el bono suma.
+      const bonoCasino  = Number(efectiveBono) || 0;
+      const montoTotal  = montoCasino + bonoCasino;
       if (casinoDepositEnabled && montoCasino > 0) {
         // El username del player = contacts.name. El PATCH trae el comprobante con
         // select('*') (sin join), así que el nombre se busca aparte.
@@ -366,14 +370,14 @@ export async function PATCH(request: Request) {
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }
-        const cred = await creditPlayer(username, montoCasino);
+        const cred = await creditPlayer(username, montoTotal);
         if (!cred.success) {
           return new NextResponse(cred.error ?? 'No se pudo acreditar en el casino. La recarga NO se verificó.', { status: 400 });
         }
         updatePayload.casino_deposited_at = new Date().toISOString();
         await logActivity({
           session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
-          details: { ok: true, username, amount: montoCasino },
+          details: { ok: true, username, amount: montoTotal, monto: montoCasino, bono: bonoCasino },
         });
       }
     }
@@ -433,7 +437,12 @@ export async function PATCH(request: Request) {
       if (autoMsg) {
         const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
         const template = (settingsByKey.get(AUTO_MSG_TEMPLATE_KEY) as string | undefined)?.trim() || AUTO_MSG_DEFAULT_TEMPLATE;
-        const msg = renderAutoMsg(template, montoFmt);
+        let msg = renderAutoMsg(template, montoFmt);
+        // Si hubo bono, se lo sumamos al aviso (sufijo fijo, no editable por ahora).
+        const bonoNotif = Number(efectiveBono) || 0;
+        if (bonoNotif > 0) {
+          msg += ` + $${bonoNotif.toLocaleString('es-AR')} de regalo 🎁`;
+        }
         sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id).catch(() => {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
         });
