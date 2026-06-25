@@ -250,9 +250,17 @@ button, input, textarea, select {
 /* ── Tabla de contactos: grid en desktop, tarjeta apilada en mobile ───────── */
 .contact-row {
   display: grid;
-  grid-template-columns: 44px 1fr 1fr 90px 100px 120px 44px;
+  grid-template-columns: 44px 1fr 1fr 90px 100px 120px auto;
   gap: 12px;
   align-items: center;
+}
+
+/* Grupo de acciones por fila (conversación, editar, borrar). */
+.c-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .contact-header {
@@ -292,11 +300,12 @@ button, input, textarea, select {
     row-gap: 4px;
     padding: 12px 14px;
   }
-  .c-avatar { grid-area: avatar; align-self: center; }
-  .c-user   { grid-area: user; }
-  .c-phone  { grid-area: phone; }
-  .c-line   { grid-area: line; }
-  .c-chat   { grid-area: chat; align-self: center; }
+  .c-avatar  { grid-area: avatar; align-self: center; }
+  .c-user    { grid-area: user; }
+  .c-phone   { grid-area: phone; }
+  .c-line    { grid-area: line; }
+  .c-chat    { grid-area: chat; align-self: center; }
+  .c-actions { grid-area: chat; align-self: center; }
   .c-status, .c-date { display: none; }
 
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }

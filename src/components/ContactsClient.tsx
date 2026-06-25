@@ -3,15 +3,19 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import NewContactModal from '@/components/NewContactModal';
+import EditContactModal, { type EditableContact } from '@/components/EditContactModal';
 
 type ContactRow = {
   id:                 string;
+  name:               string | null;
   phone:              string;
   status:             string;
   casino_username:    string;
   whatsapp_number_id: string | null;
   created_at:         string;
 };
+
+type SortDir = 'az' | 'za';
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
   nuevo:          { bg: '#F0F0F0', fg: '#888' },
@@ -103,6 +107,9 @@ export default function ContactsClient() {
   const [showNewContact, setShowNewContact] = useState(false);
   const [showActions,    setShowActions]    = useState(false); // dropdown "Acciones"
   const [showImportPanel, setShowImportPanel] = useState(false); // modal de import CSV
+  const [sortDir,        setSortDir]        = useState<SortDir>('az'); // orden alfabético, A-Z por defecto
+  const [editing,        setEditing]        = useState<EditableContact | null>(null);
+  const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const actionsRef  = useRef<HTMLDivElement | null>(null);
 
@@ -178,14 +185,43 @@ export default function ContactsClient() {
     setImporting(false);
   }
 
+  async function handleDelete(c: ContactRow) {
+    const nombre = c.casino_username || c.phone;
+    if (!confirm(
+      `¿Eliminar contacto ${nombre}? Esta acción no se puede deshacer.\n\n` +
+      `Se borrará también TODO su historial: mensajes, comprobantes y leads.`,
+    )) return;
+    setDeletingId(c.id);
+    try {
+      const res = await fetch(`/api/contacts?id=${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setContacts((prev) => prev.filter((x) => x.id !== c.id));
+      } else {
+        const data = await res.json().catch(() => ({} as any));
+        alert(data?.error || 'No se pudo eliminar el contacto.');
+      }
+    } catch {
+      alert('Error de red al eliminar el contacto.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  // Filtra por búsqueda y ORDENA alfabéticamente por usuario de casino (lo que se
+  // ve en la lista). A-Z por defecto, Z-A con el toggle. localeCompare con 'es'
+  // para que acentos/ñ ordenen como corresponde.
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return contacts;
-    return contacts.filter(c =>
+    const base = !q ? contacts : contacts.filter(c =>
       c.casino_username?.toLowerCase().includes(q) ||
+      c.name?.toLowerCase().includes(q) ||
       c.phone?.includes(q),
     );
-  }, [contacts, query]);
+    const sorted = [...base].sort((a, b) =>
+      (a.casino_username || '').localeCompare(b.casino_username || '', 'es', { sensitivity: 'base' }),
+    );
+    return sortDir === 'az' ? sorted : sorted.reverse();
+  }, [contacts, query, sortDir]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -207,6 +243,20 @@ export default function ContactsClient() {
           }}
         />
         <input ref={csvInputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={handleCSVImport} />
+
+        {/* Orden alfabético por usuario de casino (A-Z por defecto). */}
+        <select
+          value={sortDir}
+          onChange={(e) => setSortDir(e.target.value as SortDir)}
+          title="Ordenar contactos"
+          style={{
+            flexShrink: 0, background: '#fff', color: '#333', fontWeight: 700, fontSize: '13px',
+            border: '2px solid #e0e0e0', borderRadius: '12px', padding: '12px 14px', cursor: 'pointer', outline: 'none',
+          }}
+        >
+          <option value="az">Nombre A → Z</option>
+          <option value="za">Nombre Z → A</option>
+        </select>
 
         {/* Menú "Acciones": agrupa importar/actualizar, nuevo contacto y exportar */}
         <div ref={actionsRef} style={{ position: 'relative', flexShrink: 0 }}>
@@ -383,16 +433,42 @@ export default function ContactsClient() {
                   {new Date(c.created_at).toLocaleDateString('es-AR')}
                 </p>
 
-                {/* Botón conversación */}
-                <Link href={`/conversaciones/${c.id}`} className="c-chat" style={{ textDecoration: 'none' }}>
-                  <div style={{
-                    width: '32px', height: '32px', borderRadius: '8px',
-                    background: '#1a1a1a', display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', cursor: 'pointer', fontSize: '16px',
-                  }} title="Ir a conversación">
-                    💬
-                  </div>
-                </Link>
+                {/* Acciones: conversación, editar, borrar */}
+                <div className="c-actions">
+                  <Link href={`/conversaciones/${c.id}`} style={{ textDecoration: 'none' }}>
+                    <div style={{
+                      width: '32px', height: '32px', borderRadius: '8px',
+                      background: '#1a1a1a', display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', cursor: 'pointer', fontSize: '16px',
+                    }} title="Ir a conversación">
+                      💬
+                    </div>
+                  </Link>
+                  <button
+                    onClick={() => setEditing({ id: c.id, casino_username: c.casino_username, name: c.name, phone: c.phone, status: c.status })}
+                    title="Editar contacto"
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                      background: '#F0F0F0', display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', cursor: 'pointer', fontSize: '15px',
+                    }}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    onClick={() => handleDelete(c)}
+                    disabled={deletingId === c.id}
+                    title="Eliminar contacto"
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                      background: '#FFE9E9', display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', cursor: deletingId === c.id ? 'not-allowed' : 'pointer',
+                      fontSize: '15px', opacity: deletingId === c.id ? 0.5 : 1,
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -403,6 +479,14 @@ export default function ContactsClient() {
         <NewContactModal
           onClose={() => setShowNewContact(false)}
           onCreated={fetchContacts}
+        />
+      )}
+
+      {editing && (
+        <EditContactModal
+          contact={editing}
+          onClose={() => setEditing(null)}
+          onSaved={fetchContacts}
         />
       )}
 

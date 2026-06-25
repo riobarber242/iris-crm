@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   // Default: agendados (with casino_username) for /contacts page
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, phone, status, casino_username, whatsapp_number_id, created_at')
+    .select('id, name, phone, status, casino_username, whatsapp_number_id, created_at')
     .eq('tenant_id', session.tenant_id)
     .not('casino_username', 'is', null)
     .neq('casino_username', '')
@@ -130,4 +130,131 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json(data, { status: 201 });
+}
+
+// PATCH /api/contacts — edición de un contacto desde la lista. Acepta name,
+// phone y casino_username (todos opcionales). Scope estricto por tenant_id (el
+// UPDATE filtra por tenant). Si se cambia el teléfono, se valida (≥7 dígitos) y
+// se chequea que no choque con OTRO contacto del tenant.
+export async function PATCH(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const body = await request.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: 'JSON inválido en el body' }, { status: 400 });
+
+  const id = String(body.id ?? '').trim();
+  if (!id) return NextResponse.json({ error: 'Falta el id del contacto.' }, { status: 400 });
+
+  const updates: Record<string, any> = {};
+
+  if (body.name !== undefined) {
+    updates.name = String(body.name).trim() || null;
+  }
+
+  if (body.casino_username !== undefined) {
+    const cu = String(body.casino_username).trim();
+    if (!cu) return NextResponse.json({ error: 'El usuario de casino no puede quedar vacío.' }, { status: 400 });
+    updates.casino_username = cu;
+  }
+
+  if (body.phone !== undefined) {
+    const phone = normalizePhone(String(body.phone));
+    if (phone.length < 7) {
+      return NextResponse.json({ error: 'El teléfono es obligatorio (mínimo 7 dígitos).' }, { status: 400 });
+    }
+    // Anti-duplicado: ningún OTRO contacto del tenant puede tener ese teléfono.
+    const { data: dup } = await supabaseAdmin
+      .from('contacts')
+      .select('id')
+      .eq('tenant_id', session.tenant_id)
+      .eq('phone', phone)
+      .neq('id', id)
+      .maybeSingle();
+    if (dup) {
+      return NextResponse.json({ error: 'Ya existe otro contacto con ese teléfono.' }, { status: 409 });
+    }
+    updates.phone = phone;
+  }
+
+  if (body.status !== undefined) {
+    if (!ALLOWED_STATUS.includes(String(body.status))) {
+      return NextResponse.json({ error: 'Estado inválido.' }, { status: 400 });
+    }
+    updates.status = String(body.status);
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: 'No hay cambios para guardar.' }, { status: 400 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('contacts')
+    .update(updates)
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id)
+    .select('id, name, phone, status, casino_username, whatsapp_number_id, created_at')
+    .single();
+
+  if (error) {
+    if (error.code === '23505') {
+      return NextResponse.json({ error: 'Ya existe otro contacto con ese teléfono.' }, { status: 409 });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!data) {
+    return NextResponse.json({ error: 'Contacto no encontrado.' }, { status: 404 });
+  }
+
+  await logActivity({
+    session,
+    action:     ACTIVITY.CONTACT_EDITED,
+    objectType: 'contact',
+    objectId:   id,
+    details:    { fields: Object.keys(updates) },
+  });
+
+  return NextResponse.json(data);
+}
+
+// DELETE /api/contacts?id=<uuid> — borra un contacto del tenant. OJO: por las FK
+// ON DELETE CASCADE, esto borra también sus mensajes, comprobantes y leads.
+// Scope estricto por tenant_id (no se puede borrar un contacto de otro tenant).
+export async function DELETE(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const id = new URL(request.url).searchParams.get('id')?.trim();
+  if (!id) return NextResponse.json({ error: 'Falta el id del contacto.' }, { status: 400 });
+
+  // Verificamos que exista en este tenant antes de borrar (para distinguir
+  // 404 de un borrado real y para loguear el casino_username).
+  const { data: existing } = await supabaseAdmin
+    .from('contacts')
+    .select('id, casino_username')
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!existing) {
+    return NextResponse.json({ error: 'Contacto no encontrado.' }, { status: 404 });
+  }
+
+  const { error } = await supabaseAdmin
+    .from('contacts')
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  await logActivity({
+    session,
+    action:     'contact_deleted',
+    objectType: 'contact',
+    objectId:   id,
+    details:    { casino_username: existing.casino_username ?? null },
+  });
+
+  return NextResponse.json({ ok: true });
 }
