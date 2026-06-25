@@ -50,11 +50,13 @@ export default function ConversationsClient() {
   // Realtime (mensajes + contactos) con polling de respaldo cada 5 s.
   useEffect(() => {
     fetchRef.current = fetchConversations;
-    // Restaurar la posición de scroll guardada al volver de una conversación.
+    // Primer intento de restaurar el scroll al volver de una conversación. NO
+    // limpiamos el valor acá: si la lista todavía no tiene altura, este scrollTo
+    // queda corto y el refuerzo (dependiente de filtered.length) reintenta y
+    // recién ahí borra el valor.
     const saved = sessionStorage.getItem('conv-scroll');
     if (saved) {
       const y = parseInt(saved, 10);
-      sessionStorage.removeItem('conv-scroll');
       requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
     }
     fetchConversations();
@@ -121,6 +123,19 @@ export default function ConversationsClient() {
 
     return true;
   });
+
+  // Refuerzo: cuando la lista ya tiene items renderizados (cambia filtered.length)
+  // reintentamos restaurar el scroll si quedó un valor pendiente en sessionStorage.
+  // Cubre el caso en que el primer intento (al montar) corrió antes de que la
+  // lista tuviera altura. Recién acá limpiamos el valor.
+  useEffect(() => {
+    const saved = sessionStorage.getItem('conv-scroll');
+    if (!saved || filtered.length === 0) return;
+    const y = parseInt(saved, 10);
+    sessionStorage.removeItem('conv-scroll');
+    requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered.length]);
 
   return (
     <div ref={listRef} className="conv-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
