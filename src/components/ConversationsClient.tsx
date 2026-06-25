@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { classifyPending } from '@/lib/pending';
+import { useAuth } from '@/components/AuthProvider';
 
 // El sonido de pendiente nuevo lo dispara AdminShell (centralizado, suena en
 // toda la app y diferencia naranja/rojo). Acá ya no se emite beep para no
@@ -22,6 +23,12 @@ export default function ConversationsClient() {
   const channelRef     = useRef<any>(null);
   const filtersRef     = useRef<HTMLDivElement>(null);
   const listRef        = useRef<HTMLDivElement>(null);
+
+  // Eliminar conversación (borra el contacto completo): SOLO rol agente.
+  const { agent } = useAuth();
+  const canDelete = agent?.role === 'agent';
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting,        setDeleting]        = useState<string | null>(null);
 
   // Número de filtros activos (estado distinto de "todos" + lectura distinta de "todos").
   const activeFilterCount = (activeFilter !== 'todos' ? 1 : 0) + (readFilter !== 'todos' ? 1 : 0);
@@ -45,6 +52,25 @@ export default function ConversationsClient() {
       const data: any[] = await res.json();
       setConversations(data);
     } catch {}
+  }
+
+  // Borra el contacto completo (cascada a mensajes/comprobantes/leads), via el
+  // DELETE de /api/contacts (tenant-scoped). Quita el item del estado al instante.
+  async function handleDelete(contactId: string) {
+    setDeleting(contactId);
+    try {
+      const res = await fetch(`/api/contacts?id=${encodeURIComponent(contactId)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setConversations((prev) => prev.filter((c) => c.id !== contactId));
+        setConfirmDeleteId(null);
+      } else {
+        alert((await res.text().catch(() => '')) || 'No se pudo eliminar la conversación.');
+      }
+    } catch {
+      alert('Error de red al eliminar.');
+    } finally {
+      setDeleting(null);
+    }
   }
 
   // Realtime (mensajes + contactos) con polling de respaldo cada 5 s.
@@ -389,8 +415,45 @@ export default function ConversationsClient() {
                    : contact.status === 'bloqueado'       ? 'BLOQUEADO'
                    : (contact.status ?? '').toUpperCase()}
                   </span>
+                  {canDelete && (
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeleteId(contact.id); }}
+                      title="Eliminar conversación"
+                      style={{
+                        background: '#FFE9E9', color: '#E53935', border: 'none', borderRadius: '8px',
+                        width: '30px', height: '30px', display: 'inline-flex', alignItems: 'center',
+                        justifyContent: 'center', cursor: 'pointer', fontSize: '14px', flexShrink: 0,
+                      }}
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {canDelete && confirmDeleteId === contact.id && (
+                <div
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', background: '#fff0f0', border: '1px solid #f0b0b0', borderRadius: '12px', padding: '10px 14px' }}
+                >
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#a02020' }}>
+                    ¿Eliminar esta conversación? Se borra el contacto y todo su historial. No se puede deshacer.
+                  </span>
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(contact.id); }}
+                    disabled={deleting === contact.id}
+                    style={{ background: '#E53935', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: deleting === contact.id ? 'not-allowed' : 'pointer', opacity: deleting === contact.id ? 0.6 : 1 }}
+                  >
+                    {deleting === contact.id ? 'Eliminando…' : 'Sí, eliminar'}
+                  </button>
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDeleteId(null); }}
+                    style={{ background: '#F0F0F0', color: '#555', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '7px 12px', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
 
               {lastMessage && (
                 <div className="conv-preview" style={{ marginTop: '12px', background: '#F5F5F5', borderRadius: '12px', padding: '10px 14px' }}>
