@@ -322,12 +322,26 @@ export async function PATCH(request: Request) {
   //           Si es pago del agente (pago_agente), la billetera no se toca.
   if (estado === 'verificado') {
     const esPago = comprobante.tipo === 'pago';
+
+    // ¿Casino habilitado para el tenant? Con el casino activo, el "stock" es el
+    // saldo del casino (no el pozo interno de fichas). Leemos el flag UNA sola
+    // vez acá y lo reusamos para el gate del depósito más abajo.
+    const { data: casinoFlagRow } = await supabaseAdmin
+      .from('settings').select('value')
+      .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
+    const casinoDepositEnabled = casinoFlagRow?.value === 'true';
+
+    // Movimiento de caja interno. Para CARGAS con el casino habilitado NO se
+    // descuenta del pozo (el crédito real lo hace creditPlayer sobre el saldo del
+    // casino): marcamos ok directamente y seguimos al depósito.
     const movRes = esPago
       ? await aplicarPagoComprobante(session, {
           comprobanteId,
           monto:      Number(efectiveMonto ?? 0),
           pagoAgente: !!comprobante.pago_agente,
         })
+      : casinoDepositEnabled
+      ? { ok: true as const, applied: false }
       : await aplicarCargaComprobante(session, {
           comprobanteId,
           tipo:  comprobante.tipo,
@@ -341,11 +355,8 @@ export async function PATCH(request: Request) {
     // verifica (sin reintentos automáticos). Se conserva el kill switch
     // (casino_deposit_enabled) y la idempotencia (casino_deposited_at).
     if (!esPago && !comprobante.casino_deposited_at) {
-      const { data: flagRow } = await supabaseAdmin
-        .from('settings').select('value')
-        .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
       const montoCasino = Number(efectiveMonto ?? 0);
-      if (flagRow?.value === 'true' && montoCasino > 0) {
+      if (casinoDepositEnabled && montoCasino > 0) {
         // El username del player = contacts.name. El PATCH trae el comprobante con
         // select('*') (sin join), así que el nombre se busca aparte.
         const { data: ct } = await supabaseAdmin
