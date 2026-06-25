@@ -217,12 +217,48 @@ export async function PATCH(request: Request) {
   return NextResponse.json(data);
 }
 
-// DELETE /api/contacts?id=<uuid> — borra un contacto del tenant. OJO: por las FK
-// ON DELETE CASCADE, esto borra también sus mensajes, comprobantes y leads.
-// Scope estricto por tenant_id (no se puede borrar un contacto de otro tenant).
+// DELETE /api/contacts — borra contacto(s) del tenant. Dos modos:
+//   · individual: ?id=<uuid>
+//   · lote:       body { ids: string[] }  → borra con .in('id', ids)
+// OJO: por las FK ON DELETE CASCADE, esto borra también sus mensajes,
+// comprobantes y leads. Scope estricto por tenant_id (no se puede borrar un
+// contacto de otro tenant).
 export async function DELETE(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  // Modo lote: si el body trae { ids: [...] }, borra el conjunto de una. Si no
+  // hay body válido (DELETE con ?id= y sin cuerpo), cae al borrado individual.
+  const body = await request.json().catch(() => null);
+  const bulkIds = Array.isArray(body?.ids)
+    ? (body.ids as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    : null;
+
+  if (bulkIds) {
+    if (bulkIds.length === 0) {
+      return NextResponse.json({ error: 'No se enviaron ids para eliminar.' }, { status: 400 });
+    }
+    // El .eq('tenant_id') garantiza que ids de otros tenants se ignoran. El
+    // .select() devuelve las filas borradas para saber cuántas fueron realmente.
+    const { data: deleted, error: bulkErr } = await supabaseAdmin
+      .from('contacts')
+      .delete()
+      .in('id', bulkIds)
+      .eq('tenant_id', session.tenant_id)
+      .select('id');
+    if (bulkErr) {
+      return NextResponse.json({ error: bulkErr.message }, { status: 500 });
+    }
+    const count = deleted?.length ?? 0;
+    await logActivity({
+      session,
+      action:     'contact_deleted',
+      objectType: 'contact',
+      objectId:   null,
+      details:    { bulk: true, count, ids: (deleted ?? []).map((d: any) => d.id) },
+    });
+    return NextResponse.json({ ok: true, deleted: count });
+  }
 
   const id = new URL(request.url).searchParams.get('id')?.trim();
   if (!id) return NextResponse.json({ error: 'Falta el id del contacto.' }, { status: 400 });

@@ -110,6 +110,8 @@ export default function ContactsClient() {
   const [sortDir,        setSortDir]        = useState<SortDir>('az'); // orden alfabético, A-Z por defecto
   const [editing,        setEditing]        = useState<EditableContact | null>(null);
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
+  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set()); // selección múltiple
+  const [deletingBulk,   setDeletingBulk]   = useState(false);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const actionsRef  = useRef<HTMLDivElement | null>(null);
 
@@ -207,6 +209,44 @@ export default function ContactsClient() {
     }
   }
 
+  // ── Selección múltiple ──
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleDeleteBulk() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!confirm(
+      `¿Eliminar ${ids.length} contacto${ids.length !== 1 ? 's' : ''}? Esta acción no se puede deshacer.\n\n` +
+      `Se borrará también TODO su historial: mensajes, comprobantes y leads.`,
+    )) return;
+    setDeletingBulk(true);
+    try {
+      const res = await fetch('/api/contacts', {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ ids }),
+      });
+      if (res.ok) {
+        const idset = new Set(ids);
+        setContacts((prev) => prev.filter((c) => !idset.has(c.id)));
+        setSelectedIds(new Set());
+      } else {
+        const data = await res.json().catch(() => ({} as any));
+        alert(data?.error || 'No se pudieron eliminar los contactos.');
+      }
+    } catch {
+      alert('Error de red al eliminar.');
+    } finally {
+      setDeletingBulk(false);
+    }
+  }
+
   // Filtra por búsqueda y ORDENA alfabéticamente por usuario de casino (lo que se
   // ve en la lista). A-Z por defecto, Z-A con el toggle. localeCompare con 'es'
   // para que acentos/ñ ordenen como corresponde.
@@ -222,6 +262,19 @@ export default function ContactsClient() {
     );
     return sortDir === 'az' ? sorted : sorted.reverse();
   }, [contacts, query, sortDir]);
+
+  // "Seleccionar todos" opera sobre lo FILTRADO (lo que se ve).
+  const filteredIds  = filtered.map((c) => c.id);
+  const allSelected  = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const someSelected = filteredIds.some((id) => selectedIds.has(id));
+  function toggleAll() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) filteredIds.forEach((id) => next.delete(id));
+      else             filteredIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -361,7 +414,16 @@ export default function ContactsClient() {
       {filtered.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div className="contact-row contact-header">
-            <span />
+            <span className="c-check">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                onChange={toggleAll}
+                title="Seleccionar todos"
+                style={{ cursor: 'pointer' }}
+              />
+            </span>
             <span>Usuario casino</span>
             <span>Teléfono</span>
             <span>Línea</span>
@@ -375,6 +437,16 @@ export default function ContactsClient() {
             const sc      = STATUS_COLOR[c.status] ?? STATUS_COLOR.nuevo;
             return (
               <div key={c.id} className="contact-row contact-card">
+                {/* Checkbox de selección */}
+                <span className="c-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(c.id)}
+                    onChange={() => toggleOne(c.id)}
+                    title="Seleccionar contacto"
+                    style={{ cursor: 'pointer' }}
+                  />
+                </span>
                 {/* Avatar */}
                 <div className="c-avatar" style={{
                   width: '36px', height: '36px', borderRadius: '50%',
@@ -472,6 +544,36 @@ export default function ContactsClient() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Barra flotante de selección múltiple */}
+      {selectedIds.size > 0 && (
+        <div style={{
+          position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
+          background: '#1a1a1a', color: '#fff', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+          padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: '14px', fontWeight: 700 }}>
+            {selectedIds.size} contacto{selectedIds.size !== 1 ? 's' : ''} seleccionado{selectedIds.size !== 1 ? 's' : ''}
+          </span>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+          >
+            Limpiar
+          </button>
+          <button
+            onClick={handleDeleteBulk}
+            disabled={deletingBulk}
+            style={{
+              background: '#E53935', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none',
+              borderRadius: '10px', padding: '9px 16px', cursor: deletingBulk ? 'not-allowed' : 'pointer',
+              opacity: deletingBulk ? 0.6 : 1,
+            }}
+          >
+            {deletingBulk ? 'Eliminando…' : 'Eliminar seleccionados 🗑️'}
+          </button>
         </div>
       )}
 

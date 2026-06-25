@@ -250,9 +250,16 @@ button, input, textarea, select {
 /* ── Tabla de contactos: grid en desktop, tarjeta apilada en mobile ───────── */
 .contact-row {
   display: grid;
-  grid-template-columns: 44px 1fr 1fr 90px 100px 120px auto;
+  grid-template-columns: 28px 44px 1fr 1fr 90px 100px 120px auto;
   gap: 12px;
   align-items: center;
+}
+
+/* Checkbox de selección (header y por fila). */
+.c-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Grupo de acciones por fila (conversación, editar, borrar). */
@@ -292,14 +299,15 @@ button, input, textarea, select {
   .contact-header { display: none; }
 
   .contact-card {
-    grid-template-columns: 44px 1fr auto auto;
+    grid-template-columns: 22px 44px 1fr auto auto;
     grid-template-areas:
-      "avatar user phone chat"
-      "avatar line line  chat";
+      "sel avatar user phone chat"
+      "sel avatar line line  chat";
     column-gap: 10px;
     row-gap: 4px;
     padding: 12px 14px;
   }
+  .c-check   { grid-area: sel; align-self: center; }
   .c-avatar  { grid-area: avatar; align-self: center; }
   .c-user    { grid-area: user; }
   .c-phone   { grid-area: phone; }
