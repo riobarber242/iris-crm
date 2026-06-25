@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +73,16 @@ const btn = (bg: string, fg: string): React.CSSProperties => ({
   borderRadius: '10px', padding: '10px 18px', cursor: 'pointer',
 });
 
+// Header clickeable de una sección colapsable (título + badge + chevron).
+const sectionHeaderBtn: React.CSSProperties = {
+  background: 'none', border: 'none', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', gap: '8px', padding: 0, width: '100%',
+};
+const sectionBadge: React.CSSProperties = {
+  fontSize: '11px', fontWeight: 800, background: '#C8FF00', color: '#000',
+  borderRadius: '999px', padding: '2px 8px',
+};
+
 export default function FichasClient() {
   const [data, setData]       = useState<Resumen | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,10 +115,26 @@ export default function FichasClient() {
   // bloqueante): guarda el id del comprobante armado para confirmar.
   const [confirmVerifId, setConfirmVerifId] = useState<string | null>(null);
 
+  // ── Secciones colapsables (solo layout; no afecta datos) ──
+  const [showPendientes,  setShowPendientes]  = useState(true);
+  const [showVerificadas, setShowVerificadas] = useState(false);
+  const [showCierres,     setShowCierres]     = useState(false);
+  const [showMovimientos, setShowMovimientos] = useState(false);
+  // Para abrir "Pendientes" solo en la primera carga con datos.
+  const initPendRef = useRef(false);
+
   async function fetchResumen() {
     try {
       const res = await fetch('/api/fichas');
-      if (!res.ok) { setError(await res.text().catch(() => '') || 'No se pudo cargar la caja'); return; }
+      if (!res.ok) {
+        const raw = await res.text().catch(() => '');
+        // No mostramos el JSON crudo ni el detalle de "offline": mensaje limpio.
+        const clean = (raw.toLowerCase().includes('offline') || raw.trim().startsWith('{'))
+          ? '⚠ Casino sin conexión'
+          : (raw || 'No se pudo cargar la caja');
+        setError(clean);
+        return;
+      }
       setData(await res.json());
       setError('');
     } catch {
@@ -154,6 +180,16 @@ export default function FichasClient() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Abrir "Pendientes de verificar" automáticamente solo la PRIMERA vez que
+  // llegan datos y hay pendientes. Después respetamos lo que toque el usuario
+  // (no lo re-abrimos en cada poll).
+  useEffect(() => {
+    if (data && !initPendRef.current) {
+      initPendRef.current = true;
+      setShowPendientes((data.descargas_pendientes?.length ?? 0) > 0);
+    }
+  }, [data]);
 
   async function post(payload: Record<string, any>): Promise<boolean> {
     setBusy(true);
@@ -399,39 +435,62 @@ export default function FichasClient() {
         </div>
       )}
 
-      {/* Billeteras por operador (con controles manuales del agente) */}
+      {/* Billeteras por operador (cards compactas, 2 columnas en desktop) */}
       {(data?.billeteras.length ?? 0) > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Billeteras por operador</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             {data!.billeteras.map((b) => {
               const editing = editBillId === b.operador_id;
               return (
-                <div key={b.operador_id} style={{ background: '#fff', borderRadius: '12px', padding: '10px 14px', boxShadow: '0 1px 5px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#222' }}>
+                <div key={b.operador_id} style={{
+                  flex: '1 1 calc(50% - 5px)', minWidth: '160px', position: 'relative',
+                  background: '#fff', borderRadius: '14px', padding: '14px 16px',
+                  boxShadow: '0 1px 5px rgba(0,0,0,0.05)',
+                  display: 'flex', flexDirection: 'column', gap: '6px',
+                }}>
+                  {/* Editar: ícono discreto arriba a la derecha */}
+                  {!editing && (
+                    <button
+                      onClick={() => { setEditBillId(b.operador_id); setBillVal(String(b.saldo)); }}
+                      title="Editar saldo"
+                      style={{ position: 'absolute', top: '10px', right: '12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#aaa', padding: 0, lineHeight: 1 }}
+                    >
+                      ✏
+                    </button>
+                  )}
+
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#888', textTransform: 'uppercase' }}>
                     {b.name}
                     {b.role && b.role !== 'operator' && (
-                      <span style={{ fontSize: '10px', fontWeight: 700, color: '#aaa', marginLeft: '6px', textTransform: 'uppercase' }}>{b.role}</span>
+                      <span style={{ fontSize: '10px', fontWeight: 700, color: '#bbb', marginLeft: '6px' }}>{b.role}</span>
                     )}
                   </span>
+
                   {editing ? (
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <input
                         type="number" step="1" value={billVal}
                         onChange={(e) => setBillVal(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') saveBilletera(b.operador_id); if (e.key === 'Escape') setEditBillId(null); }}
                         placeholder="nuevo saldo" autoFocus
-                        style={{ width: '120px', padding: '5px 8px', border: '2px solid #C8FF00', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#f9ffe0' }}
+                        style={{ width: '110px', padding: '5px 8px', border: '2px solid #C8FF00', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#f9ffe0' }}
                       />
                       <button onClick={() => saveBilletera(b.operador_id)} disabled={busy} style={{ ...btn('#C8FF00', '#000'), padding: '5px 10px', fontSize: '12px' }}>OK</button>
                       <button onClick={() => setEditBillId(null)} style={{ ...btn('#F0F0F0', '#888'), padding: '5px 10px', fontSize: '12px' }}>✕</button>
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '15px', fontWeight: 800, color: b.saldo < 0 ? '#c0392b' : '#111' }}>{fmt(b.saldo)}</span>
-                      <button onClick={() => { setEditBillId(b.operador_id); setBillVal(String(b.saldo)); }} style={{ ...btn('#F0F0F0', '#333'), padding: '4px 10px', fontSize: '11px' }}>Editar</button>
-                      <button onClick={() => resetBilletera(b.operador_id, b.name)} style={{ ...btn('#FFF0F0', '#c0392b'), padding: '4px 10px', fontSize: '11px' }}>Reset 0</button>
-                    </div>
+                    <>
+                      <span style={{ fontSize: '26px', fontWeight: 900, color: b.saldo < 0 ? '#c0392b' : '#111', lineHeight: 1 }}>{fmt(b.saldo)}</span>
+                      {b.saldo > 0 && (
+                        <button
+                          onClick={() => resetBilletera(b.operador_id, b.name)}
+                          style={{ alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px', color: '#c0392b', padding: 0 }}
+                        >
+                          Reset 0
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               );
@@ -460,8 +519,14 @@ export default function FichasClient() {
         </div>
 
         {/* Pendientes de verificar: descargas (Etapa 5) y cierres de turno (Etapa 6) */}
-        <p style={{ margin: '4px 0 0', fontSize: '13px', fontWeight: 800, color: '#444' }}>Pendientes de verificar</p>
-        {(data?.descargas_pendientes.length ?? 0) === 0 ? (
+        <button onClick={() => setShowPendientes((v) => !v)} style={sectionHeaderBtn}>
+          <span style={{ fontSize: '15px', fontWeight: 800, color: '#111' }}>Pendientes de verificar</span>
+          {(data?.descargas_pendientes.length ?? 0) > 0 && (
+            <span style={sectionBadge}>{data!.descargas_pendientes.length}</span>
+          )}
+          <span style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto' }}>{showPendientes ? '▲' : '▼'}</span>
+        </button>
+        {showPendientes && ((data?.descargas_pendientes.length ?? 0) === 0 ? (
           <p style={{ color: '#bbb', fontSize: '13px', padding: '8px 0' }}>No hay descargas ni cierres pendientes.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -503,7 +568,7 @@ export default function FichasClient() {
               );
             })}
           </div>
-        )}
+        ))}
 
         {/* Historial de descargas verificadas (paginado client-side) */}
         {(data?.descargas_historial.length ?? 0) > 0 && (() => {
@@ -512,8 +577,13 @@ export default function FichasClient() {
           const page  = Math.min(histPage, pages - 1);
           const slice = hist.slice(page * HIST_PAGE, page * HIST_PAGE + HIST_PAGE);
           return (
-            <>
-              <p style={{ margin: '8px 0 0', fontSize: '13px', fontWeight: 800, color: '#444' }}>Verificadas</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <button onClick={() => setShowVerificadas((v) => !v)} style={sectionHeaderBtn}>
+                <span style={{ fontSize: '15px', fontWeight: 800, color: '#111' }}>Verificadas</span>
+                <span style={sectionBadge}>{hist.length}</span>
+                <span style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto' }}>{showVerificadas ? '▲' : '▼'}</span>
+              </button>
+              {showVerificadas && (<>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {slice.map((d) => (
                   <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '8px 4px', borderBottom: '1px solid #f3f3f3', flexWrap: 'wrap' }}>
@@ -535,15 +605,23 @@ export default function FichasClient() {
                   <button onClick={() => setHistPage((p) => Math.min(pages - 1, p + 1))} disabled={page >= pages - 1} style={{ ...btn('#F0F0F0', '#555'), padding: '5px 12px', opacity: page >= pages - 1 ? 0.4 : 1 }}>→</button>
                 </div>
               )}
-            </>
+              </>
+              )}
+            </div>
           );
         })()}
       </div>
 
       {/* ── Cierres de turno (Etapa 6) ─────────────────────────────────────── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Cierres de turno</p>
-        {(() => {
+        <button onClick={() => setShowCierres((v) => !v)} style={sectionHeaderBtn}>
+          <span style={{ fontSize: '15px', fontWeight: 800, color: '#111' }}>Cierres de turno</span>
+          {(data?.cierres.length ?? 0) > 0 && (
+            <span style={sectionBadge}>{data!.cierres.length}</span>
+          )}
+          <span style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto' }}>{showCierres ? '▲' : '▼'}</span>
+        </button>
+        {showCierres && (() => {
           const all = data?.cierres ?? [];
           // Operadores presentes en los cierres, para el filtro.
           const opsMap = new Map<string, string>();
@@ -626,8 +704,14 @@ export default function FichasClient() {
 
       {/* Historial de movimientos */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Movimientos recientes</p>
-        {(data?.movimientos.length ?? 0) === 0 ? (
+        <button onClick={() => setShowMovimientos((v) => !v)} style={sectionHeaderBtn}>
+          <span style={{ fontSize: '15px', fontWeight: 800, color: '#111' }}>Movimientos recientes</span>
+          {(data?.movimientos.length ?? 0) > 0 && (
+            <span style={sectionBadge}>{data!.movimientos.length}</span>
+          )}
+          <span style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto' }}>{showMovimientos ? '▲' : '▼'}</span>
+        </button>
+        {showMovimientos && ((data?.movimientos.length ?? 0) === 0 ? (
           <p style={{ color: '#bbb', fontSize: '14px', padding: '16px 0', textAlign: 'center' }}>Todavía no hay movimientos.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -666,29 +750,22 @@ export default function FichasClient() {
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
-      {/* ── ZONA DE PELIGRO ──────────────────────────────────────────────── */}
-      <div style={{ marginTop: '12px', border: '2px solid #f0b0b0', background: '#fff7f7', borderRadius: '16px', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '16px' }}>⚠️</span>
-          <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 900, color: '#c0392b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Zona de peligro
-          </h3>
-        </div>
-        <p style={{ margin: 0, fontSize: '13px', color: '#a05050', lineHeight: 1.5 }}>
-          El reset total pone el pozo en 0, todas las billeteras en 0 y borra movimientos y cierres de turno.
-          Los comprobantes NO se borran salvo que tildes la opción. Esto no se puede deshacer.
-        </p>
-
+      {/* ── Reset total: acción discreta. El link gris expande el panel de
+          confirmación que ya existía (checkbox + input RESET + botones). ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '4px' }}>
         {!resetOpen ? (
-          <button onClick={() => setResetOpen(true)} style={{ ...btn('#c0392b', '#fff'), alignSelf: 'flex-start' }}>
-            Reset total de la caja
+          <button
+            onClick={() => setResetOpen(true)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#aaa', textDecoration: 'underline', padding: '4px' }}
+          >
+            ⚠ Reset total de la caja
           </button>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#fff', border: '1px solid #f0c0c0', borderRadius: '12px', padding: '14px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#a05050' }}>
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '10px', background: '#fff', border: '1px solid #eee', borderRadius: '12px', padding: '16px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', fontWeight: 600, color: '#777' }}>
               <input type="checkbox" checked={resetComps} onChange={(e) => setResetComps(e.target.checked)} />
               Borrar también todos los comprobantes de prueba
             </label>
@@ -698,7 +775,7 @@ export default function FichasClient() {
                 value={resetText}
                 onChange={(e) => setResetText(e.target.value)}
                 placeholder="RESET"
-                style={{ width: '120px', padding: '8px 10px', border: '2px solid #c0392b', borderRadius: '8px', fontSize: '13px', fontWeight: 800, outline: 'none', letterSpacing: '0.1em' }}
+                style={{ width: '120px', padding: '8px 10px', border: '2px solid #ddd', borderRadius: '8px', fontSize: '13px', fontWeight: 800, outline: 'none', letterSpacing: '0.1em' }}
               />
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
