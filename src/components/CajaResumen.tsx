@@ -38,6 +38,11 @@ function Card({ label, value, sub, dark }: { label: string; value: string; sub?:
 export default function CajaResumen() {
   const [data, setData] = useState<Resumen | null>(null);
 
+  // Saldo de fichas del agente en el casino (admin.celuapuestas.bond). Solo se
+  // muestra en tenants con casino_deposit_enabled=true (lo decide el backend).
+  const [casinoEnabled, setCasinoEnabled] = useState(false);
+  const [casinoBalance, setCasinoBalance] = useState<number | null>(null);
+
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -48,8 +53,19 @@ export default function CajaResumen() {
         if (alive) setData(d);
       } catch {}
     }
-    load();
-    const t = setInterval(load, 15_000);
+    // Saldo del casino: best-effort, gateado por tenant en el backend.
+    async function fetchCasinoBalance() {
+      try {
+        const res = await fetch('/api/casino/balance');
+        if (!res.ok) return;
+        const j = await res.json();
+        setCasinoEnabled(!!j.enabled);
+        if (j.enabled && typeof j.balance === 'number') setCasinoBalance(j.balance);
+      } catch {}
+    }
+    const refreshAll = () => { load(); fetchCasinoBalance(); };
+    refreshAll();
+    const t = setInterval(refreshAll, 15_000);
 
     // Realtime: cualquier movimiento de caja (carga, pago, sueldo, descarga,
     // traspaso) escribe en `movimientos` y refresca los saldos al instante.
@@ -58,7 +74,7 @@ export default function CajaResumen() {
     let ch: any = null;
     if (sb) {
       ch = sb.channel('realtime-caja-resumen')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => load())
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => refreshAll())
         .subscribe();
     }
 
@@ -71,7 +87,7 @@ export default function CajaResumen() {
 
   // No mostramos nada hasta tener datos, ni si la caja no está en uso.
   if (!data || data.degraded) return null;
-  const enUso = data.caja_enabled || data.stock > 0 || data.billeteras.length > 0;
+  const enUso = data.caja_enabled || data.stock > 0 || data.billeteras.length > 0 || casinoEnabled;
   if (!enUso) return null;
 
   return (
@@ -94,30 +110,58 @@ export default function CajaResumen() {
         </Link>
       </div>
 
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-        <Card label="Stock del pozo" value={fmt(data.stock)} sub="fichas disponibles" dark />
-        <Card label="Total billeteras" value={fmt(data.total_billeteras)} sub={`${data.billeteras.length} operador${data.billeteras.length === 1 ? '' : 'es'}`} />
-      </div>
+      {/* Con casino activado mostramos el saldo del casino (sincronizado en vivo)
+          en lugar del pozo interno; si no, las dos cards de siempre. */}
+      {casinoEnabled ? (
+        <div style={{ background: 'linear-gradient(135deg, #0b3d3a 0%, #16324f 55%, #2a1a5e 100%)', border: '1px solid #2f6f6a', borderRadius: '18px', padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#5fe3c8' }}>
+              🎰 Saldo casino
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '40px', fontWeight: 900, color: '#fff', lineHeight: 1 }}>
+              {casinoBalance != null ? casinoBalance.toLocaleString('es-AR', { maximumFractionDigits: 2 }) : '—'}
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#9fb6c8' }}>
+              fichas del agente en el casino · sincronizado en vivo
+            </p>
+          </div>
+          <span style={{ fontSize: '11px', color: '#7fa0b8', maxWidth: '210px', textAlign: 'right', lineHeight: 1.4 }}>
+            Baja al verificar una carga (le diste fichas a un jugador) y sube al verificar un pago.
+          </span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <Card label="Stock del pozo" value={fmt(data.stock)} sub="fichas disponibles" dark />
+          <Card label="Total billeteras" value={fmt(data.total_billeteras)} sub={`${data.billeteras.length} operador${data.billeteras.length === 1 ? '' : 'es'}`} />
+        </div>
+      )}
 
-      {/* Desglose por operador */}
+      {/* Desglose por operador (cards compactas, solo lectura) */}
       {data.billeteras.length > 0 && (
-        <div style={{ background: '#fff', borderRadius: '16px', padding: '14px 16px', boxShadow: '0 2px 10px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#aaa' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <p style={{ margin: '0 0 2px', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#aaa' }}>
             Billeteras por operador
           </p>
-          {data.billeteras.map((b) => (
-            <div key={b.operador_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '6px 0', borderBottom: '1px solid #f3f3f3' }}>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {b.name}
-                {b.role && b.role !== 'operator' && (
-                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#aaa', marginLeft: '6px', textTransform: 'uppercase' }}>{b.role}</span>
-                )}
-              </span>
-              <span style={{ fontSize: '14px', fontWeight: 800, color: b.saldo < 0 ? '#c0392b' : '#111' }}>
-                {fmt(b.saldo)}
-              </span>
-            </div>
-          ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+            {data.billeteras.map((b) => (
+              <div key={b.operador_id} style={{
+                flex: '1 1 calc(50% - 6px)', minWidth: '140px',
+                background: '#fff', borderRadius: '14px', padding: '14px 16px',
+                boxShadow: '0 1px 5px rgba(0,0,0,0.05)',
+                display: 'flex', flexDirection: 'column', gap: '6px',
+              }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#888', textTransform: 'uppercase' }}>
+                  {b.name}
+                  {b.role && b.role !== 'operator' && (
+                    <span style={{ fontSize: '10px', fontWeight: 700, color: '#bbb', marginLeft: '6px' }}>{b.role}</span>
+                  )}
+                </span>
+                <span style={{ fontSize: '26px', fontWeight: 900, color: b.saldo < 0 ? '#c0392b' : '#111', lineHeight: 1 }}>
+                  {fmt(b.saldo)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
