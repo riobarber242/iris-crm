@@ -93,6 +93,10 @@ export default function ContactHeader({
   const [assignedAgent, setAssignedAgent] = useState(initialAssignedAgentId ?? '');
   const [agents,        setAgents]        = useState<AgentOption[]>([]);
 
+  // Header colapsable (mobile): la fila compacta queda siempre visible y el resto
+  // se expande/contrae. Default colapsado para que el chat ocupe más alto.
+  const [expanded, setExpanded] = useState(false);
+
   // ── Crear usuario casino ──
   const [createOpen,    setCreateOpen]    = useState(false);
   const [createUser,    setCreateUser]    = useState(() => suggestUsername(contactName));
@@ -252,34 +256,82 @@ export default function ContactHeader({
         </div>
       )}
 
-      {/* ── Main header row ── */}
+      {/* ── Fila principal colapsada (siempre visible) ── */}
       <div style={{
-        background: '#FFFFFF', borderRadius: '16px', padding: '16px 20px',
+        background: '#FFFFFF', borderRadius: '16px', padding: '10px 14px',
         boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex',
-        alignItems: 'center', gap: '16px', width: '100%',
+        alignItems: 'center', gap: '12px', width: '100%',
       }}>
-        {/* Avatar + resumen recargas */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <div style={{
-            width: '44px', height: '44px', borderRadius: '50%', background: '#C8FF00',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 800, fontSize: '18px', color: '#000',
-          }}>
-            {initial}
-          </div>
-          {hasRecargas && (
-            <span style={{
-              background: '#1a1a1a', color: '#C8FF00',
-              fontSize: '10px', fontWeight: 800,
-              borderRadius: '6px', padding: '2px 6px',
-              whiteSpace: 'nowrap', letterSpacing: '0.02em',
-            }}>
-              {recargasCount} ✓
-            </span>
-          )}
+        {/* Avatar */}
+        <div style={{
+          width: '40px', height: '40px', borderRadius: '50%', background: '#C8FF00',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontWeight: 800, fontSize: '17px', color: '#000', flexShrink: 0,
+        }}>
+          {initial}
         </div>
 
-        <div style={{ flex: 1 }}>
+        {/* Nombre/usuario casino + teléfono */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {casinoUser && (
+            <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              🎰 {casinoUser}
+            </p>
+          )}
+          <p style={{ fontSize: '12px', color: '#999', margin: casinoUser ? '2px 0 0 0' : 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{phone}</p>
+        </div>
+
+        {/* Pill de estado (editable, STATUS_COLOR) */}
+        <select
+          value={status}
+          onChange={(e) => handleStatusChange(e.target.value)}
+          disabled={statusLoading}
+          style={{
+            background:   (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).bg,
+            color:        (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).fg,
+            fontWeight:   700,
+            fontSize:     '12px',
+            border:       'none',
+            borderRadius: '8px',
+            padding:      '4px 10px',
+            cursor:       statusLoading ? 'not-allowed' : 'pointer',
+            opacity:      statusLoading ? 0.6 : 1,
+            outline:      'none',
+            flexShrink:   0,
+          }}
+        >
+          {STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+
+        {/* Toggle expandir/contraer */}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? 'Contraer' : 'Expandir'}
+          aria-label={expanded ? 'Contraer' : 'Expandir'}
+          style={{
+            background: '#F0F0F0', color: '#555', border: 'none', borderRadius: '8px',
+            width: '30px', height: '30px', display: 'inline-flex', alignItems: 'center',
+            justifyContent: 'center', cursor: 'pointer', fontSize: '14px', fontWeight: 800, flexShrink: 0,
+          }}
+        >
+          {expanded ? '∧' : '∨'}
+        </button>
+      </div>
+
+      {/* ── Contenido expandible (recargas, provincia, operador, botones, notas) ── */}
+      <div style={{
+        maxHeight: expanded ? '2000px' : '0',
+        overflow: 'hidden',
+        transition: 'max-height 0.3s ease',
+        display: 'flex', flexDirection: 'column', gap: '10px',
+      }}>
+        {/* Tarjeta de controles del contacto */}
+        <div style={{
+          background: '#FFFFFF', borderRadius: '16px', padding: '16px 20px',
+          boxShadow: '0 2px 16px rgba(0,0,0,0.07)',
+        }}>
           {editing ? (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               <input
@@ -308,42 +360,11 @@ export default function ContactHeader({
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <div>
-                {casinoUser && (
-                  <p style={{ fontSize: '17px', fontWeight: 800, color: '#000', margin: 0 }}>
-                    🎰 {casinoUser}
-                  </p>
-                )}
-                <p style={{ fontSize: '13px', color: '#999', margin: casinoUser ? '2px 0 0 0' : 0 }}>{phone}</p>
-                {hasRecargas && (
-                  <p style={{ fontSize: '12px', color: '#1a7a3a', fontWeight: 700, margin: '2px 0 0 0' }}>
-                    {recargasCount} recarga{(recargasCount ?? 0) !== 1 ? 's' : ''} verificada{(recargasCount ?? 0) !== 1 ? 's' : ''} · ${(recargasMonto ?? 0).toLocaleString('es-AR')} total
-                  </p>
-                )}
-              </div>
-
-              {/* Status selector */}
-              <select
-                value={status}
-                onChange={(e) => handleStatusChange(e.target.value)}
-                disabled={statusLoading}
-                style={{
-                  background:   (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).bg,
-                  color:        (STATUS_COLOR[status] ?? STATUS_COLOR.nuevo).fg,
-                  fontWeight:   700,
-                  fontSize:     '12px',
-                  border:       'none',
-                  borderRadius: '8px',
-                  padding:      '4px 10px',
-                  cursor:       statusLoading ? 'not-allowed' : 'pointer',
-                  opacity:      statusLoading ? 0.6 : 1,
-                  outline:      'none',
-                }}
-              >
-                {STATUS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+              {hasRecargas && (
+                <p style={{ fontSize: '12px', color: '#1a7a3a', fontWeight: 700, margin: 0, width: '100%' }}>
+                  {recargasCount} recarga{(recargasCount ?? 0) !== 1 ? 's' : ''} verificada{(recargasCount ?? 0) !== 1 ? 's' : ''} · ${(recargasMonto ?? 0).toLocaleString('es-AR')} total
+                </p>
+              )}
 
               {/* Provincia selector */}
               <select
@@ -469,7 +490,6 @@ export default function ContactHeader({
             </div>
           )}
         </div>
-      </div>
 
       {/* ── Notas internas ── */}
       <div style={{
@@ -528,6 +548,7 @@ export default function ContactHeader({
             {notes || 'Sin notas. Hacé clic en Editar para agregar.'}
           </p>
         )}
+      </div>
       </div>
 
       {/* ── Modal: crear usuario en el casino ── */}
