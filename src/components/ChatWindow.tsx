@@ -146,6 +146,9 @@ function reconcileSent(list: Message[], temp: Message, saved: Message | null): M
 
 export default function ChatWindow({ contactId }: { contactId: string }) {
   const { agent } = useAuth();
+  // Eliminar mensajes: solo admin/agent (gate de UI; la API valida tenant).
+  const canDelete = agent?.role === 'admin' || agent?.role === 'agent';
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -572,6 +575,25 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     await sendText(failed.content);
   }
 
+  // Elimina un mensaje (tachito). Pide confirmación y lo saca del estado local.
+  async function handleDeleteMessage(id: string) {
+    if (!confirm('¿Eliminar este mensaje? Esta acción no se puede deshacer.')) return;
+    setDeletingMessageId(id);
+    try {
+      const res = await fetch(`/api/messages?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setMessages((m) => m.filter((x) => x.id !== id));
+      } else {
+        const data = await res.json().catch(() => ({} as any));
+        setSendError(data?.error || 'No se pudo eliminar el mensaje.');
+      }
+    } catch {
+      setSendError('Error de red al eliminar el mensaje.');
+    } finally {
+      setDeletingMessageId(null);
+    }
+  }
+
   // Envía una plantilla aprobada (fallback cuando se cayó la ventana de 24h).
   async function sendTemplate(name: string) {
     if (templateSending) return;
@@ -863,6 +885,19 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                       Usar plantilla
                     </button>
                   </>
+                )}
+                {/* Eliminar mensaje: solo staff (admin/agent) y solo en mensajes
+                    del equipo (human/internal), no en los entrantes del cliente. */}
+                {canDelete && (m.role === 'human' || m.role === 'internal') && m.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteMessage(m.id!)}
+                    disabled={deletingMessageId === m.id}
+                    title="Eliminar mensaje"
+                    style={{ background: 'none', border: 'none', cursor: deletingMessageId === m.id ? 'not-allowed' : 'pointer', color: '#c0392b', fontSize: '12px', lineHeight: 1, padding: 0 }}
+                  >
+                    🗑️
+                  </button>
                 )}
               </p>
 

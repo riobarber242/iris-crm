@@ -56,7 +56,7 @@ const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
 // fetch al backend; si se omite, trae todo (compat). `canManualPago` (solo en
 // Pagos, para admin/agent) habilita el botón "Cargar pago manual".
 export default function ComprobantesClient(
-  { tipo, canManualPago = false }: { tipo?: 'carga' | 'pago'; canManualPago?: boolean } = {},
+  { tipo, canManualPago = false, canDelete = false }: { tipo?: 'carga' | 'pago'; canManualPago?: boolean; canDelete?: boolean } = {},
 ) {
   const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
   const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
@@ -78,6 +78,7 @@ export default function ComprobantesClient(
   const [manualFile,   setManualFile]         = useState<File | null>(null);
   const [manualError,  setManualError]        = useState('');
   const [manualSaving, setManualSaving]       = useState(false);
+  const [deletingComprobanteId, setDeletingComprobanteId] = useState<string | null>(null);
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
 
@@ -200,6 +201,25 @@ export default function ComprobantesClient(
       // Motivo real del backend (ej. guard de saldo/fichas al reaplicar).
       const msg = String(e?.message ?? '').trim();
       setError(msg || `No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
+    }
+  }
+
+  // Borra un comprobante (tachito). Pide confirmación; quita el item al instante.
+  async function handleDeleteComprobante(id: string) {
+    if (!confirm('¿Eliminar este comprobante? Esta acción no se puede deshacer.')) return;
+    setDeletingComprobanteId(id);
+    try {
+      const res = await fetch(`/api/comprobantes?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setComprobantes((prev) => prev.filter((c) => c.id !== id));
+      } else {
+        const data = await res.json().catch(() => ({} as any));
+        setError(data?.error || 'No se pudo eliminar el comprobante.');
+      }
+    } catch {
+      setError('Error de red al eliminar el comprobante.');
+    } finally {
+      setDeletingComprobanteId(null);
     }
   }
 
@@ -557,6 +577,21 @@ export default function ComprobantesClient(
                       >
                         💬
                       </Link>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() => handleDeleteComprobante(item.id)}
+                        disabled={deletingComprobanteId === item.id}
+                        title="Eliminar comprobante"
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          width: '28px', height: '28px', borderRadius: '8px', border: 'none',
+                          background: '#FFE9E9', cursor: deletingComprobanteId === item.id ? 'not-allowed' : 'pointer',
+                          fontSize: '14px', flexShrink: 0, opacity: deletingComprobanteId === item.id ? 0.5 : 1,
+                        }}
+                      >
+                        🗑️
+                      </button>
                     )}
                   </div>
                 </div>

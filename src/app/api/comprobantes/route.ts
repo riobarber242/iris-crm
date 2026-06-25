@@ -443,3 +443,43 @@ export async function PATCH(request: Request) {
 
   return NextResponse.json(data);
 }
+
+// DELETE /api/comprobantes?id=<uuid> — borra un comprobante del tenant.
+// Scope estricto por tenant_id (no se puede borrar uno de otro tenant).
+export async function DELETE(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const id = new URL(request.url).searchParams.get('id')?.trim();
+  if (!id) return NextResponse.json({ error: 'Falta el id del comprobante.' }, { status: 400 });
+
+  // Debe existir en este tenant (defensa server-side + para loguear el tipo).
+  const { data: existing } = await supabaseAdmin
+    .from('comprobantes')
+    .select('id, tipo, contact_id')
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!existing) {
+    return NextResponse.json({ error: 'Comprobante no encontrado.' }, { status: 404 });
+  }
+
+  const { error } = await supabaseAdmin
+    .from('comprobantes')
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', session.tenant_id);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  await logActivity({
+    session,
+    action:     'comprobante_eliminado',
+    objectType: 'comprobante',
+    objectId:   id,
+    details:    { tipo: existing.tipo ?? null, contact_id: existing.contact_id ?? null },
+  });
+
+  return NextResponse.json({ ok: true });
+}

@@ -177,3 +177,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Error interno enviando el mensaje' }, { status: 500 });
   }
 }
+
+// DELETE /api/messages?id=<uuid> — borra un mensaje. La pertenencia al tenant se
+// valida vía el contacto (join contact_id → contacts.tenant_id), así también
+// cubre mensajes viejos con messages.tenant_id en null.
+export async function DELETE(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const id = new URL(request.url).searchParams.get('id')?.trim();
+  if (!id) return NextResponse.json({ error: 'Falta el id del mensaje.' }, { status: 400 });
+
+  const { data: msg } = await supabaseAdmin
+    .from('messages')
+    .select('id, contact_id, contacts!inner(tenant_id)')
+    .eq('id', id)
+    .eq('contacts.tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!msg) {
+    return NextResponse.json({ error: 'Mensaje no encontrado.' }, { status: 404 });
+  }
+
+  const { error } = await supabaseAdmin.from('messages').delete().eq('id', id);
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  await logActivity({
+    session,
+    action:     'message_eliminado',
+    objectType: 'message',
+    objectId:   id,
+    details:    { contact_id: (msg as any).contact_id ?? null },
+  });
+
+  return NextResponse.json({ ok: true });
+}
