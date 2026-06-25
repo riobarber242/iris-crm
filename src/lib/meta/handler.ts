@@ -160,9 +160,16 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   }
 
   // ── Step 3: upload to Supabase Storage ───────────────────────────────────
-  const ext      = contentType.includes('png') ? 'png'
+  const ext      = contentType.includes('png')  ? 'png'
                  : contentType.includes('webp') ? 'webp'
                  : contentType.includes('gif')  ? 'gif'
+                 // Audio entrante (notas de voz / audios): mapear los mime de Meta
+                 // a una extensión real para que el <audio> del chat lo reproduzca.
+                 : contentType.includes('ogg')  ? 'ogg'
+                 : contentType.includes('mpeg') ? 'mp3'
+                 : (contentType.includes('mp4') || contentType.includes('m4a')) ? 'm4a'
+                 : contentType.includes('amr')  ? 'amr'
+                 : contentType.startsWith('audio/') ? 'ogg'
                  : 'jpg';
   const filePath = `${contactId}/${Date.now()}.${ext}`;
 
@@ -195,7 +202,8 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
 // mandar a verificar con el botón "Enviar a verificar" desde la conversación
 // (ver POST /api/comprobantes). Acá solo persistimos la imagen.
 async function saveInboundImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
-  const mediaId = message.image?.id ?? message.document?.id ?? null;
+  const mediaId = message.image?.id ?? message.document?.id ?? message.sticker?.id
+                ?? message.audio?.id ?? message.voice?.id ?? null;
   // El media solo puede descargarse con el token del número que lo recibió.
   let waToken: string | null = null;
   if (mediaId) {
@@ -441,15 +449,19 @@ async function processMessage(
   //    mensaje entrante de tipo image se guarde como media (no como texto "image")
   //    y se renderice como imagen en el chat del CRM. Etapa 4a: NO se crea
   //    comprobante automático; el operador lo manda a verificar con el botón.
-  let inboundImageUrl: string | null = null;
-  if (type === 'image' || type === 'document') {
-    inboundImageUrl = await saveInboundImage(message, contact.id, tenantId, numberId);
+  let inboundMediaUrl: string | null = null;
+  if (['image', 'document', 'sticker', 'audio', 'voice'].includes(type)) {
+    inboundMediaUrl = await saveInboundImage(message, contact.id, tenantId, numberId);
   }
 
-  // Contenido del mensaje del usuario.
+  // Contenido del mensaje del usuario. Stickers se guardan como media de imagen
+  // (son webp) y los audios/notas de voz como media de audio, para que el chat
+  // del CRM los renderice (imagen / player) en vez de un placeholder.
   const userContent =
-    type === 'text'                          ? text
-    : (type === 'image' && inboundImageUrl)  ? JSON.stringify({ _type: 'image', url: inboundImageUrl, caption: (message.image?.caption ?? '').trim() })
+    type === 'text'                            ? text
+    : (type === 'image' && inboundMediaUrl)    ? JSON.stringify({ _type: 'image', url: inboundMediaUrl, caption: (message.image?.caption ?? '').trim() })
+    : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'image', url: inboundMediaUrl })
+    : (['audio', 'voice'].includes(type) && inboundMediaUrl) ? JSON.stringify({ _type: 'audio', url: inboundMediaUrl })
     : type;
 
   // ── Save user message ──────────────────────────────────────────────────────

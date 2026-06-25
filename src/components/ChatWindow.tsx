@@ -73,7 +73,7 @@ const actionItem: React.CSSProperties = {
 
 // Clasifica el contenido de un mensaje para renderizarlo. Cubre los mensajes
 // viejos de imagen guardados como texto "image"/"document" o como URL pelada.
-function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'file'; url?: string } {
+function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'sticker-missing' | 'file'; url?: string } {
   const c = (content ?? '').trim();
   const isUrl = /^https?:\/\//i.test(c);
   if (isUrl && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(c)) return { kind: 'image', url: c };
@@ -81,6 +81,7 @@ function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missin
   if (c === 'image')                    return { kind: 'image-missing' };
   if (c === 'document')                 return { kind: 'doc-missing' };
   if (c === 'audio' || c === 'voice')   return { kind: 'audio-missing' };
+  if (c === 'sticker')                  return { kind: 'sticker-missing' };
   return { kind: 'text' };
 }
 
@@ -767,11 +768,12 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               style={{
                 position: 'relative',
                 maxWidth: '78%',
-                // Cliente (user) a la derecha; bot y operador (human) a la izquierda.
-                alignSelf: isBot || isHuman ? 'flex-start' : 'flex-end',
+                // Chat invertido: cliente (user) a la izquierda; bot y operador
+                // (human) a la derecha. La colita de la burbuja sigue al lado.
+                alignSelf: isBot || isHuman ? 'flex-end' : 'flex-start',
                 background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
                 color: isBot ? '#333' : isHuman ? '#000' : '#fff',
-                borderRadius: isBot || isHuman ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
+                borderRadius: isBot || isHuman ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
                 padding: '10px 14px',
                 wordBreak: 'break-word',
               }}
@@ -823,6 +825,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 if (b.kind === 'image-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🖼️ Imagen</span>;
                 if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
                 if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
+                if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
                 return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>;
               })()}
 
@@ -861,7 +864,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               )}
 
               {/* Hora + ticks (ticks solo en salientes) */}
-              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-start' : 'flex-end' }}
+              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-end' : 'flex-start' }}
                  title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
                 {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
                 {(isBot || isHuman) && <Ticks status={m.status} />}
