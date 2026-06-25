@@ -96,13 +96,13 @@ function Ticks({ status }: { status?: string }) {
 }
 
 type QuickReply = { id: string; title: string; content: string };
-type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
+type MediaContent = { _type: 'image' | 'audio' | 'sticker'; url: string; caption?: string };
 
 
 function parseMedia(raw: string): MediaContent | null {
   try {
     const p = JSON.parse(raw);
-    if ((p?._type === 'image' || p?._type === 'audio') && typeof p.url === 'string') return p;
+    if ((p?._type === 'image' || p?._type === 'audio' || p?._type === 'sticker') && typeof p.url === 'string') return p;
   } catch {}
   return null;
 }
@@ -804,6 +804,17 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                   controls
                   src={media.url}
                   style={{ width: '100%', minWidth: '200px', marginTop: '2px' }}
+                />
+              ) : media?._type === 'sticker' ? (
+                <img
+                  src={media.url}
+                  alt="sticker"
+                  style={{
+                    maxWidth: '120px', width: '100%', objectFit: 'contain',
+                    display: 'block', background: 'transparent', cursor: 'pointer',
+                  }}
+                  onLoad={handleMediaLoad}
+                  onClick={() => setLightboxUrl(media.url)}
                 />
               ) : (() => {
                 const b = classifyBody(m.content);

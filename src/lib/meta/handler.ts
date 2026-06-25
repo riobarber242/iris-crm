@@ -460,7 +460,7 @@ async function processMessage(
   const userContent =
     type === 'text'                            ? text
     : (type === 'image' && inboundMediaUrl)    ? JSON.stringify({ _type: 'image', url: inboundMediaUrl, caption: (message.image?.caption ?? '').trim() })
-    : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'image', url: inboundMediaUrl })
+    : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'sticker', url: inboundMediaUrl })
     : (['audio', 'voice'].includes(type) && inboundMediaUrl) ? JSON.stringify({ _type: 'audio', url: inboundMediaUrl })
     : type;
 
