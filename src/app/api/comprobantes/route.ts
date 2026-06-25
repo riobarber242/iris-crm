@@ -447,6 +447,14 @@ export async function PATCH(request: Request) {
         // completarse porque el runtime suspende la instancia al retornar.
         try {
           await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
+          // Registrar el aviso en el chat (mismo patrón que campañas: mensaje
+          // 'human' enviado por el sistema, sin atribución a un agente).
+          await supabaseAdmin.from('messages').insert({
+            contact_id: comprobante.contact_id,
+            role:       'human',
+            content:    msg,
+            tenant_id:  session.tenant_id,
+          });
         } catch {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');
         }
