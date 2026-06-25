@@ -305,8 +305,9 @@ export default function ContactHeader({
           ))}
         </select>
 
-        {/* Toggle expandir/contraer */}
+        {/* Toggle expandir/contraer (se oculta en desktop vía CSS: ahí va todo expandido) */}
         <button
+          className="ch-toggle"
           onClick={() => setExpanded((v) => !v)}
           title={expanded ? 'Contraer' : 'Expandir'}
           aria-label={expanded ? 'Contraer' : 'Expandir'}
@@ -321,7 +322,7 @@ export default function ContactHeader({
       </div>
 
       {/* ── Contenido expandible (recargas, provincia, operador, botones, notas) ── */}
-      <div style={{
+      <div className="ch-expandable" style={{
         maxHeight: expanded ? '2000px' : '0',
         overflow: 'hidden',
         transition: 'max-height 0.3s ease',

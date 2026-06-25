@@ -318,3 +318,15 @@ button, input, textarea, select {
 
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }
 }
+
+/* ── ContactHeader: en desktop va SIEMPRE expandido ───────────────────────────
+   El header es colapsable (mobile) vía estado React (max-height inline). En
+   desktop forzamos el contenido visible y ocultamos el chevron, sin tocar el
+   estado. !important para ganarle al max-height inline. */
+@media (min-width: 768px) {
+  .ch-expandable {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .ch-toggle { display: none !important; }
+}
