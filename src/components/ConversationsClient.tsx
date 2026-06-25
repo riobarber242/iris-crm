@@ -21,6 +21,7 @@ export default function ConversationsClient() {
   const sbRef          = useRef<any>(null);
   const channelRef     = useRef<any>(null);
   const filtersRef     = useRef<HTMLDivElement>(null);
+  const listRef        = useRef<HTMLDivElement>(null);
 
   // Número de filtros activos (estado distinto de "todos" + lectura distinta de "todos").
   const activeFilterCount = (activeFilter !== 'todos' ? 1 : 0) + (readFilter !== 'todos' ? 1 : 0);
@@ -49,6 +50,13 @@ export default function ConversationsClient() {
   // Realtime (mensajes + contactos) con polling de respaldo cada 5 s.
   useEffect(() => {
     fetchRef.current = fetchConversations;
+    // Restaurar la posición de scroll guardada al volver de una conversación.
+    const saved = sessionStorage.getItem('conv-scroll');
+    if (saved) {
+      const y = parseInt(saved, 10);
+      sessionStorage.removeItem('conv-scroll');
+      requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
+    }
     fetchConversations();
     // El modo offline afecta la clasificación (sin offline no hay rojo).
     fetch('/api/settings/offline-mode')
@@ -115,7 +123,7 @@ export default function ConversationsClient() {
   });
 
   return (
-    <div className="conv-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+    <div ref={listRef} className="conv-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
       {/* Barra: búsqueda + botón Filtros colapsable */}
       <div ref={filtersRef} style={{ position: 'relative', display: 'flex', gap: '8px', alignItems: 'stretch' }}>
@@ -296,6 +304,7 @@ export default function ConversationsClient() {
           <Link
             key={contact.id}
             href={`/conversaciones/${contact.id}`}
+            onClick={() => sessionStorage.setItem('conv-scroll', String(window.scrollY))}
             style={{ textDecoration: 'none' }}
           >
             <div
