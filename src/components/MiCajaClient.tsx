@@ -534,11 +534,28 @@ export default function MiCajaClient() {
   const [toast, setToast]             = useState<string | null>(null);
   const [verifErr, setVerifErr]       = useState<string | null>(null);
 
+  // Saldo de fichas del agente en el casino. Solo se muestra en tenants con
+  // casino_deposit_enabled=true (lo decide el backend vía { enabled }).
+  const [casinoEnabled, setCasinoEnabled] = useState(false);
+  const [casinoBalance, setCasinoBalance] = useState<number | null>(null);
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/caja/operador');
       if (!res.ok) return;
       setData(await res.json());
+    } catch {}
+  }, []);
+
+  // Saldo del casino: best-effort, gateado por tenant en el backend. Mismo patrón
+  // que FichasClient; se refresca junto con el resumen.
+  const fetchCasinoBalance = useCallback(async () => {
+    try {
+      const res = await fetch('/api/casino/balance');
+      if (!res.ok) return;
+      const j = await res.json();
+      setCasinoEnabled(!!j.enabled);
+      if (j.enabled && typeof j.balance === 'number') setCasinoBalance(j.balance);
     } catch {}
   }, []);
 
@@ -642,15 +659,17 @@ export default function MiCajaClient() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 15_000);
+    fetchCasinoBalance();
+    const t = setInterval(() => { load(); fetchCasinoBalance(); }, 15_000);
 
     // Realtime: cualquier movimiento de caja escribe en `movimientos` y
-    // refresca mi billetera / pozo / movs al instante. El poll queda de respaldo.
+    // refresca mi billetera / pozo / movs (y el saldo casino) al instante. El
+    // poll queda de respaldo.
     const sb = getSupabaseBrowser();
     let ch: any = null;
     if (sb) {
       ch = sb.channel('realtime-mi-caja')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => load())
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => { load(); fetchCasinoBalance(); })
         .subscribe();
     }
 
@@ -658,7 +677,7 @@ export default function MiCajaClient() {
       clearInterval(t);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[mi-caja realtime] removeChannel falló:', err); } }
     };
-  }, [load]);
+  }, [load, fetchCasinoBalance]);
 
   if (!data) return <Vacio texto="Cargando tu caja…" />;
 
@@ -714,6 +733,27 @@ export default function MiCajaClient() {
           >
             {actionBusy ? 'Verificando…' : 'Verificar'}
           </button>
+        </div>
+      )}
+
+      {/* Saldo en el casino (admin.celuapuestas.bond) — mismo banner que Fichas.
+          Solo en tenants con el casino activado. */}
+      {casinoEnabled && (
+        <div style={{ background: 'linear-gradient(135deg, #0b3d3a 0%, #16324f 55%, #2a1a5e 100%)', border: '1px solid #2f6f6a', borderRadius: '18px', padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#5fe3c8' }}>
+              🎰 Saldo casino
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '40px', fontWeight: 900, color: '#fff', lineHeight: 1 }}>
+              {casinoBalance != null ? casinoBalance.toLocaleString('es-AR', { maximumFractionDigits: 2 }) : '—'}
+            </p>
+            <p style={{ margin: '6px 0 0', fontSize: '12px', color: '#9fb6c8' }}>
+              fichas del agente en el casino · sincronizado en vivo
+            </p>
+          </div>
+          <span style={{ fontSize: '11px', color: '#7fa0b8', maxWidth: '210px', textAlign: 'right', lineHeight: 1.4 }}>
+            Baja al verificar una carga (le diste fichas a un jugador) y sube al verificar un pago.
+          </span>
         </div>
       )}
 

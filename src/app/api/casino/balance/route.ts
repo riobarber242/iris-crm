@@ -2,12 +2,6 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { getAgentBalance } from '@/lib/casino/client';
-import type { SessionPayload } from '@/lib/session';
-
-// Solo admin/agent: el saldo del casino es info de caja del negocio.
-function requireStaff(session: SessionPayload | null): session is SessionPayload {
-  return !!session && (session.role === 'admin' || session.role === 'agent');
-}
 
 // Cache en memoria del saldo (por instancia/lambda) para no martillar el casino
 // si varios agentes miran Fichas a la vez. El saldo es GLOBAL (un único agente
@@ -20,9 +14,10 @@ let balanceCache: { balance: number; expiresAt: number } | null = null;
 //   { enabled: true, balance, cached }      si está activado
 //   { enabled: true, balance: null, error } si el casino no respondió
 export async function GET() {
+  // Cualquier usuario autenticado del tenant puede ver el saldo del casino
+  // (los operadores también lo necesitan en su panel "Mi Caja").
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
-  if (!requireStaff(session)) return new NextResponse('No autorizado', { status: 403 });
 
   // Gate por tenant: solo se muestra donde casino_deposit_enabled = 'true'.
   const { data: flagRow } = await supabaseAdmin
