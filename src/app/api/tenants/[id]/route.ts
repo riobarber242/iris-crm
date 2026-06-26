@@ -4,9 +4,16 @@ import { requireAdmin } from '@/lib/current-agent';
 import { hashPassword } from '@/lib/auth';
 
 const TENANT_FIELDS =
-  'id, name, whatsapp_phone_id, whatsapp_access_token, whatsapp_waba_id, whatsapp_display_number, created_at';
+  'id, name, whatsapp_phone_id, whatsapp_access_token, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
+  'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes';
 
 const MAX_PROMPT = 4000;
+
+// Valores permitidos para los selectores de membresía (defensa server-side: el
+// front solo ofrece estos, pero validamos igual).
+const PLANS   = ['trial', 'basic', 'premium'];
+const STATUSES = ['active', 'suspended', 'cancelled'];
+const SKINS   = ['casino', 'loteria', 'barberia'];
 
 // PATCH /api/tenants/[id] — editar tenant (admin)
 // Campos editables (todos opcionales; solo se tocan los que vienen en el body):
@@ -34,6 +41,41 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (body.whatsapp_access_token !== undefined) updates.whatsapp_access_token  = String(body.whatsapp_access_token).trim() || null;
   if (body.waba_id !== undefined)               updates.whatsapp_waba_id       = String(body.waba_id).trim() || null;
   if (body.numero_visible !== undefined)        updates.whatsapp_display_number = String(body.numero_visible).trim() || null;
+
+  // ── Campos de membresía (panel de admin) ──────────────────────────────────
+  if (body.plan !== undefined) {
+    const plan = String(body.plan).trim();
+    if (!PLANS.includes(plan)) return NextResponse.json({ error: `Plan inválido (esperado: ${PLANS.join(', ')})` }, { status: 400 });
+    updates.plan = plan;
+  }
+  if (body.status !== undefined) {
+    const status = String(body.status).trim();
+    if (!STATUSES.includes(status)) return NextResponse.json({ error: `Estado inválido (esperado: ${STATUSES.join(', ')})` }, { status: 400 });
+    updates.status = status;
+  }
+  if (body.skin !== undefined) {
+    const skin = String(body.skin).trim();
+    if (!SKINS.includes(skin)) return NextResponse.json({ error: `Skin inválido (esperado: ${SKINS.join(', ')})` }, { status: 400 });
+    updates.skin = skin;
+  }
+  if (body.monthly_amount !== undefined) {
+    const amount = Math.trunc(Number(body.monthly_amount));
+    if (!Number.isFinite(amount) || amount < 0) return NextResponse.json({ error: 'El monto mensual debe ser un entero ≥ 0' }, { status: 400 });
+    updates.monthly_amount = amount;
+  }
+  if (body.paid_until !== undefined) {
+    const raw = String(body.paid_until).trim();
+    if (!raw) {
+      updates.paid_until = null;
+    } else if (Number.isNaN(Date.parse(raw))) {
+      return NextResponse.json({ error: 'Fecha de "paga hasta" inválida' }, { status: 400 });
+    } else {
+      updates.paid_until = raw;
+    }
+  }
+  if (body.notes !== undefined) {
+    updates.notes = String(body.notes).trim() || null;
+  }
 
   // ── 2. system_prompt (tabla settings, por tenant) ─────────────────────────
   const hasSystemPrompt = body.system_prompt !== undefined;

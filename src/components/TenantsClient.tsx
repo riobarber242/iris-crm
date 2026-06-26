@@ -13,9 +13,42 @@ type Tenant = {
   created_at: string;
   username: string | null;
   system_prompt: string;
+  // Membresía
+  plan: string;
+  status: string;
+  monthly_amount: number;
+  trial_ends_at: string | null;
+  paid_until: string | null;
+  skin: string;
+  notes: string | null;
 };
 
 const MAX_PROMPT = 4000;
+
+const PLAN_OPTIONS   = ['trial', 'basic', 'premium'];
+const STATUS_OPTIONS = ['active', 'suspended', 'cancelled'];
+const SKIN_OPTIONS   = ['casino', 'loteria', 'barberia'];
+
+const SKIN_LABEL: Record<string, string> = { casino: 'Casino', loteria: 'Lotería', barberia: 'Barbería' };
+const PLAN_LABEL: Record<string, string> = { trial: 'Trial', basic: 'Basic', premium: 'Premium' };
+
+// Badge de estado: mezcla status + plan. Trial (ámbar) cuando está activo en
+// período de prueba; Activo (verde) si paga; Suspendido (rojo); Cancelado (gris).
+function statusBadge(t: Tenant): { label: string; bg: string; fg: string } {
+  if (t.status === 'suspended') return { label: 'Suspendido', bg: '#FFE0E0', fg: '#C0392B' };
+  if (t.status === 'cancelled') return { label: 'Cancelado', bg: '#E0E0E0', fg: '#555' };
+  if (t.plan === 'trial')       return { label: 'Trial', bg: '#FFF3D6', fg: '#B8860B' };
+  return { label: 'Activo', bg: '#E7F9D5', fg: '#3F7A12' };
+}
+
+function fmtAmount(n: number): string {
+  return '$' + (Number(n) || 0).toLocaleString('es-AR');
+}
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-AR');
+}
 
 const inputStyle: React.CSSProperties = {
   background: '#F5F5F5', border: '2px solid #eee', borderRadius: '10px',
@@ -39,8 +72,12 @@ export default function TenantsClient() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
 
-  // modal de edición
+  // modal de edición de agente (WhatsApp / prompt / password)
   const [editing, setEditing] = useState<Tenant | null>(null);
+  // modal de edición de membresía (plan / status / monto / paga hasta / skin / notas)
+  const [editingMembership, setEditingMembership] = useState<Tenant | null>(null);
+  // id del tenant cuyo status se está togglear (suspender/activar)
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // wizard de alta guiada
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -56,7 +93,23 @@ export default function TenantsClient() {
 
   useEffect(() => { fetchTenants(); }, []);
 
-  const cols = '1.6fr 1.4fr 1fr 0.8fr';
+  // Suspender / Activar: toggle directo de status sin abrir el modal.
+  async function toggleStatus(t: Tenant) {
+    const next = t.status === 'suspended' ? 'active' : 'suspended';
+    setTogglingId(t.id);
+    setError('');
+    try {
+      const res = await fetch(`/api/tenants/${t.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next }),
+      });
+      if (res.ok) await fetchTenants();
+      else setError((await res.json().catch(() => ({}))).error ?? 'No se pudo cambiar el estado');
+    } catch { setError('Error de red'); }
+    finally { setTogglingId(null); }
+  }
+
+  // Nombre · Skin · Plan · Estado · Paga hasta · Monto · Acciones
+  const cols = '1.6fr 1fr 0.9fr 1fr 1fr 1fr 1.4fr';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -70,6 +123,14 @@ export default function TenantsClient() {
           tenant={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); fetchTenants(); }}
+        />
+      )}
+
+      {editingMembership && (
+        <EditMembershipModal
+          tenant={editingMembership}
+          onClose={() => setEditingMembership(null)}
+          onSaved={() => { setEditingMembership(null); fetchTenants(); }}
         />
       )}
 
@@ -92,32 +153,48 @@ export default function TenantsClient() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            <span>Nombre</span><span>Usuario</span><span>Estado</span><span>Acciones</span>
+            <span>Nombre</span><span>Skin</span><span>Plan</span><span>Estado</span><span>Paga hasta</span><span>Monto</span><span>Acciones</span>
           </div>
 
           {tenants.map((t) => {
-            const active = !!t.whatsapp_phone_id;
+            const badge = statusBadge(t);
             return (
               <div key={t.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{t.name}</span>
-
-                <span style={{ fontSize: '13px', color: t.username ? '#555' : '#ccc', fontFamily: 'monospace' }}>
-                  {t.username || '—'}
+                {/* Nombre + usuario como subtítulo */}
+                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                  <span style={{ fontSize: '11px', color: t.username ? '#999' : '#ccc', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.username || '—'}
+                  </span>
                 </span>
+
+                <span style={{ fontSize: '13px', color: '#555' }}>{SKIN_LABEL[t.skin] ?? t.skin ?? '—'}</span>
+
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#555' }}>{PLAN_LABEL[t.plan] ?? t.plan ?? '—'}</span>
 
                 <span>
                   <span style={{
                     display: 'inline-block', fontSize: '11px', fontWeight: 800, borderRadius: '999px',
-                    padding: '3px 10px', letterSpacing: '0.03em',
-                    background: active ? '#E7F9D5' : '#F0F0F0',
-                    color:      active ? '#3F7A12' : '#999',
+                    padding: '3px 10px', letterSpacing: '0.03em', background: badge.bg, color: badge.fg,
                   }}>
-                    {active ? 'Activo' : 'Sin WA'}
+                    {badge.label}
                   </span>
                 </span>
 
+                <span style={{ fontSize: '13px', color: '#555' }}>{fmtDate(t.paid_until)}</span>
+
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{fmtAmount(t.monthly_amount)}</span>
+
                 <span style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  <button onClick={() => setEditing(t)} style={{ ...btn('#F0F0F0', '#333'), padding: '6px 14px', fontSize: '12px' }}>Editar</button>
+                  <button onClick={() => setEditingMembership(t)} style={{ ...btn('#1a1a1a', '#C8FF00'), padding: '6px 12px', fontSize: '12px' }}>Membresía</button>
+                  <button
+                    onClick={() => toggleStatus(t)}
+                    disabled={togglingId === t.id}
+                    style={{ ...btn(t.status === 'suspended' ? '#E7F9D5' : '#FFE0E0', t.status === 'suspended' ? '#3F7A12' : '#C0392B'), padding: '6px 12px', fontSize: '12px', opacity: togglingId === t.id ? 0.6 : 1 }}
+                  >
+                    {togglingId === t.id ? '…' : (t.status === 'suspended' ? 'Activar' : 'Suspender')}
+                  </button>
+                  <button onClick={() => setEditing(t)} style={{ ...btn('#F0F0F0', '#333'), padding: '6px 12px', fontSize: '12px' }}>Agente</button>
                 </span>
               </div>
             );
@@ -250,6 +327,114 @@ function EditTenantModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose
           <button onClick={onClose} style={btn('#F0F0F0', '#666')}>Cancelar</button>
           <button onClick={save} disabled={saving} style={btn('#C8FF00', '#000')}>
             {saving ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modal de edición de la MEMBRESÍA del tenant: plan, estado, monto mensual,
+// fecha "paga hasta", skin y notas internas. Escribe en columnas de `tenants`.
+// ─────────────────────────────────────────────────────────────────────────────
+function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose: () => void; onSaved: () => void }) {
+  const [plan,    setPlan]    = useState(tenant.plan ?? 'trial');
+  const [status,  setStatus]  = useState(tenant.status ?? 'active');
+  const [amount,  setAmount]  = useState(String(tenant.monthly_amount ?? 0));
+  // paid_until: el input type=date trabaja con YYYY-MM-DD; recortamos el ISO.
+  const [paidUntil, setPaidUntil] = useState((tenant.paid_until ?? '').slice(0, 10));
+  const [skin,    setSkin]    = useState(tenant.skin ?? 'casino');
+  const [notes,   setNotes]   = useState(tenant.notes ?? '');
+
+  const [error, setError]   = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const amountNum = Math.trunc(Number(amount));
+    if (!Number.isFinite(amountNum) || amountNum < 0) { setError('El monto mensual debe ser un entero ≥ 0.'); return; }
+
+    setError('');
+    setSaving(true);
+    try {
+      const body = {
+        plan, status, skin,
+        monthly_amount: amountNum,
+        paid_until: paidUntil || '',   // vacío → el backend lo guarda como null
+        notes,
+      };
+      const res = await fetch(`/api/tenants/${tenant.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) onSaved();
+      else setError(d.error ?? 'No se pudo guardar');
+    } catch {
+      setError('Error de red');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={panel} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#000', margin: 0 }}>Editar membresía</h2>
+            <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0' }}>{tenant.name}</p>
+          </div>
+          <button onClick={onClose} style={{ ...btn('#F0F0F0', '#666'), padding: '6px 12px' }}>✕</button>
+        </div>
+
+        {error && (
+          <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
+            {error}
+          </div>
+        )}
+
+        <Section title="Plan y estado">
+          <Field label="Plan">
+            <select style={inputStyle} value={plan} onChange={e => setPlan(e.target.value)}>
+              {PLAN_OPTIONS.map(p => <option key={p} value={p}>{PLAN_LABEL[p] ?? p}</option>)}
+            </select>
+          </Field>
+          <Field label="Estado">
+            <select style={inputStyle} value={status} onChange={e => setStatus(e.target.value)}>
+              {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s === 'active' ? 'Activo' : s === 'suspended' ? 'Suspendido' : 'Cancelado'}</option>)}
+            </select>
+          </Field>
+          <Field label="Skin">
+            <select style={inputStyle} value={skin} onChange={e => setSkin(e.target.value)}>
+              {SKIN_OPTIONS.map(s => <option key={s} value={s}>{SKIN_LABEL[s] ?? s}</option>)}
+            </select>
+          </Field>
+        </Section>
+
+        <Section title="Facturación">
+          <Field label="Monto mensual">
+            <input style={inputStyle} type="number" min="0" step="1" value={amount} onChange={e => setAmount(e.target.value)} />
+          </Field>
+          <Field label="Paga hasta">
+            <input style={inputStyle} type="date" value={paidUntil} onChange={e => setPaidUntil(e.target.value)} />
+          </Field>
+        </Section>
+
+        <Section title="Notas internas">
+          <Field label="Notas (solo admin)">
+            <textarea
+              style={{ ...inputStyle, minHeight: '90px', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Anotaciones sobre este cliente…"
+            />
+          </Field>
+        </Section>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
+          <button onClick={onClose} style={btn('#F0F0F0', '#666')}>Cancelar</button>
+          <button onClick={save} disabled={saving} style={btn('#C8FF00', '#000')}>
+            {saving ? 'Guardando…' : 'Guardar membresía'}
           </button>
         </div>
       </div>
