@@ -112,8 +112,11 @@ export default function ContactsClient() {
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set()); // selección múltiple
   const [deletingBulk,   setDeletingBulk]   = useState(false);
+  const [selectionMode,  setSelectionMode]  = useState(false); // checkboxes + barra flotante on/off
+  const [openMenuId,     setOpenMenuId]     = useState<string | null>(null); // menú "⋯" abierto por fila
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const actionsRef  = useRef<HTMLDivElement | null>(null);
+  const menuRef     = useRef<HTMLDivElement | null>(null); // menú de acciones de la fila abierta
 
   async function fetchContacts() {
     try {
@@ -155,6 +158,18 @@ export default function ContactsClient() {
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [showActions]);
+
+  // Cerrar el menú "⋯" de la fila al clickear afuera (el ref apunta a la fila abierta).
+  useEffect(() => {
+    if (!openMenuId) return;
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [openMenuId]);
 
   async function handleCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -311,6 +326,22 @@ export default function ContactsClient() {
           <option value="za">Nombre Z → A</option>
         </select>
 
+        {/* Modo selección: muestra/oculta checkboxes + barra flotante. Al apagarlo
+            limpia la selección actual. */}
+        <button
+          onClick={() => setSelectionMode((v) => { if (v) setSelectedIds(new Set()); return !v; })}
+          title={selectionMode ? 'Salir del modo selección' : 'Seleccionar contactos'}
+          style={{
+            flexShrink: 0, fontWeight: 700, fontSize: '13px', cursor: 'pointer', outline: 'none',
+            borderRadius: '12px', padding: '12px 16px', whiteSpace: 'nowrap',
+            border: '2px solid ' + (selectionMode ? '#1a1a1a' : '#e0e0e0'),
+            background: selectionMode ? '#1a1a1a' : '#fff',
+            color: selectionMode ? '#C8FF00' : '#333',
+          }}
+        >
+          {selectionMode ? '✓ Seleccionando' : 'Seleccionar'}
+        </button>
+
         {/* Menú "Acciones": agrupa importar/actualizar, nuevo contacto y exportar */}
         <div ref={actionsRef} style={{ position: 'relative', flexShrink: 0 }}>
           <button
@@ -412,7 +443,7 @@ export default function ContactsClient() {
 
       {/* Table header */}
       {filtered.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div className={`contacts-table ${selectionMode ? 'selecting' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div className="contact-row contact-header">
             <span className="c-check" />
             <span>Usuario casino</span>
@@ -428,15 +459,17 @@ export default function ContactsClient() {
             const sc      = STATUS_COLOR[c.status] ?? STATUS_COLOR.nuevo;
             return (
               <div key={c.id} className="contact-row contact-card">
-                {/* Checkbox de selección */}
+                {/* Checkbox de selección (solo en modo selección) */}
                 <span className="c-check">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(c.id)}
-                    onChange={() => toggleOne(c.id)}
-                    title="Seleccionar contacto"
-                    style={{ cursor: 'pointer' }}
-                  />
+                  {selectionMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(c.id)}
+                      onChange={() => toggleOne(c.id)}
+                      title="Seleccionar contacto"
+                      style={{ cursor: 'pointer' }}
+                    />
+                  )}
                 </span>
                 {/* Avatar */}
                 <div className="c-avatar" style={{
@@ -496,41 +529,60 @@ export default function ContactsClient() {
                   {new Date(c.created_at).toLocaleDateString('es-AR')}
                 </p>
 
-                {/* Acciones: conversación, editar, borrar */}
-                <div className="c-actions">
-                  <Link href={`/conversaciones/${c.id}`} style={{ textDecoration: 'none' }}>
+                {/* Acciones: menú "⋯" con conversación, editar, borrar */}
+                <div
+                  className="c-actions"
+                  ref={openMenuId === c.id ? menuRef : null}
+                  style={{ position: 'relative' }}
+                >
+                  <button
+                    onClick={() => setOpenMenuId(openMenuId === c.id ? null : c.id)}
+                    title="Acciones"
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
+                      background: openMenuId === c.id ? '#1a1a1a' : '#F0F0F0',
+                      color: openMenuId === c.id ? '#C8FF00' : '#333',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', fontSize: '18px', fontWeight: 800, lineHeight: 1,
+                    }}
+                  >
+                    ⋯
+                  </button>
+
+                  {openMenuId === c.id && (
                     <div style={{
-                      width: '32px', height: '32px', borderRadius: '8px',
-                      background: '#1a1a1a', display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', cursor: 'pointer', fontSize: '16px',
-                    }} title="Ir a conversación">
-                      💬
+                      position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60,
+                      background: '#fff', borderRadius: '12px', boxShadow: '0 8px 28px rgba(0,0,0,0.16)',
+                      padding: '6px', minWidth: '190px', display: 'flex', flexDirection: 'column', gap: '2px',
+                    }}>
+                      <Link
+                        href={`/conversaciones/${c.id}`}
+                        onClick={() => setOpenMenuId(null)}
+                        style={{ ...menuItem, textDecoration: 'none' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      >
+                        <span style={{ fontSize: '16px' }}>💬</span> Ir a conversación
+                      </Link>
+                      <button
+                        onClick={() => { setOpenMenuId(null); setEditing({ id: c.id, casino_username: c.casino_username, name: c.name, phone: c.phone, status: c.status }); }}
+                        style={menuItem}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      >
+                        <span style={{ fontSize: '16px' }}>✏️</span> Editar contacto
+                      </button>
+                      <button
+                        onClick={() => { setOpenMenuId(null); handleDelete(c); }}
+                        disabled={deletingId === c.id}
+                        style={{ ...menuItem, color: '#c0392b', cursor: deletingId === c.id ? 'not-allowed' : 'pointer', opacity: deletingId === c.id ? 0.5 : 1 }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#FFE9E9')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      >
+                        <span style={{ fontSize: '16px' }}>🗑️</span> Eliminar contacto
+                      </button>
                     </div>
-                  </Link>
-                  <button
-                    onClick={() => setEditing({ id: c.id, casino_username: c.casino_username, name: c.name, phone: c.phone, status: c.status })}
-                    title="Editar contacto"
-                    style={{
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                      background: '#F0F0F0', display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', cursor: 'pointer', fontSize: '15px',
-                    }}
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => handleDelete(c)}
-                    disabled={deletingId === c.id}
-                    title="Eliminar contacto"
-                    style={{
-                      width: '32px', height: '32px', borderRadius: '8px', border: 'none',
-                      background: '#FFE9E9', display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', cursor: deletingId === c.id ? 'not-allowed' : 'pointer',
-                      fontSize: '15px', opacity: deletingId === c.id ? 0.5 : 1,
-                    }}
-                  >
-                    🗑️
-                  </button>
+                  )}
                 </div>
               </div>
             );
@@ -538,8 +590,8 @@ export default function ContactsClient() {
         </div>
       )}
 
-      {/* Barra flotante de selección múltiple */}
-      {filtered.length > 0 && (
+      {/* Barra flotante de selección múltiple (solo en modo selección) */}
+      {selectionMode && filtered.length > 0 && (
         <div style={{
           position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
           background: '#1a1a1a', color: '#fff', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)',

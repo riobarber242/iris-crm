@@ -255,6 +255,10 @@ button, input, textarea, select {
   align-items: center;
 }
 
+/* Modo NO-selección: sin checkboxes, la columna del check colapsa (sin hueco). */
+.contacts-table:not(.selecting) .contact-row { grid-template-columns: 44px 1fr 1fr 90px 100px 120px auto; }
+.contacts-table:not(.selecting) .c-check { display: none; }
+
 /* Checkbox de selección (header y por fila). */
 .c-check {
   display: flex;
@@ -306,6 +310,13 @@ button, input, textarea, select {
     column-gap: 10px;
     row-gap: 4px;
     padding: 12px 14px;
+  }
+  /* Sin modo selección: colapsa la columna "sel" (los checkboxes no se muestran). */
+  .contacts-table:not(.selecting) .contact-card {
+    grid-template-columns: 44px 1fr auto auto;
+    grid-template-areas:
+      "avatar user phone chat"
+      "avatar line line  chat";
   }
   .c-check   { grid-area: sel; align-self: center; }
   .c-avatar  { grid-area: avatar; align-self: center; }
