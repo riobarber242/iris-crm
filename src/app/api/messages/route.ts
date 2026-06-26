@@ -213,3 +213,56 @@ export async function DELETE(request: Request) {
 
   return NextResponse.json({ ok: true });
 }
+
+// PATCH /api/messages — edita el texto de un mensaje SOLO en el CRM. NO reenvía
+// nada a WhatsApp: el cliente sigue viendo el mensaje original. Body { id, content }.
+// Solo admin/agent, solo mensajes del equipo (human/internal) y solo texto plano.
+export async function PATCH(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+  if (session.role !== 'admin' && session.role !== 'agent') {
+    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+  }
+
+  let body: any;
+  try { body = await request.json(); } catch { body = {}; }
+  const id   = String(body.id ?? '').trim();
+  const text = String(body.content ?? '').trim();
+  if (!id)   return NextResponse.json({ error: 'Falta el id del mensaje.' }, { status: 400 });
+  if (!text) return NextResponse.json({ error: 'El mensaje no puede quedar vacío.' }, { status: 400 });
+
+  // Pertenencia al tenant (join contact_id → contacts.tenant_id) + rol + contenido.
+  const { data: msg } = await supabaseAdmin
+    .from('messages')
+    .select('id, role, content, contact_id, contacts!inner(tenant_id)')
+    .eq('id', id)
+    .eq('contacts.tenant_id', session.tenant_id)
+    .maybeSingle();
+  if (!msg) return NextResponse.json({ error: 'Mensaje no encontrado.' }, { status: 404 });
+
+  if (msg.role !== 'human' && msg.role !== 'internal') {
+    return NextResponse.json({ error: 'Solo se editan mensajes del equipo.' }, { status: 400 });
+  }
+  // Rechazar multimedia: el content es un JSON { _type, url } que no se edita acá.
+  const cur = String(msg.content ?? '').trim();
+  if (cur.startsWith('{')) {
+    try {
+      if (JSON.parse(cur)?._type) {
+        return NextResponse.json({ error: 'No se puede editar un mensaje multimedia.' }, { status: 400 });
+      }
+    } catch { /* no es JSON → es texto, se puede editar */ }
+  }
+
+  const { error } = await supabaseAdmin.from('messages').update({ content: text }).eq('id', id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await logActivity({
+    session,
+    action:     'message_editado',
+    objectType: 'message',
+    objectId:   id,
+    details:    { contact_id: (msg as any).contact_id ?? null },
+  });
+
+  return NextResponse.json({ ok: true, content: text });
+}

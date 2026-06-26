@@ -150,6 +150,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   // Eliminar mensajes: solo admin/agent (gate de UI; la API valida tenant).
   const canDelete = agent?.role === 'admin' || agent?.role === 'agent';
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  // Edición de mensajes (solo CRM): id en edición + texto en curso + estado de guardado.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -595,6 +599,44 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
     }
   }
 
+  // Edición de un mensaje (solo CRM, no toca WhatsApp). Guarda vía PATCH y
+  // actualiza el texto localmente; el id se mantiene.
+  function startEdit(m: Message) {
+    if (!m.id) return;
+    setSendError(null);
+    setEditingId(m.id);
+    setEditingContent(m.content);
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingContent('');
+  }
+  async function saveEdit() {
+    const id = editingId;
+    const content = editingContent.trim();
+    if (!id) return;
+    if (!content) { setSendError('El mensaje no puede quedar vacío.'); return; }
+    setSavingEdit(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ id, content }),
+      });
+      if (res.ok) {
+        setMessages((m) => m.map((x) => (x.id === id ? { ...x, content } : x)));
+        cancelEdit();
+      } else {
+        const data = await res.json().catch(() => ({} as any));
+        setSendError(data?.error || 'No se pudo editar el mensaje.');
+      }
+    } catch {
+      setSendError('Error de red al editar el mensaje.');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   // Envía una plantilla aprobada (fallback cuando se cayó la ventana de 24h).
   async function sendTemplate(name: string) {
     if (templateSending) return;
@@ -707,14 +749,14 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const canSend = !loading && !cooldown && !isRecording && (!!input.trim() || !!imageFile || !!audioBlob);
 
   return (
-    <div style={{ background: '#FFFFFF', borderRadius: '20px', padding: '20px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+    <div style={{ background: '#FFFFFF', borderRadius: '20px', padding: '12px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
 
       {/* Message list (scroller externo) + contenido observado por el RO.
           flex:1 + minHeight:0 → es el ÚNICO que scrollea; la caja queda fija abajo. */}
       <div
         ref={listRef}
         onScroll={updateNearBottom}
-        style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', marginBottom: '16px' }}
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}
       >
       <div ref={contentRef} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {loadError && messages.length === 0 && (
@@ -784,7 +826,25 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 </p>
               )}
 
-              {media?._type === 'image' ? (
+              {editingId === m.id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '220px' }}>
+                  <textarea
+                    value={editingContent}
+                    onChange={(e) => setEditingContent(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') cancelEdit();
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
+                    }}
+                    autoFocus
+                    rows={3}
+                    style={{ width: '100%', resize: 'vertical', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.25)', padding: '6px 8px', fontSize: '14px', fontFamily: 'inherit', lineHeight: 1.4, background: '#fff', color: '#111' }}
+                  />
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={cancelEdit} disabled={savingEdit} style={{ background: 'rgba(0,0,0,0.12)', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', color: 'inherit' }}>Cancelar</button>
+                    <button type="button" onClick={saveEdit} disabled={savingEdit} style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 800, cursor: savingEdit ? 'wait' : 'pointer' }}>{savingEdit ? 'Guardando…' : 'Guardar'}</button>
+                  </div>
+                </div>
+              ) : media?._type === 'image' ? (
                 <div>
                   <img
                     src={media.url}
@@ -899,6 +959,18 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                       Usar plantilla
                     </button>
                   </>
+                )}
+                {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
+                    texto plano (no media). Oculto mientras se edita esta burbuja. */}
+                {canDelete && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && classifyBody(m.content).kind === 'text' && (
+                  <button
+                    type="button"
+                    onClick={() => startEdit(m)}
+                    title="Editar mensaje (solo en el CRM)"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', opacity: 0.7, fontSize: '12px', lineHeight: 1, padding: 0 }}
+                  >
+                    ✏️
+                  </button>
                 )}
                 {/* Eliminar mensaje: solo staff (admin/agent) y solo en mensajes
                     del equipo (human/internal), no en los entrantes del cliente. */}

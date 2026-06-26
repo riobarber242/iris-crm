@@ -240,7 +240,7 @@ export default function ContactHeader({
   const hasRecargas = (recargasCount ?? 0) > 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
 
       {/* ── Banner de contacto bloqueado ── */}
       {blocked && (
@@ -258,15 +258,15 @@ export default function ContactHeader({
 
       {/* ── Fila principal colapsada (siempre visible) ── */}
       <div style={{
-        background: '#FFFFFF', borderRadius: '16px', padding: '10px 14px',
+        background: '#FFFFFF', borderRadius: '16px', padding: '6px 12px',
         boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex',
         alignItems: 'center', gap: '12px', width: '100%',
       }}>
         {/* Avatar */}
         <div style={{
-          width: '40px', height: '40px', borderRadius: '50%', background: '#C8FF00',
+          width: '32px', height: '32px', borderRadius: '50%', background: '#C8FF00',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 800, fontSize: '17px', color: '#000', flexShrink: 0,
+          fontWeight: 800, fontSize: '14px', color: '#000', flexShrink: 0,
         }}>
           {initial}
         </div>
