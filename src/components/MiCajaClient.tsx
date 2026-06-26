@@ -759,7 +759,11 @@ export default function MiCajaClient() {
 
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <Card label="Mi billetera"  value={fmt(data.mi_saldo)} sub="fichas en tu caja" off={off} onClick={() => setVista('billetera')} />
-        <Card label="Pozo de fichas" value={fmt(data.pozo)} sub="stock disponible" dark off={off} onClick={() => setVista('pozo')} />
+        {/* Pozo interno: solo en modo manual. Con casino activo el stock vive en
+            el casino (ver banner "Saldo casino"), así que se oculta el pozo. */}
+        {!casinoEnabled && (
+          <Card label="Pozo de fichas" value={fmt(data.pozo)} sub="stock disponible" dark off={off} onClick={() => setVista('pozo')} />
+        )}
       </div>
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <Card label="Mis movimientos de hoy" value={fmt(data.mov_hoy_count)} sub="registrados hoy" off={off} onClick={() => setVista('hoy')} />

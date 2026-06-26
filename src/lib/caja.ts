@@ -276,7 +276,11 @@ export async function aplicarPagoComprobante(
   session: SessionPayload,
   p: { comprobanteId: string; monto: number; pagoAgente?: boolean; casinoEnabled?: boolean },
 ): Promise<VerifyCajaResult> {
-  if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
+  // El gate de caja (pozo) NO aplica en modo casino: con el casino habilitado el
+  // pozo está dormido pero las billeteras de los operadores siguen vivas, así que
+  // un pago debe descontar la billetera aunque caja_enabled esté off. Para el modo
+  // pozo (sin casino) se mantiene el kill switch de siempre.
+  if (!p.casinoEnabled && !(await isCajaEnabled(session))) return { ok: true, applied: false };
 
   const monto = Math.trunc(Number(p.monto));
   if (!Number.isFinite(monto) || monto <= 0) return { ok: true, applied: false };
