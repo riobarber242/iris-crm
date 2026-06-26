@@ -252,10 +252,15 @@ export default function ContactsClient() {
         setContacts((prev) => prev.filter((c) => !idset.has(c.id)));
         setSelectedIds(new Set());
       } else {
-        const data = await res.json().catch(() => ({} as any));
+        const raw = await res.text().catch(() => '');
+        // Log de la causa exacta para diagnosticar (status + cuerpo del server).
+        console.error('[ContactsClient] bulk delete falló', { status: res.status, count: ids.length, body: raw });
+        let data: any = {};
+        try { data = JSON.parse(raw); } catch {}
         alert(data?.error || 'No se pudieron eliminar los contactos.');
       }
-    } catch {
+    } catch (err) {
+      console.error('[ContactsClient] error de red en bulk delete', err);
       alert('Error de red al eliminar.');
     } finally {
       setDeletingBulk(false);
@@ -295,13 +300,15 @@ export default function ContactsClient() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* Search + Import */}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="contacts-toolbar" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
         <input
+          className="contacts-search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar por nombre, usuario casino o teléfono..."
           style={{
             flex: 1,
+            minWidth: 0,
             padding: '12px 16px',
             fontSize: '14px',
             border: '2px solid #e0e0e0',
@@ -356,10 +363,11 @@ export default function ContactsClient() {
           </button>
 
           {showActions && (
-            <div style={{
+            <div className="contacts-actions-menu" style={{
               position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50,
               background: '#fff', borderRadius: '12px', boxShadow: '0 8px 28px rgba(0,0,0,0.16)',
-              padding: '6px', minWidth: '220px', display: 'flex', flexDirection: 'column', gap: '2px',
+              padding: '6px', minWidth: '220px', maxWidth: 'calc(100vw - 32px)',
+              display: 'flex', flexDirection: 'column', gap: '2px',
             }}>
               <button
                 onClick={() => { setShowActions(false); setShowImportPanel(true); }}

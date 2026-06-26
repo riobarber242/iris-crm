@@ -238,24 +238,46 @@ export async function DELETE(request: Request) {
     if (bulkIds.length === 0) {
       return NextResponse.json({ error: 'No se enviaron ids para eliminar.' }, { status: 400 });
     }
-    // El .eq('tenant_id') garantiza que ids de otros tenants se ignoran. El
-    // .select() devuelve las filas borradas para saber cuántas fueron realmente.
-    const { data: deleted, error: bulkErr } = await supabaseAdmin
-      .from('contacts')
-      .delete()
-      .in('id', bulkIds)
-      .eq('tenant_id', session.tenant_id)
-      .select('id');
-    if (bulkErr) {
-      return NextResponse.json({ error: bulkErr.message }, { status: 500 });
+    // Borramos en lotes: supabase-js manda el `.in('id', [...])` como query string
+    // en la URL del DELETE (~37 chars por uuid), así que "Seleccionar todo" con
+    // cientos de contactos hacía explotar el largo de URL del gateway (PostgREST).
+    // Lotes de 200 mantienen la URL chica y acotan el costo del ON DELETE CASCADE.
+    const CHUNK = 200;
+    let count = 0;
+    const deletedIds: string[] = [];
+    for (let i = 0; i < bulkIds.length; i += CHUNK) {
+      const slice = bulkIds.slice(i, i + CHUNK);
+      // El .eq('tenant_id') garantiza que ids de otros tenants se ignoran. El
+      // .select() devuelve las filas borradas para saber cuántas fueron realmente.
+      const { data: deleted, error: bulkErr } = await supabaseAdmin
+        .from('contacts')
+        .delete()
+        .in('id', slice)
+        .eq('tenant_id', session.tenant_id)
+        .select('id');
+      if (bulkErr) {
+        // Log completo del error real (queda en los logs del server / Vercel).
+        console.error('[contacts DELETE bulk] fallo al borrar lote', {
+          code:       bulkErr.code,
+          message:    bulkErr.message,
+          details:    bulkErr.details,
+          hint:       bulkErr.hint,
+          chunkStart: i,
+          chunkSize:  slice.length,
+          total:      bulkIds.length,
+          tenant_id:  session.tenant_id,
+        });
+        return NextResponse.json({ error: bulkErr.message }, { status: 500 });
+      }
+      count += deleted?.length ?? 0;
+      deletedIds.push(...(deleted ?? []).map((d: any) => d.id));
     }
-    const count = deleted?.length ?? 0;
     await logActivity({
       session,
       action:     'contact_deleted',
       objectType: 'contact',
       objectId:   null,
-      details:    { bulk: true, count, ids: (deleted ?? []).map((d: any) => d.id) },
+      details:    { bulk: true, count, ids: deletedIds },
     });
     return NextResponse.json({ ok: true, deleted: count });
   }
