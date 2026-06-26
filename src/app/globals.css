@@ -254,8 +254,14 @@ button, input, textarea, select {
 
 @media (max-width: 767px) {
   .contacts-toolbar { gap: 8px !important; }
-  /* Buscador a fila completa propia; los demás controles envuelven debajo. */
-  .contacts-toolbar > .contacts-search { flex: 1 0 100%; }
+  /* Buscador a fila completa propia; los demás controles envuelven debajo.
+     !important porque el componente trae `flex:1` inline (basis 0%), que sin
+     esto le gana al selector y deja el buscador con ~60px de ancho. */
+  .contacts-toolbar > .contacts-search { flex: 1 1 100% !important; }
+  /* En mobile el botón "Acciones" cae a la izquierda; su menú abre con `right:0`
+     inline y se salía por la izquierda de la pantalla. Lo anclamos a la izquierda
+     del botón (crece hacia la derecha, que es donde hay lugar). */
+  .contacts-actions-menu { left: 0 !important; right: auto !important; }
 }
 
 /* El menú "Acciones" nunca debe salirse de la pantalla en mobile. */
@@ -341,7 +347,9 @@ button, input, textarea, select {
   .c-line    { grid-area: line; }
   .c-chat    { grid-area: chat; align-self: center; }
   .c-actions { grid-area: chat; align-self: center; }
-  .c-status, .c-date { display: none; }
+  /* !important porque el badge de estado trae `display:inline-block` inline, que
+     sin esto le gana a `display:none` y se auto-coloca encima del usuario. */
+  .c-status, .c-date { display: none !important; }
 
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }
 }
