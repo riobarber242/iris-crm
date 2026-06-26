@@ -298,12 +298,11 @@ export async function aplicarPagoComprobante(
   }
 
   // Casino habilitado: el pozo de fichas NO es la fuente de verdad (el stock vive
-  // en el casino). Un pago solo descuenta la billetera del operador que verifica;
-  // el pozo NO se toca (fichas_delta=0). Mismo patrón de RPC directa que el pago
-  // del agente. Un pago del agente con casino on no mueve nada (no descuenta a
-  // ningún operador y no hay pozo que reponer).
+  // en el casino), así que NUNCA se toca (fichas_delta=0). Un pago normal descuenta
+  // la billetera del operador que verifica (-monto); un pago del agente acredita su
+  // billetera (+monto). RPC directa, mismo patrón que el pago del agente.
   if (p.casinoEnabled) {
-    if (p.pagoAgente) return { ok: true, applied: false };
+    const billeteraDelta = p.pagoAgente ? monto : -monto;
     try {
       const { data, error } = await supabaseAdmin.rpc('fn_aplicar_movimiento', {
         p_tenant:          session.tenant_id,
@@ -311,8 +310,8 @@ export async function aplicarPagoComprobante(
         p_tipo:            'pago',
         p_monto:           monto,
         p_bono:            null,
-        p_fichas_delta:    0,       // pozo intacto (el stock vive en el casino)
-        p_billetera_delta: -monto,  // baja la billetera del operador que verifica
+        p_fichas_delta:    0,              // pozo intacto (el stock vive en el casino)
+        p_billetera_delta: billeteraDelta, // -monto pago normal · +monto pago agente
         p_comprobante:     p.comprobanteId,
         p_contraparte:     null,
         p_creado_por:      session.sub,
@@ -329,8 +328,8 @@ export async function aplicarPagoComprobante(
         objectType: 'movimiento',
         objectId:   res.movimiento_id,
         details: {
-          tipo: 'pago', casino: true, monto,
-          fichas_delta: 0, billetera_delta: -monto,
+          tipo: 'pago', casino: true, pago_agente: !!p.pagoAgente, monto,
+          fichas_delta: 0, billetera_delta: billeteraDelta,
           comprobante_id: p.comprobanteId,
           stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
         },
