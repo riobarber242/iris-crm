@@ -122,7 +122,7 @@ self.addEventListener('push', (event) => {
     body: payload.body || '',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    data: { url: payload.url || '/conversations' },
+    data: { url: payload.url || '/conversaciones' },
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
@@ -131,7 +131,7 @@ self.addEventListener('push', (event) => {
 // ── Notificationclick: abrir / enfocar la URL ───────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/conversations';
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/conversaciones';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
