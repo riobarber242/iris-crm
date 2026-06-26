@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { createPlayer } from '@/lib/casino/client';
+import { createPlayer, getPlayerTargetId } from '@/lib/casino/client';
 import { sendWhatsAppText } from '@/lib/meta/client';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
@@ -17,6 +17,9 @@ function generatePassword(): string {
   const n = Math.floor(1000 + Math.random() * 9000); // 1000–9999
   return `Suerte${n}`;
 }
+
+// Reglas del casino: ≥8 chars, una mayúscula, una minúscula y un dígito.
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 // Dado un username con sufijo "<base><n>js" devuelve el siguiente correlativo
 // (base + (n+1) + "js"). Si no matchea el patrón, antepone el número 2.
@@ -59,7 +62,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: `El contacto ya tiene usuario: ${contact.casino_username}` }, { status: 409 });
   }
 
-  const password = generatePassword();
+  // Contraseña: la que mandó el operador (editable en el modal) o una generada.
+  const providedPassword = typeof body.password === 'string' ? body.password.trim() : '';
+  const password = providedPassword || generatePassword();
+  if (!PASSWORD_RE.test(password)) {
+    return NextResponse.json({ success: false, error: 'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula y un número.' }, { status: 400 });
+  }
 
   // Reintento correlativo: si el casino rechaza por usuario ya existente,
   // incrementamos el número (…1js → …2js → …) hasta 20 intentos.
@@ -69,6 +77,21 @@ export async function POST(request: Request) {
     username = nextUsername(username);
     result = await createPlayer(username, password);
     attempts++;
+  }
+
+  // Timeout pero quizás el casino SÍ creó el usuario (lo procesó pero tardó).
+  // Confirmamos con un lookup: si aparece, lo tratamos como creado (evita fallar
+  // y que un reintento manual genere un usuario duplicado).
+  if (!result.success && /no respondió a tiempo/i.test(result.error ?? '')) {
+    try {
+      const targetId = await getPlayerTargetId(username);
+      if (targetId) {
+        console.log(`[create-player] timeout pero el usuario existe → tratado como creado: ${username}`);
+        result = { success: true, username };
+      }
+    } catch (e: any) {
+      console.warn('[create-player] lookup post-timeout falló:', e?.message ?? e);
+    }
   }
 
   if (!result.success) {
@@ -88,31 +111,36 @@ export async function POST(request: Request) {
     }, { status: 500 });
   }
 
-  // Aviso de credenciales: lo guardamos en el chat y lo mandamos por WhatsApp.
-  // Best-effort: si algo falla (ventana 24h, etc.), el usuario YA quedó creado y
-  // guardado, así que no rompemos la respuesta. La contraseña real (generada
-  // arriba) va en el mensaje; queda accesible en el chat.
-  if (contact.phone) {
-    try {
-      const { data: urlRow } = await supabaseAdmin
-        .from('settings').select('value')
-        .eq('key', 'casino_api_base_url').eq('tenant_id', session.tenant_id).maybeSingle();
-      const casinoUrl = String(urlRow?.value ?? process.env.CASINO_API_BASE_URL ?? '').trim();
-      const urlLine = casinoUrl ? `Ingresá en ${casinoUrl} y empezá a jugar 🎲` : '¡Ya podés empezar a jugar! 🎲';
-      const msg = `🎰 ¡Tu cuenta fue creada!\nUsuario: ${username}\nContraseña: ${password}\n${urlLine}`;
+  // Aviso de credenciales. Best-effort (no rompe la respuesta 200). El mensaje se
+  // guarda SIEMPRE en el chat (no requiere phone); el WhatsApp solo si hay phone.
+  try {
+    const { data: urlRow } = await supabaseAdmin
+      .from('settings').select('value')
+      .eq('key', 'casino_api_base_url').eq('tenant_id', session.tenant_id).maybeSingle();
+    const casinoUrl = String(urlRow?.value ?? process.env.CASINO_API_BASE_URL ?? '').trim();
+    const urlLine = casinoUrl ? `Ingresá en ${casinoUrl} y empezá a jugar 🎲` : '¡Ya podés empezar a jugar! 🎲';
+    const msg = `🎰 ¡Tu cuenta fue creada!\nUsuario: ${username}\nContraseña: ${password}\n${urlLine}`;
 
-      await supabaseAdmin.from('messages').insert({
-        contact_id: contactId, role: 'human', content: msg, tenant_id: session.tenant_id,
-      });
+    // 1) Guardar en el chat SIEMPRE.
+    const { error: msgErr } = await supabaseAdmin.from('messages').insert({
+      contact_id: contactId, role: 'human', content: msg, tenant_id: session.tenant_id,
+    });
+    if (msgErr) console.warn('[casino/create-player] no se pudo guardar credenciales en el chat:', msgErr.message);
+    else        console.log(`[casino/create-player] credenciales guardadas en el chat para ${contactId}`);
 
+    // 2) WhatsApp solo si el contacto tiene teléfono.
+    if (contact.phone) {
       try {
         await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
-      } catch {
-        console.warn('[casino/create-player] WhatsApp de credenciales falló (posible ventana 24h)');
+        console.log(`[casino/create-player] WhatsApp de credenciales enviado a ${contact.phone}`);
+      } catch (e: any) {
+        console.warn('[casino/create-player] WhatsApp de credenciales falló (posible ventana 24h):', e?.message ?? e);
       }
-    } catch (err) {
-      console.warn('[casino/create-player] aviso de credenciales falló (ignorado):', err);
+    } else {
+      console.warn(`[casino/create-player] contacto ${contactId} sin phone — no se envía WhatsApp (el mensaje quedó en el chat)`);
     }
+  } catch (err) {
+    console.warn('[casino/create-player] aviso de credenciales falló (ignorado):', err);
   }
 
   await logActivity({

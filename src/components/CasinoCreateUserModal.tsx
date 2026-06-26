@@ -13,6 +13,15 @@ function suggestUsername(name?: string | null): string {
   return `${slug || 'jugador'}1js`;
 }
 
+// Contraseña automática: "Suerte" + 4 dígitos (cumple ≥8 chars, 1 mayúscula, 1
+// minúscula y 1 dígito que exige el casino). El operador puede editarla.
+function generatePassword(): string {
+  return `Suerte${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+// Reglas del casino: ≥8 chars, al menos una mayúscula, una minúscula y un dígito.
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+
 // Modal para crear un usuario en el casino. Compartido por ContactHeader y
 // ChatWindow. En éxito llama onCreated(username): el padre actualiza su estado y
 // cierra. Las credenciales NO se muestran acá — el endpoint las manda al cliente
@@ -29,19 +38,26 @@ export default function CasinoCreateUserModal({
   onCreated: (username: string) => void;
 }) {
   const [createUser,  setCreateUser]  = useState(() => suggestUsername(contactName));
+  const [password,    setPassword]    = useState(() => generatePassword());
   const [creating,    setCreating]    = useState(false);
   const [createError, setCreateError] = useState('');
+
+  const passwordOk = PASSWORD_RE.test(password);
 
   async function createCasinoPlayer() {
     const suggested = createUser.trim().toLowerCase();
     if (!suggested) { setCreateError('Ingresá un nombre de usuario'); return; }
+    if (!PASSWORD_RE.test(password)) {
+      setCreateError('La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula y un número.');
+      return;
+    }
     setCreating(true);
     setCreateError('');
     try {
       const res = await fetch('/api/casino/create-player', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ contactId, suggestedUsername: suggested }),
+        body:    JSON.stringify({ contactId, suggestedUsername: suggested, password }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
@@ -94,6 +110,32 @@ export default function CasinoCreateUserModal({
           />
         </label>
 
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', fontWeight: 700, color: '#888' }}>
+          Contraseña
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !creating) createCasinoPlayer(); }}
+              style={{
+                flex: 1, background: '#F5F5F5', border: 'none', borderRadius: '10px',
+                padding: '10px 14px', fontSize: '15px', fontWeight: 700, color: '#000', outline: 'none',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setPassword(generatePassword())}
+              title="Generar otra contraseña"
+              style={{ background: '#EEE', color: '#333', fontWeight: 700, border: 'none', borderRadius: '10px', padding: '0 12px', cursor: 'pointer', fontSize: '16px' }}
+            >🔄</button>
+          </div>
+          {!passwordOk && (
+            <span style={{ fontSize: '11px', color: '#c0392b', fontWeight: 600 }}>
+              Mínimo 8 caracteres, con mayúscula, minúscula y número.
+            </span>
+          )}
+        </label>
+
         {createError && (
           <p style={{ margin: 0, fontSize: '13px', color: '#c0392b', fontWeight: 600 }}>{createError}</p>
         )}
@@ -108,8 +150,8 @@ export default function CasinoCreateUserModal({
           </button>
           <button
             onClick={createCasinoPlayer}
-            disabled={creating}
-            style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, border: 'none', borderRadius: '10px', padding: '10px 20px', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: creating ? 0.6 : 1 }}
+            disabled={creating || !passwordOk}
+            style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, border: 'none', borderRadius: '10px', padding: '10px 20px', cursor: (creating || !passwordOk) ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: (creating || !passwordOk) ? 0.6 : 1 }}
           >
             {creating ? 'Creando…' : 'Crear'}
           </button>
