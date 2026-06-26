@@ -28,10 +28,13 @@ function proxyHeaders(extra?: Record<string, string>) {
 // Corte duro de 8s: si el proxy/casino no responde, abortamos y lanzamos un error
 // claro en vez de colgar la función serverless hasta el límite de Vercel.
 const CASINO_TIMEOUT_MS = 8000;
+// AddPlayer suele tardar más que un GET; le damos más margen para no abortar una
+// creación que en realidad está por completar (evita usuarios duplicados).
+const ADDPLAYER_TIMEOUT_MS = 15000;
 
-async function casinoFetch(url: string, init: RequestInit): Promise<Response> {
+async function casinoFetch(url: string, init: RequestInit, timeoutMs: number = CASINO_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CASINO_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err: any) {
@@ -272,7 +275,7 @@ export async function createPlayer(userName: string, password: string): Promise<
 
   let res: Response;
   try {
-    res = await casinoFetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody });
+    res = await casinoFetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody }, ADDPLAYER_TIMEOUT_MS);
   } catch (err: any) {
     console.error('[Casino] AddPlayer error de red:', err?.message ?? err);
     return { success: false, error: err?.message ?? 'Error de red al crear el usuario en el casino' };

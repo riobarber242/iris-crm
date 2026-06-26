@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { createPlayer } from '@/lib/casino/client';
+import { sendWhatsAppText } from '@/lib/meta/client';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
 
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
   // El contacto debe existir y pertenecer al tenant. Si ya tiene usuario, no se
   // crea otro (evita pisar uno cargado a mano).
   const { data: contact } = await supabaseAdmin
-    .from('contacts').select('id, casino_username, tenant_id')
+    .from('contacts').select('id, casino_username, tenant_id, phone, whatsapp_number_id')
     .eq('id', contactId).eq('tenant_id', session.tenant_id).maybeSingle();
   if (!contact) return NextResponse.json({ success: false, error: 'Contacto no encontrado' }, { status: 404 });
   if (contact.casino_username) {
@@ -85,6 +86,33 @@ export async function POST(request: Request) {
       error: `Usuario creado en el casino (${username}) pero no se pudo guardar en el contacto: ${updErr.message}`,
       username, password,
     }, { status: 500 });
+  }
+
+  // Aviso de credenciales: lo guardamos en el chat y lo mandamos por WhatsApp.
+  // Best-effort: si algo falla (ventana 24h, etc.), el usuario YA quedó creado y
+  // guardado, así que no rompemos la respuesta. La contraseña real (generada
+  // arriba) va en el mensaje; queda accesible en el chat.
+  if (contact.phone) {
+    try {
+      const { data: urlRow } = await supabaseAdmin
+        .from('settings').select('value')
+        .eq('key', 'casino_api_base_url').eq('tenant_id', session.tenant_id).maybeSingle();
+      const casinoUrl = String(urlRow?.value ?? process.env.CASINO_API_BASE_URL ?? '').trim();
+      const urlLine = casinoUrl ? `Ingresá en ${casinoUrl} y empezá a jugar 🎲` : '¡Ya podés empezar a jugar! 🎲';
+      const msg = `🎰 ¡Tu cuenta fue creada!\nUsuario: ${username}\nContraseña: ${password}\n${urlLine}`;
+
+      await supabaseAdmin.from('messages').insert({
+        contact_id: contactId, role: 'human', content: msg, tenant_id: session.tenant_id,
+      });
+
+      try {
+        await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
+      } catch {
+        console.warn('[casino/create-player] WhatsApp de credenciales falló (posible ventana 24h)');
+      }
+    } catch (err) {
+      console.warn('[casino/create-player] aviso de credenciales falló (ignorado):', err);
+    }
   }
 
   await logActivity({

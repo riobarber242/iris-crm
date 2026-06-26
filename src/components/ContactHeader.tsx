@@ -186,8 +186,11 @@ export default function ContactHeader({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        setCreated({ username: data.username, password: data.password });
-        setCasinoUser(data.username);       // refleja el usuario en el header
+        setCasinoUser(data.username);  // refleja el usuario en el header (sin recargar)
+        // Cerramos el modal: las credenciales quedan en el chat (mensaje enviado).
+        setCreated(null);
+        setCreateUser('');
+        setCreateOpen(false);
       } else {
         setCreateError(data.error || 'No se pudo crear el usuario en el casino');
       }
