@@ -25,6 +25,23 @@ function proxyHeaders(extra?: Record<string, string>) {
   };
 }
 
+// Corte duro de 8s: si el proxy/casino no responde, abortamos y lanzamos un error
+// claro en vez de colgar la función serverless hasta el límite de Vercel.
+const CASINO_TIMEOUT_MS = 8000;
+
+async function casinoFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CASINO_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') throw new Error('El casino no respondió a tiempo');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Devuelve un access token válido del casino. Autentica con usuario+contraseña a
 // través del proxy y cachea el token hasta su expiración (expireInSeconds) con un
 // margen de 60s.
@@ -35,7 +52,7 @@ async function getCasinoToken(): Promise<string | null> {
   if (!AGENT_PASSWORD) return null;
 
   try {
-    const res = await fetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
+    const res = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
       headers: proxyHeaders(),
       body: JSON.stringify({
@@ -88,7 +105,7 @@ export async function getAgentBalance(): Promise<number | null> {
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`;
 
   try {
-    const res = await fetch(url, { method: 'GET', headers: await casinoHeaders() });
+    const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders() });
     if (!res.ok) {
       console.error(`[Casino] GetAgentBalance HTTP ${res.status}`);
       return null;
@@ -124,7 +141,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
 
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
 
-  const res = await fetch(url, { method: 'GET', headers: await casinoHeaders() });
+  const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders() });
 
   if (!res.ok) {
     console.error(`[Casino] GetAgentWithChildren HTTP ${res.status}`);
@@ -195,7 +212,7 @@ export async function doDeposit(params: { username: string; targetId: string; am
   console.log('[Casino] DoDeposit URL:', url);
   console.log('[Casino] DoDeposit body completo:', reqBody);
 
-  const res = await fetch(url, {
+  const res = await casinoFetch(url, {
     method: 'POST',
     headers: await casinoHeaders(),
     body: reqBody,
@@ -223,10 +240,18 @@ export async function doDeposit(params: { username: string; targetId: string; am
 }
 
 export async function creditPlayer(username: string, amount: number): Promise<DoDepositResult> {
-  const targetId = await getPlayerTargetId(username);
-  if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
+  // getPlayerTargetId / doDeposit pueden lanzar (incluido el timeout de casinoFetch).
+  // Lo convertimos en un resultado para que el flujo de verificar comprobantes
+  // responda un 400 limpio ("La recarga NO se verificó") en vez de un 500.
+  try {
+    const targetId = await getPlayerTargetId(username);
+    if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
 
-  return doDeposit({ username, targetId, amount });
+    return await doDeposit({ username, targetId, amount });
+  } catch (err: any) {
+    console.error('[Casino] creditPlayer error:', err?.message ?? err);
+    return { success: false, error: err?.message ?? 'Error al acreditar en el casino' };
+  }
 }
 
 export interface CreatePlayerResult {
@@ -247,10 +272,10 @@ export async function createPlayer(userName: string, password: string): Promise<
 
   let res: Response;
   try {
-    res = await fetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody });
+    res = await casinoFetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody });
   } catch (err: any) {
     console.error('[Casino] AddPlayer error de red:', err?.message ?? err);
-    return { success: false, error: 'Error de red al crear el usuario en el casino' };
+    return { success: false, error: err?.message ?? 'Error de red al crear el usuario en el casino' };
   }
 
   const respText = await res.text().catch(() => '');
