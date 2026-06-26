@@ -10,6 +10,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { Avatar } from '@/components/ProfileCard';
 import { searchEmojisEs } from '@/lib/emoji-es';
 import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
+import CasinoCreateUserModal from '@/components/CasinoCreateUserModal';
 
 // Detecta el error de "ventana de 24h" de Meta (texto o código 131047) para
 // ofrecer el envío por plantilla.
@@ -145,7 +146,12 @@ function reconcileSent(list: Message[], temp: Message, saved: Message | null): M
   });
 }
 
-export default function ChatWindow({ contactId }: { contactId: string }) {
+export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUsername, contactName }: {
+  contactId: string;
+  casinoDepositEnabled?: boolean;
+  casinoUsername?: string | null;
+  contactName?: string | null;
+}) {
   const { agent } = useAuth();
   // Eliminar mensajes: solo admin/agent (gate de UI; la API valida tenant).
   const canDelete = agent?.role === 'admin' || agent?.role === 'agent';
@@ -163,6 +169,10 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
   const [showQR, setShowQR] = useState(false);
   const [showActions, setShowActions] = useState(false); // menú "+" (rápidas/emoji/adjuntar)
+  // Crear usuario casino desde el menú "+": estado del modal + username local
+  // (para ocultar la opción una vez creado, sin recargar).
+  const [createCasinoOpen, setCreateCasinoOpen] = useState(false);
+  const [casinoUser, setCasinoUser] = useState<string | null>(casinoUsername ?? null);
   const [loadError, setLoadError] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [showTemplates,   setShowTemplates]   = useState(false);
@@ -1131,7 +1141,27 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
               onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             ><span style={{ fontSize: '18px' }}>📎</span> Adjuntar imagen</button>
+            {/* Crear usuario casino: mismo gate que el botón de ContactHeader
+                (casino activo + el contacto aún no tiene usuario). */}
+            {casinoDepositEnabled && !casinoUser && (
+              <button
+                type="button"
+                onClick={() => { setShowActions(false); setCreateCasinoOpen(true); }}
+                style={actionItem}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              ><span style={{ fontSize: '18px' }}>🎰</span> Crear usuario casino</button>
+            )}
           </div>
+        )}
+
+        {createCasinoOpen && (
+          <CasinoCreateUserModal
+            contactId={contactId}
+            contactName={contactName ?? null}
+            onClose={() => setCreateCasinoOpen(false)}
+            onCreated={(u) => { setCasinoUser(u); setCreateCasinoOpen(false); }}
+          />
         )}
 
         {/* Image preview */}

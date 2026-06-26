@@ -132,7 +132,12 @@ export default async function ConversationPage({ params }: any) {
 
       {/* Ocupa el resto de la altura; ChatWindow scrollea adentro. */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <ChatWindow contactId={contact.id} />
+        <ChatWindow
+          contactId={contact.id}
+          casinoDepositEnabled={casinoDepositEnabled}
+          casinoUsername={contact.casino_username}
+          contactName={contact.name ?? null}
+        />
       </div>
 
     </div>

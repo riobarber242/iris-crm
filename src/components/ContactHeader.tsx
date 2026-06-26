@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthProvider';
+import CasinoCreateUserModal from './CasinoCreateUserModal';
 
 type AgentOption = { id: string; name: string; active: boolean };
 
@@ -38,16 +39,6 @@ const BOT_STATE_LABEL: Record<string, string> = {
   known_client:      'Cliente reconocido',
 };
 
-// Sugiere un username de casino a partir del nombre del contacto:
-// <primeras 5 letras del nombre, sin espacios ni acentos, lowercase> + "1js".
-// Si no hay nombre usable, cae a "jugador".
-function suggestUsername(name?: string | null): string {
-  const slug = (name ?? '')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // saca acentos
-    .toLowerCase().replace(/[^a-z0-9]/g, '')           // solo alfanumérico
-    .slice(0, 5);
-  return `${slug || 'jugador'}1js`;
-}
 
 export default function ContactHeader({
   contactId,
@@ -97,13 +88,8 @@ export default function ContactHeader({
   // se expande/contrae. Default colapsado para que el chat ocupe más alto.
   const [expanded, setExpanded] = useState(false);
 
-  // ── Crear usuario casino ──
-  const [createOpen,    setCreateOpen]    = useState(false);
-  const [createUser,    setCreateUser]    = useState(() => suggestUsername(contactName));
-  const [creating,      setCreating]      = useState(false);
-  const [createError,   setCreateError]   = useState('');
-  // Credenciales del usuario recién creado (se muestran una sola vez).
-  const [created,       setCreated]       = useState<{ username: string; password: string } | null>(null);
+  // ── Crear usuario casino (el modal vive en CasinoCreateUserModal) ──
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { agent } = useAuth();
   const isAdmin = agent?.role === 'admin';
@@ -173,32 +159,6 @@ export default function ContactHeader({
     setLoading(false);
   }
 
-  async function createCasinoPlayer() {
-    const suggested = createUser.trim().toLowerCase();
-    if (!suggested) { setCreateError('Ingresá un nombre de usuario'); return; }
-    setCreating(true);
-    setCreateError('');
-    try {
-      const res = await fetch('/api/casino/create-player', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ contactId, suggestedUsername: suggested }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) {
-        setCasinoUser(data.username);  // refleja el usuario en el header (sin recargar)
-        // Cerramos el modal: las credenciales quedan en el chat (mensaje enviado).
-        setCreated(null);
-        setCreateUser('');
-        setCreateOpen(false);
-      } else {
-        setCreateError(data.error || 'No se pudo crear el usuario en el casino');
-      }
-    } catch {
-      setCreateError('Error de red');
-    }
-    setCreating(false);
-  }
 
   async function resetBot() {
     if (!confirm('¿Reiniciar el flujo del bot? El bot volverá a atender a este contacto desde cero.')) return;
@@ -460,7 +420,7 @@ export default function ContactHeader({
                   y el contacto todavía no tiene usuario asignado. */}
               {casinoDepositEnabled && !casinoUser && (
                 <button
-                  onClick={() => { setCreated(null); setCreateError(''); setCreateUser(suggestUsername(contactName)); setCreateOpen(true); }}
+                  onClick={() => setCreateOpen(true)}
                   style={{
                     background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, border: 'none',
                     borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
@@ -555,91 +515,14 @@ export default function ContactHeader({
       </div>
       </div>
 
-      {/* ── Modal: crear usuario en el casino ── */}
+      {/* ── Modal: crear usuario en el casino (componente compartido) ── */}
       {createOpen && (
-        <div
-          onClick={() => { if (!creating) setCreateOpen(false); }}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#fff', borderRadius: '18px', padding: '24px', width: '100%', maxWidth: '420px',
-              boxShadow: '0 12px 40px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column', gap: '14px',
-            }}
-          >
-            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 900, color: '#111' }}>
-              🎰 Crear usuario en el casino
-            </h3>
-
-            {created ? (
-              // Éxito: mostramos las credenciales una sola vez.
-              <>
-                <div style={{ background: '#e8fff0', border: '1px solid #b6f0c8', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <p style={{ margin: 0, fontSize: '13px', fontWeight: 800, color: '#1a7a3a' }}>✅ Usuario creado</p>
-                  <p style={{ margin: 0, fontSize: '14px', color: '#111' }}>
-                    Usuario: <b style={{ fontFamily: 'monospace' }}>{created.username}</b>
-                  </p>
-                  <p style={{ margin: 0, fontSize: '14px', color: '#111' }}>
-                    Contraseña: <b style={{ fontFamily: 'monospace' }}>{created.password}</b>
-                  </p>
-                </div>
-                <p style={{ margin: 0, fontSize: '12px', color: '#999' }}>
-                  Anotá la contraseña: no se vuelve a mostrar.
-                </p>
-                <button
-                  onClick={() => setCreateOpen(false)}
-                  style={{ background: '#C8FF00', color: '#000', fontWeight: 800, border: 'none', borderRadius: '10px', padding: '10px', cursor: 'pointer', fontSize: '14px' }}
-                >
-                  Listo
-                </button>
-              </>
-            ) : (
-              <>
-                <p style={{ margin: 0, fontSize: '13px', color: '#666', lineHeight: 1.5 }}>
-                  Se creará un jugador en el casino con una contraseña automática. Podés editar el usuario sugerido.
-                </p>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', fontWeight: 700, color: '#888' }}>
-                  Usuario
-                  <input
-                    value={createUser}
-                    onChange={(e) => setCreateUser(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !creating) createCasinoPlayer(); }}
-                    autoFocus
-                    style={{
-                      background: '#F5F5F5', border: 'none', borderRadius: '10px',
-                      padding: '10px 14px', fontSize: '15px', fontWeight: 700, color: '#000', outline: 'none',
-                    }}
-                  />
-                </label>
-
-                {createError && (
-                  <p style={{ margin: 0, fontSize: '13px', color: '#c0392b', fontWeight: 600 }}>{createError}</p>
-                )}
-
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                  <button
-                    onClick={() => setCreateOpen(false)}
-                    disabled={creating}
-                    style={{ background: '#F0F0F0', color: '#666', fontWeight: 600, border: 'none', borderRadius: '10px', padding: '10px 16px', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '13px' }}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={createCasinoPlayer}
-                    disabled={creating}
-                    style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, border: 'none', borderRadius: '10px', padding: '10px 20px', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: creating ? 0.6 : 1 }}
-                  >
-                    {creating ? 'Creando…' : 'Crear'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <CasinoCreateUserModal
+          contactId={contactId}
+          contactName={contactName ?? null}
+          onClose={() => setCreateOpen(false)}
+          onCreated={(u) => { setCasinoUser(u); setCreateOpen(false); }}
+        />
       )}
 
     </div>
