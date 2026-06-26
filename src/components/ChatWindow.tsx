@@ -967,7 +967,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                     type="button"
                     onClick={() => startEdit(m)}
                     title="Editar mensaje (solo en el CRM)"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', opacity: 0.7, fontSize: '12px', lineHeight: 1, padding: 0 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '12px', lineHeight: 1, padding: 0 }}
                   >
                     ✏️
                   </button>
