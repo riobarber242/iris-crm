@@ -216,13 +216,11 @@ export async function DELETE(request: Request) {
 
 // PATCH /api/messages — edita el texto de un mensaje SOLO en el CRM. NO reenvía
 // nada a WhatsApp: el cliente sigue viendo el mensaje original. Body { id, content }.
-// Solo admin/agent, solo mensajes del equipo (human/internal) y solo texto plano.
+// Cualquier rol del tenant (admin/agent/operator) puede editar; solo mensajes del
+// equipo (human/internal) y solo texto plano. La pertenencia se valida por tenant.
 export async function PATCH(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
-  if (session.role !== 'admin' && session.role !== 'agent') {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
-  }
 
   let body: any;
   try { body = await request.json(); } catch { body = {}; }

@@ -149,6 +149,8 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
   const { agent } = useAuth();
   // Eliminar mensajes: solo admin/agent (gate de UI; la API valida tenant).
   const canDelete = agent?.role === 'admin' || agent?.role === 'agent';
+  // Editar mensajes: también el operador (gate de UI; la API valida tenant).
+  const canEdit = agent?.role === 'admin' || agent?.role === 'agent' || agent?.role === 'operator';
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   // Edición de mensajes (solo CRM): id en edición + texto en curso + estado de guardado.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -962,7 +964,7 @@ export default function ChatWindow({ contactId }: { contactId: string }) {
                 )}
                 {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
                     texto plano (no media). Oculto mientras se edita esta burbuja. */}
-                {canDelete && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && classifyBody(m.content).kind === 'text' && (
+                {canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && classifyBody(m.content).kind === 'text' && (
                   <button
                     type="button"
                     onClick={() => startEdit(m)}
