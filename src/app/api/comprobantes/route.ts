@@ -331,9 +331,10 @@ export async function PATCH(request: Request) {
       .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
     const casinoDepositEnabled = casinoFlagRow?.value === 'true';
 
-    // Movimiento de caja interno. Para CARGAS con el casino habilitado NO se
-    // descuenta del pozo (el crédito real lo hace creditPlayer sobre el saldo del
-    // casino): marcamos ok directamente y seguimos al depósito.
+    // Movimiento de caja interno. Con el casino habilitado el pozo NO se toca
+    // (fichas_delta=0): la carga acredita la billetera del operador (+monto) y el
+    // pago la descuenta (-monto). El crédito real al jugador lo hace creditPlayer
+    // más abajo. Sin casino, flujo normal (pozo + billetera).
     const movRes = esPago
       ? await aplicarPagoComprobante(session, {
           comprobanteId,
@@ -341,13 +342,12 @@ export async function PATCH(request: Request) {
           pagoAgente:   !!comprobante.pago_agente,
           casinoEnabled: casinoDepositEnabled,
         })
-      : casinoDepositEnabled
-      ? { ok: true as const, applied: false }
       : await aplicarCargaComprobante(session, {
           comprobanteId,
           tipo:  comprobante.tipo,
           monto: Number(efectiveMonto ?? 0),
           bono:  efectiveBono,
+          casinoEnabled: casinoDepositEnabled,
         });
     if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
 

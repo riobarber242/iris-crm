@@ -221,9 +221,11 @@ export type VerifyCajaResult =
 // existe un movimiento para ese comprobante, no vuelve a cobrar (applied=false).
 export async function aplicarCargaComprobante(
   session: SessionPayload,
-  p: { comprobanteId: string; tipo?: string | null; monto: number; bono?: number | null },
+  p: { comprobanteId: string; tipo?: string | null; monto: number; bono?: number | null; casinoEnabled?: boolean },
 ): Promise<VerifyCajaResult> {
-  if (!(await isCajaEnabled(session))) return { ok: true, applied: false };
+  // El gate de caja (pozo) NO aplica en modo casino: el pozo está dormido pero la
+  // billetera del operador sigue viva (la carga la acredita). Sin casino, kill switch.
+  if (!p.casinoEnabled && !(await isCajaEnabled(session))) return { ok: true, applied: false };
 
   const tipo = p.tipo ?? 'carga';
   if (tipo !== 'carga') return { ok: true, applied: false };
@@ -245,6 +247,48 @@ export async function aplicarCargaComprobante(
   } catch (err: any) {
     if (isMissingCajaError(err)) return { ok: true, applied: false };
     return { ok: false, error: err?.message ?? 'Error verificando movimientos' };
+  }
+
+  // Casino habilitado: el pozo NO se toca (fichas_delta=0); la carga solo acredita
+  // la billetera del operador que verifica (+monto). Espejo de la rama de pago
+  // casino. El bono real al jugador lo deposita creditPlayer (route).
+  if (p.casinoEnabled) {
+    const bono = p.bono != null && Number(p.bono) > 0 ? Math.trunc(Number(p.bono)) : 0;
+    try {
+      const { data, error } = await supabaseAdmin.rpc('fn_aplicar_movimiento', {
+        p_tenant:          session.tenant_id,
+        p_operador:        session.sub,
+        p_tipo:            'carga',
+        p_monto:           monto,
+        p_bono:            bono > 0 ? bono : null, // informativo: el bono va al casino, no al pozo
+        p_fichas_delta:    0,     // pozo intacto (el stock vive en el casino)
+        p_billetera_delta: monto, // sube la billetera del operador que verifica
+        p_comprobante:     p.comprobanteId,
+        p_contraparte:     null,
+        p_creado_por:      session.sub,
+        p_creado_por_name: session.name,
+      });
+      if (error) {
+        if (isMissingCajaError(error)) return { ok: true, applied: false };
+        return { ok: false, error: error.message };
+      }
+      const res = data as { movimiento_id: string; stock_actual: number; saldo_actual: number };
+      await logActivity({
+        session, action: ACTIVITY.MOVIMIENTO_CAJA, objectType: 'movimiento', objectId: res.movimiento_id,
+        details: {
+          tipo: 'carga', casino: true, monto, bono,
+          fichas_delta: 0, billetera_delta: monto,
+          comprobante_id: p.comprobanteId,
+          stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
+        },
+      });
+      const bonoTxt = bono > 0 ? ` (+${fmtMonto(bono)} bono)` : '';
+      await postInternalSystemMessage(session, `🟢 Carga de ${session.name}: $${fmtMonto(monto)}${bonoTxt}`);
+      return { ok: true, applied: true };
+    } catch (err: any) {
+      if (isMissingCajaError(err)) return { ok: true, applied: false };
+      return { ok: false, error: err?.message ?? 'Error al aplicar la carga (casino)' };
+    }
   }
 
   const r = await aplicarMovimiento(session, {
