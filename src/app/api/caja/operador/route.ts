@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { isCajaEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
+import { isCajaEnabled, isCasinoEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
 import { postInternalSystemMessage } from '@/lib/internal-chat';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -302,10 +302,15 @@ export async function GET(request: Request) {
     }
   }
 
+  // Con el casino activado la caja del operador está OPERATIVA aunque caja_enabled
+  // esté OFF (el pozo manual duerme, pero la billetera sigue viva). El front usa
+  // `casino_enabled` para no mostrar la caja como "desactivada" en ese caso.
+  const casino_enabled = await isCasinoEnabled(session);
+
   // Degradación elegante: tablas de caja ausentes → resumen en cero, sin romper.
   if (isMissingCajaTable(saldoRes.error) || isMissingCajaTable(pozoRes.error) || isMissingCajaTable(hoyRes.error)) {
     return NextResponse.json({
-      caja_enabled, degraded: true,
+      caja_enabled, casino_enabled, degraded: true,
       mi_saldo: 0, pozo: 0, mov_hoy_count: 0,
       pendientes_count: pendRes.count ?? 0,
       sueldo_diario, whatsapp_agente, operador_name: session.name,
@@ -315,6 +320,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     caja_enabled,
+    casino_enabled,
     mi_saldo:         saldoActual, // COALESCE(.,0): sin fila → 0
     pozo:             Number(pozoRes.data?.stock_actual ?? 0),
     mov_hoy_count:    hoyRes.count ?? 0,

@@ -60,7 +60,7 @@ type ResumenTurno = {
 };
 type OperadorDestino = { id: string; name: string };
 type Resumen = {
-  caja_enabled: boolean; degraded?: boolean;
+  caja_enabled: boolean; casino_enabled?: boolean; degraded?: boolean;
   mi_saldo: number; pozo: number; mov_hoy_count: number; pendientes_count: number;
   sueldo_diario: number; whatsapp_agente: string; operador_name: string;
   resumen_turno: ResumenTurno; operadores_destino: OperadorDestino[];
@@ -681,7 +681,13 @@ export default function MiCajaClient() {
 
   if (!data) return <Vacio texto="Cargando tu caja…" />;
 
-  const off = !data.caja_enabled;
+  // La caja está "operativa" si la caja manual está encendida O el casino está
+  // activo (en modo casino el pozo duerme pero la billetera sigue viva, y las
+  // acciones sueldo/descarga/cierre funcionan: el guard SQL ya hace el mismo OR).
+  // Usamos casino_enabled del backend (en el mismo payload) y, por las dudas,
+  // también el casinoEnabled del balance, para no depender de un solo fetch.
+  const cajaActiva = data.caja_enabled || data.casino_enabled || casinoEnabled;
+  const off = !cajaActiva;
 
   if (vista !== 'resumen') {
     const title = vista === 'billetera' ? 'Mi billetera'
@@ -758,7 +764,7 @@ export default function MiCajaClient() {
       )}
 
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-        <Card label="Mi billetera"  value={fmt(data.mi_saldo)} sub="fichas en tu caja" off={off} onClick={() => setVista('billetera')} />
+        <Card label="Mi billetera"  value={fmt(data.mi_saldo)} sub={casinoEnabled ? 'tu billetera' : 'fichas en tu caja'} off={off} onClick={() => setVista('billetera')} />
         {/* Pozo interno: solo en modo manual. Con casino activo el stock vive en
             el casino (ver banner "Saldo casino"), así que se oculta el pozo. */}
         {!casinoEnabled && (

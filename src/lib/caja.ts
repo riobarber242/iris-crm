@@ -195,6 +195,7 @@ export async function recargarFichas(session: SessionPayload, cantidad: number):
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CAJA_FLAG_KEY = 'caja_enabled';
+const CASINO_FLAG_KEY = 'casino_deposit_enabled';
 
 // Lee el flag por tenant. Default OFF (sin fila, error o valor != 'true' → false).
 export async function isCajaEnabled(session: SessionPayload): Promise<boolean> {
@@ -207,6 +208,30 @@ export async function isCajaEnabled(session: SessionPayload): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Lee casino_deposit_enabled por tenant (espejo de isCajaEnabled). En modo casino
+// el pozo manual está dormido pero las billeteras siguen vivas, así que las
+// acciones del operador (sueldo/descarga/cierre) deben funcionar aunque
+// caja_enabled esté OFF. Default OFF.
+export async function isCasinoEnabled(session: SessionPayload): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings').select('value')
+      .eq('key', CASINO_FLAG_KEY).eq('tenant_id', session.tenant_id).maybeSingle();
+    if (error) return false;
+    return data?.value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+// "La caja del operador está activa": manual encendida O casino encendido. Las
+// acciones (sueldo/descarga/cierre) usan este OR, igual que las verificaciones de
+// carga/pago. Espeja el guard `fn_caja_enabled OR fn_casino_enabled` del SQL.
+export async function isCajaOperativa(session: SessionPayload): Promise<boolean> {
+  if (await isCajaEnabled(session)) return true;
+  return isCasinoEnabled(session);
 }
 
 // applied=false  → no correspondía cobrar (caja apagada, sin migración, tipo !=
@@ -767,7 +792,7 @@ export async function crearDescarga(session: SessionPayload, montoRaw: number, i
   if (session.role !== 'operator') {
     return { ok: false, error: 'Solo un operador puede iniciar una descarga' };
   }
-  if (!(await isCajaEnabled(session))) {
+  if (!(await isCajaOperativa(session))) {
     return { ok: false, error: 'La caja está desactivada' };
   }
   const monto = Math.trunc(Number(montoRaw));
@@ -995,7 +1020,7 @@ export async function cerrarTurno(session: SessionPayload, destinoIdRaw: string 
   if (session.role !== 'operator') {
     return { ok: false, error: 'Solo un operador puede cerrar su turno' };
   }
-  if (!(await isCajaEnabled(session))) {
+  if (!(await isCajaOperativa(session))) {
     return { ok: false, error: 'La caja está desactivada' };
   }
 
