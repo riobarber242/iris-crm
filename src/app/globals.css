@@ -478,15 +478,12 @@ button, input, textarea, select {
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }
 }
 
-/* ── ContactHeader: en TODOS los tamaños el header es una sola fila compacta ───
-   T5: en desktop el bloque expandible también arranca colapsado (antes iba
-   siempre abierto) y el chevron se muestra siempre. Así el header ocupa una
-   fila y el chat gana alto. !important para ganarle al max-height inline. */
+/* ── ContactHeader: en TODOS los tamaños el header es una fila compacta ────────
+   El bloque expandible lo controla el state `expanded` de React (max-height
+   inline) en todos los breakpoints — NO se fuerza el colapso por CSS (eso pisaba
+   el inline y dejaba los controles inaccesibles). Solo aseguramos que el chevron
+   se vea también en desktop para poder expandir/colapsar. */
 @media (min-width: 768px) {
-  .ch-expandable {
-    max-height: 0 !important;
-    overflow: hidden !important;
-  }
   .ch-toggle { display: flex !important; }
 }
 
