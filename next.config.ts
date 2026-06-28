@@ -26,6 +26,18 @@ const nextConfig: NextConfig = {
   // (la antigua Configuración); redirigirla taparía esa página.
   async redirects() {
     return [
+      // Canonicalizar al dominio propio: todo lo que entre por la URL de Vercel
+      // se manda a irisonline.app, MENOS /api/* (el webhook de Meta y el cron de
+      // Vercel pegan por path en el dominio de deploy) y /_next/* (assets). Así
+      // las suscripciones push se crean siempre con origen irisonline.app y no
+      // quedan firmadas como iris-crm-kappa.vercel.app. 307 (no permanente) para
+      // poder entrar a la URL de Vercel a depurar sin un redirect cacheado duro.
+      {
+        source: '/:path((?!api/|_next/).*)',
+        has: [{ type: 'host', value: 'iris-crm-kappa.vercel.app' }],
+        destination: 'https://irisonline.app/:path',
+        permanent: false,
+      },
       { source: '/conversations/:path*', destination: '/conversaciones/:path*', permanent: true },
       { source: '/contacts/:path*',      destination: '/contactos/:path*',      permanent: true },
       { source: '/leads/:path*',         destination: '/top-clientes/:path*',   permanent: true },

@@ -10,7 +10,7 @@
  * "Actualizar" y manda el mensaje SKIP_WAITING cuando el usuario lo aprieta.
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `iris-${VERSION}`;
 // Solo assets verdaderamente estáticos y públicos. Nada detrás de auth
 // (precachear rutas protegidas haría fallar el install entero).
@@ -118,15 +118,27 @@ self.addEventListener('push', (event) => {
   }
 
   const title = payload.title || 'IRIS';
+  const url   = payload.url || '/conversaciones';
+
+  // `tag` agrupa las notificaciones: las del mismo destino (misma conversación,
+  // o la cola de cargas/pagos) se REEMPLAZAN en vez de apilarse. Se deriva de la
+  // URL → único por conversación (/conversaciones/{id}) y por bandeja (/cargas,
+  // /pagos). `renotify` hace que el reemplazo igual avise (salvo los silenciosos).
+  const tag = payload.tag || url;
+
   const options = {
     body: payload.body || '',
+    // Recursos PROPIOS, servidos por el origen donde está instalada la PWA
+    // (irisonline.app). Relativos a propósito: nunca apuntar a un dominio ajeno.
     icon: '/icon-192.png',
     badge: '/icon-192.png',
+    tag,
+    renotify: true,
     // Sonido solo para conversaciones. Los comprobantes (carga/pago a verificar)
     // llegan en silencio: el operador los ve por el badge, sin ruido en pantalla
     // bloqueada. (Android/desktop respetan `silent`; iOS lo ignora a nivel SO.)
     silent: payload.kind === 'comprobante',
-    data: { url: payload.url || '/conversaciones' },
+    data: { url },
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
