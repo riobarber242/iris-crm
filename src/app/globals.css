@@ -181,10 +181,12 @@ button, input, textarea, select {
   align-items: center;
 }
 
-/* Tablet (≤1024px): posición | nombre | cargas | pagos | chat (sin tel/estado). */
+/* Tablet (≤1024px): posición | nombre | cargas | pagos | chat (sin tel/estado).
+   El hide va con !important: el badge de estado tiene display:inline-block inline
+   y si no, gana el inline y rompe el grid (mete una celda extra). */
 @media (max-width: 1024px) {
   .leads-row { grid-template-columns: 40px minmax(0, 1fr) 120px 120px 36px; }
-  .leads-col-tel, .leads-col-estado { display: none; }
+  .leads-col-tel, .leads-col-estado { display: none !important; }
 }
 
 /* Celular. */
@@ -216,40 +218,6 @@ button, input, textarea, select {
 @media (max-width: 640px) {
   .dash-grid > * { min-width: 0 !important; width: 100% !important; }
 
-  /* Top Clientes: cards de resumen apiladas a ancho completo. */
-  .leads-cards { grid-template-columns: 1fr !important; }
-
-  /* Top Clientes: lista DENSA tipo exchange/tabla financiera (NO cards). Cada
-     fila ocupa ~56px en 2 renglones: medalla y chat a los costados (ocupan las
-     dos filas), nombre arriba, cargas/pagos abajo. Teléfono y estado ocultos.
-     Filas contiguas con separador fino, sin sombra ni bordes de card. */
-  .leads-header { display: none; }
-  .leads-col-tel, .leads-col-estado { display: none !important; }
-  .leads-table { gap: 2px !important; }
-  .leads-row {
-    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 32px;
-    grid-template-areas:
-      "pos nombre nombre chat"
-      "pos cargas pagos  chat";
-    column-gap: 8px;
-    row-gap: 2px;
-    align-items: center;
-    min-height: 56px;
-    padding: 4px 8px !important;
-    border-radius: 8px !important;
-    box-shadow: none !important;
-    border: none !important;
-    border-bottom: 1px solid #f0f0f0 !important;
-  }
-  .leads-c-pos    { grid-area: pos;    align-self: center; justify-self: center; font-size: 15px !important; }
-  .leads-c-name   { grid-area: nombre; align-self: center; font-size: 12px !important; }
-  .leads-c-cargas { grid-area: cargas; align-self: center; }
-  .leads-c-pagos  { grid-area: pagos;  align-self: center; }
-  .leads-c-chat   { grid-area: chat;   align-self: center; justify-self: end; }
-  .leads-c-cargas > p:first-child, .leads-c-pagos > p:first-child { font-size: 13px !important; font-weight: 700 !important; line-height: 1.1 !important; }
-  .leads-c-cargas > p + p, .leads-c-pagos > p + p { font-size: 10px !important; font-weight: 600 !important; margin-top: 0 !important; line-height: 1.1 !important; }
-  .leads-c-chat div { width: 28px !important; height: 28px !important; font-size: 14px !important; }
-
   /* Operadores: cada fila se convierte en card vertical con todo apilado
      (usuario, nombre, email, rol, horario, estado y acciones abajo). */
   .agents-table { min-width: 0 !important; }
@@ -273,6 +241,49 @@ button, input, textarea, select {
     padding-top: 10px;
     border-top: 1px solid #f0f0f0;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Top Clientes — MOBILE (bloque único, autónomo). Lista densa tipo exchange /
+   tabla financiera: una fila por cliente, medalla y chat a los costados (ocupan
+   las dos filas), nombre al medio, cargas arriba y pagos abajo a la derecha.
+   Todo con !important para ganar sobre los estilos inline del componente y sobre
+   las reglas de breakpoints mayores (.leads-row base y el bloque ≤1024px).
+   ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 639px) {
+  .leads-cards { grid-template-columns: 1fr !important; }
+  .leads-header { display: none !important; }
+  .leads-col-tel, .leads-col-estado { display: none !important; }
+  .leads-table { gap: 4px !important; }
+
+  .leads-row {
+    display: grid !important;
+    grid-template-columns: 32px minmax(0, 1fr) auto 32px !important;
+    grid-template-areas:
+      "pos nombre cargas chat"
+      "pos nombre pagos  chat" !important;
+    column-gap: 8px !important;
+    row-gap: 0 !important;
+    align-items: center !important;
+    min-height: 52px !important;
+    padding: 6px 8px !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-bottom: 1px solid #eee !important;
+  }
+
+  .leads-c-pos  { grid-area: pos !important;    align-self: center !important; justify-self: center !important; text-align: center !important; font-size: 15px !important; }
+  .leads-c-name { grid-area: nombre !important; align-self: center !important; min-width: 0 !important; font-size: 12px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+  .leads-c-cargas { grid-area: cargas !important; align-self: center !important; justify-self: end !important; text-align: right !important; }
+  .leads-c-pagos  { grid-area: pagos !important;  align-self: center !important; justify-self: end !important; text-align: right !important; }
+  .leads-c-chat   { grid-area: chat !important;   align-self: center !important; justify-self: end !important; }
+
+  /* Montos 13px bold · subtextos (cantidad) 10px, todo en una línea sin cortes. */
+  .leads-c-cargas > p, .leads-c-pagos > p { white-space: nowrap !important; }
+  .leads-c-cargas > p:first-child, .leads-c-pagos > p:first-child { font-size: 13px !important; font-weight: 700 !important; line-height: 1.1 !important; }
+  .leads-c-cargas > p + p, .leads-c-pagos > p + p { font-size: 10px !important; font-weight: 600 !important; margin-top: 0 !important; line-height: 1.05 !important; }
+  .leads-c-chat div { width: 28px !important; height: 28px !important; font-size: 14px !important; }
 }
 
 /* Celular chico: aliviar el header y el input del chat. */
