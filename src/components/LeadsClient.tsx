@@ -5,6 +5,11 @@ import Link from 'next/link';
 
 type TopClient = {
   contact_id:      string;
+  cargas_total:    number;
+  cargas_monto:    number;
+  pagos_total:     number;
+  pagos_monto:     number;
+  // Alias de cargas (compat con el backend); el ranking es por cargas.
   total:           number;
   monto_total:     number;
   phone:           string;
@@ -28,7 +33,7 @@ const STATUS_STYLE: Record<string, React.CSSProperties> = {
   nuevo:          { background: '#F0F0F0', color: '#888' },
 };
 
-const GRID = '46px 1fr 1fr 90px 100px 100px 36px';
+const GRID = '46px 1fr 1fr 90px 120px 120px 36px';
 
 // Rango [from, to] en ISO para un período relativo. `custom` se maneja aparte.
 function rangeFor(period: Exclude<Period, 'custom'>): { from: string; to: string } {
@@ -104,37 +109,40 @@ export default function LeadsClient() {
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
 
-  // Filtro de rango de monto (en tiempo real, sobre lo ya traído).
+  // Filtro de rango de monto CARGADO (en tiempo real, sobre lo ya traído).
   // maxAmount = 0 significa "sin límite superior".
   const filtered = useMemo(
-    () => clients.filter((c) => c.monto_total >= minAmount && (maxAmount <= 0 || c.monto_total <= maxAmount)),
+    () => clients.filter((c) => c.cargas_monto >= minAmount && (maxAmount <= 0 || c.cargas_monto <= maxAmount)),
     [clients, minAmount, maxAmount],
   );
 
-  // Ranking según el criterio elegido (las medallas siguen este orden).
+  // Ranking SOLO por cargas (los pagos nunca influyen). El toggle elige entre
+  // monto cargado y cantidad de cargas. Las medallas siguen este orden.
   const ranked = useMemo(() => {
     const arr = [...filtered];
     arr.sort((a, b) => sortBy === 'cantidad'
-      ? (b.total - a.total || b.monto_total - a.monto_total)
-      : (b.monto_total - a.monto_total || b.total - a.total));
+      ? (b.cargas_total - a.cargas_total || b.cargas_monto - a.cargas_monto)
+      : (b.cargas_monto - a.cargas_monto || b.cargas_total - a.cargas_total));
     return arr;
   }, [filtered, sortBy]);
 
-  const totalMonto = filtered.reduce((s, c) => s + c.monto_total, 0);
-  const totalComps = filtered.reduce((s, c) => s + c.total, 0);
+  const totalCargado = filtered.reduce((s, c) => s + c.cargas_monto, 0);
+  const totalPagado  = filtered.reduce((s, c) => s + c.pagos_monto, 0);
 
   // Filtros activos (para el badge del botón): período distinto del default + montos.
   const activeFilterCount = (period !== 'mes' ? 1 : 0) + (minAmount > 0 ? 1 : 0) + (maxAmount > 0 ? 1 : 0);
   const periodLabel = PERIODS.find((p) => p.key === period)?.label ?? '';
 
   function exportCSV() {
-    const header = ['Posición', 'Nombre', 'Teléfono', 'Total', 'Cantidad de comprobantes'];
+    const header = ['Posición', 'Nombre', 'Teléfono', 'Monto cargado', 'Cantidad de cargas', 'Monto pagado', 'Cantidad de pagos'];
     const rows = ranked.map((c, i) => [
       i + 1,
       c.casino_username || c.phone,
       c.phone,
-      c.monto_total,
-      c.total,
+      c.cargas_monto,
+      c.cargas_total,
+      c.pagos_monto,
+      c.pagos_total,
     ]);
     const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
     // BOM para que Excel respete el UTF-8 (acentos).
@@ -276,7 +284,7 @@ export default function LeadsClient() {
             <div>
               <p style={{ fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ordenar por</p>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                {([['monto', 'Monto total'], ['cantidad', 'Cantidad de recargas']] as const).map(([key, label]) => (
+                {([['monto', 'Monto cargado'], ['cantidad', 'Cantidad de cargas']] as const).map(([key, label]) => (
                   <button
                     key={key}
                     onClick={() => { setSortBy(key); setFiltersOpen(false); }}
@@ -294,9 +302,9 @@ export default function LeadsClient() {
       {/* Summary cards (reflejan el filtro activo). En mobile se apilan (CSS). */}
       <div className="leads-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
         {[
-          { label: 'Clientes con recargas', value: filtered.length },
-          { label: 'Total comprobantes',    value: totalComps },
-          { label: 'Monto total verificado', value: `$${totalMonto.toLocaleString('es-AR')}` },
+          { label: 'Clientes',     value: filtered.length },
+          { label: 'Total cargado', value: `$${totalCargado.toLocaleString('es-AR')}` },
+          { label: 'Total pagado',  value: `$${totalPagado.toLocaleString('es-AR')}` },
         ].map((card) => (
           <div key={card.label} style={{ background: '#fff', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
             <p style={{ fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
@@ -313,7 +321,7 @@ export default function LeadsClient() {
       <div style={{ background: '#fff', borderRadius: '16px', padding: '18px', boxShadow: '0 1px 8px rgba(0,0,0,0.06)' }}>
         <h2 style={{ fontSize: '16px', fontWeight: 800, color: '#000', margin: '0 0 4px 0' }}>Ranking de clientes</h2>
         <p style={{ fontSize: '12px', color: '#999', margin: '0 0 16px 0' }}>
-          {sortBy === 'cantidad' ? 'Por cantidad de recargas verificadas' : 'Por monto total de recargas verificadas'} — {periodLabel}.
+          {sortBy === 'cantidad' ? 'Por cantidad de cargas verificadas' : 'Por monto total cargado'} — {periodLabel}.
         </p>
 
         {loading ? (
@@ -326,14 +334,14 @@ export default function LeadsClient() {
         ) : ranked.length === 0 ? (
           <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>
             {clients.length === 0
-              ? 'No hay comprobantes verificados en este período.'
+              ? 'No hay cargas verificadas en este período.'
               : maxAmount > 0
                 ? `Ningún cliente está entre $${minAmount.toLocaleString('es-AR')} y $${maxAmount.toLocaleString('es-AR')} en este período.`
                 : `Ningún cliente supera $${minAmount.toLocaleString('es-AR')} en este período.`}
           </p>
         ) : (
-          /* En mobile (≤640px) se ocultan Teléfono/Estado/Recargas vía CSS y
-             quedan # / Usuario / Monto. Desktop renderiza la tabla completa. */
+          /* En mobile (≤640px) se ocultan Teléfono/Estado/Pagos vía CSS y
+             quedan # / Usuario / Cargas. Desktop renderiza la tabla completa. */
           <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <div className="leads-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '640px' }}>
             {/* Header */}
@@ -342,8 +350,8 @@ export default function LeadsClient() {
               <span>Usuario</span>
               <span className="leads-col-tel">Teléfono</span>
               <span className="leads-col-estado">Estado</span>
-              <span className="leads-col-recargas" style={{ textAlign: 'center' }}>Recargas</span>
-              <span>Monto total</span>
+              <span>Cargas</span>
+              <span className="leads-col-pagos">Pagos</span>
               <span />
             </div>
 
@@ -374,12 +382,24 @@ export default function LeadsClient() {
                   <span className="leads-col-estado" style={{ ...st, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '3px 10px', display: 'inline-block', textAlign: 'center' }}>
                     {c.status}
                   </span>
-                  <p className="leads-col-recargas" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', textAlign: 'center' }}>
-                    {c.total} ✓
-                  </p>
-                  <p style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#000' }}>
-                    ${c.monto_total.toLocaleString('es-AR')}
-                  </p>
+                  {/* Cargas: métrica principal del ranking (siempre visible). */}
+                  <div>
+                    <p style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#000' }}>
+                      ${c.cargas_monto.toLocaleString('es-AR')}
+                    </p>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: 700, color: '#999' }}>
+                      {c.cargas_total} {c.cargas_total === 1 ? 'carga' : 'cargas'}
+                    </p>
+                  </div>
+                  {/* Pagos: informativo, no influye en el orden (oculto en mobile). */}
+                  <div className="leads-col-pagos">
+                    <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: c.pagos_monto > 0 ? '#1a7a3a' : '#bbb' }}>
+                      ${c.pagos_monto.toLocaleString('es-AR')}
+                    </p>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '11px', fontWeight: 700, color: '#999' }}>
+                      {c.pagos_total} {c.pagos_total === 1 ? 'pago' : 'pagos'}
+                    </p>
+                  </div>
                   <Link href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', cursor: 'pointer' }} title="Ir a conversación">
                       💬

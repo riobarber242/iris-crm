@@ -51,10 +51,10 @@ El agente/admin también puede cargar un "pago manual" (premio grande pagado por
   },
 
   top_clientes: {
-    titulo: 'Top Clientes (ranking por recargas)',
-    contenido: `Muestra el "Ranking de clientes" según sus recargas verificadas. Filtros (panel colapsable arriba): Período (hoy, semana, mes, etc.), Rango de monto (Mínimo y Máximo en $) y Ordenar por (monto total o cantidad de recargas).
+    titulo: 'Top Clientes (ranking por cargas)',
+    contenido: `Muestra el "Ranking de clientes" ordenado SOLO por sus cargas verificadas (total cargado); los pagos se muestran pero no afectan el orden. Solo aparecen clientes con al menos una carga en el período. Filtros (panel colapsable arriba): Período (hoy, semana, mes, etc.), Rango de monto cargado (Mínimo y Máximo en $) y Ordenar por (monto cargado o cantidad de cargas).
 
-Columnas: Usuario, Teléfono, Estado, Recargas (cantidad) y Monto total. Sirve para detectar a los mejores clientes y armar acciones para cuidarlos (beneficios, atención prioritaria).`,
+Columnas: Usuario, Teléfono, Estado, Cargas (monto + cantidad) y Pagos (monto + cantidad). Sirve para detectar a los mejores clientes y armar acciones para cuidarlos (beneficios, atención prioritaria).`,
   },
 
   campanas: {

@@ -202,11 +202,11 @@ button, input, textarea, select {
   /* Top Clientes: cards de resumen apiladas a ancho completo. */
   .leads-cards { grid-template-columns: 1fr !important; }
 
-  /* Top Clientes: ranking compacto — # / Usuario / Monto (+ botón de chat).
-     Teléfono, Estado y Recargas se ocultan; siguen visibles en desktop. */
+  /* Top Clientes: ranking compacto — # / Usuario / Cargas (+ botón de chat).
+     Teléfono, Estado y Pagos se ocultan; siguen visibles en desktop. */
   .leads-table { min-width: 0 !important; }
   .leads-row   { grid-template-columns: 40px minmax(0, 1fr) auto 32px !important; gap: 8px !important; }
-  .leads-col-tel, .leads-col-estado, .leads-col-recargas { display: none !important; }
+  .leads-col-tel, .leads-col-estado, .leads-col-pagos { display: none !important; }
 
   /* Operadores: cada fila se convierte en card vertical con todo apilado
      (usuario, nombre, email, rol, horario, estado y acciones abajo). */
