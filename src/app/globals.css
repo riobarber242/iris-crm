@@ -181,7 +181,9 @@ button, input, textarea, select {
    reflowar por breakpoint sin pelear con estilos inline. */
 .leads-row {
   display: grid;
-  grid-template-columns: 40px 180px 160px 100px 130px 130px 40px;
+  /* Nombre flexible (mín. 180px) para que la tabla llene el 100% del ancho;
+     el resto de las columnas fijas para que no se pisen. */
+  grid-template-columns: 40px minmax(180px, 1fr) 160px 100px 130px 130px 40px;
   gap: 12px;
   align-items: center;
 }
@@ -273,7 +275,7 @@ button, input, textarea, select {
 
   .leads-row {
     display: grid !important;
-    grid-template-columns: 12px 1fr auto auto 32px !important;
+    grid-template-columns: 12px 1fr 90px 80px 32px !important;
     grid-template-areas: "dot nombre cargas pagos chat" !important;
     align-items: center !important;
     height: 44px !important;
@@ -288,8 +290,8 @@ button, input, textarea, select {
 
   .leads-dot      { display: block !important; grid-area: dot !important; align-self: center !important; }
   .leads-c-name   { grid-area: nombre !important; align-self: center !important; min-width: 0 !important; font-size: 13px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
-  .leads-c-cargas { grid-area: cargas !important; align-self: center !important; justify-self: end !important; }
-  .leads-c-pagos  { grid-area: pagos !important;  align-self: center !important; justify-self: end !important; }
+  .leads-c-cargas { grid-area: cargas !important; align-self: center !important; text-align: right !important; }
+  .leads-c-pagos  { grid-area: pagos !important;  align-self: center !important; text-align: right !important; }
   .leads-c-chat   { grid-area: chat !important;   align-self: center !important; justify-self: end !important; }
 
   /* Una sola línea por monto: sin subtextos (cantidad). Doble cobertura: el
