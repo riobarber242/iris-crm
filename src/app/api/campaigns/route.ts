@@ -21,13 +21,19 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
   // Campañas cuyas destinatarios se excluyen de esta (se re-validan al enviar).
   const excludeIds: string[] = Array.isArray(exclude_campaign_ids)
     ? exclude_campaign_ids.filter((x: unknown) => typeof x === 'string')
+    : [];
+
+  // Selección individual de contactos (por id). Si viene no vacía, el envío usa
+  // estos contactos y NO el target_filter (se re-valida por tenant al enviar).
+  const recipientIds: string[] = Array.isArray(recipient_ids)
+    ? recipient_ids.filter((x: unknown) => typeof x === 'string')
     : [];
 
   // Línea destino (opcional): debe ser un número del tenant. null = todas.
@@ -76,7 +82,7 @@ export async function POST(request: Request) {
   // existe todavía, reintenta sin ellas para no perder la campaña.
   const { data, error } = await supabaseAdmin
     .from('campaigns')
-    .insert({ ...baseRow, ...configRow, exclude_campaign_ids: excludeIds })
+    .insert({ ...baseRow, ...configRow, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
     .select('*').single();
 
   if (error) {

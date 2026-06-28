@@ -71,7 +71,23 @@ export async function POST(request: Request) {
 
   await supabaseAdmin.from('campaigns').update({ status: 'enviando' }).eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
-  let contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id, campaign.target_number_id ?? null);
+  // Selección individual (por id) tiene prioridad sobre el filtro por categoría.
+  // Se re-valida contra el tenant y se respeta `blocked`.
+  const explicitIds: string[] = Array.isArray(campaign.recipient_ids)
+    ? campaign.recipient_ids.filter((x: unknown) => typeof x === 'string')
+    : [];
+  let contacts;
+  if (explicitIds.length > 0) {
+    const { data } = await supabaseAdmin
+      .from('contacts')
+      .select('id, phone, name, whatsapp_number_id')
+      .eq('tenant_id', session.tenant_id)
+      .in('id', explicitIds)
+      .neq('blocked', true);
+    contacts = data ?? [];
+  } else {
+    contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id, campaign.target_number_id ?? null);
+  }
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las
   // campañas seleccionadas. Se re-validan los ids contra el tenant.

@@ -28,6 +28,9 @@ type WaLine = { id: string; label: string | null; active: boolean; is_default: b
 // Plantilla guardada en Iris (tabla whatsapp_templates), con sus botones.
 type IrisTemplate = { id: string; name: string; language: string; body: string; buttons: string[] };
 
+// Contacto seleccionable en el modo "elegir contactos" (agendados con usuario).
+type PickContact = { id: string; name: string | null; phone: string; casino_username: string | null };
+
 // Cuenta cuántos placeholders {{1}}, {{2}}... distintos tiene el body.
 function countTemplateVars(body: string): number {
   const matches = body.match(/\{\{\s*(\d+)\s*\}\}/g);
@@ -50,6 +53,7 @@ function effectiveFilter(f: string, days: number): string {
 }
 
 function filterLabel(value: string): string {
+  if (value === 'seleccion') return 'Contactos seleccionados';
   const m = value.match(/^inactivo_(\d+)d$/);
   if (m) return `Inactivo sin recargar ${m[1]} días`;
   return FILTERS.find((f) => f.value === value)?.label ?? value;
@@ -113,6 +117,14 @@ export default function CampanasClient() {
   const [lineFilter,   setLineFilter]   = useState('todas');
   const [recipientCount, setRecipientCount] = useState<number | null>(null);
   const [countLoading,   setCountLoading]   = useState(false);
+
+  // Modo de destinatarios: por categoría (filtro) o selección individual (ids).
+  const [targetMode,      setTargetMode]      = useState<'category' | 'individual'>('category');
+  const [contactsList,    setContactsList]    = useState<PickContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsLoaded,  setContactsLoaded]  = useState(false);
+  const [selectedIds,     setSelectedIds]     = useState<string[]>([]);
+  const [contactSearch,   setContactSearch]   = useState('');
 
   const [sendLimit,    setSendLimit]    = useState('');
   const [intervalMin,  setIntervalMin]  = useState('1');
@@ -198,6 +210,30 @@ export default function CampanasClient() {
     setCountLoading(false);
   }
 
+  // Carga la lista de agendados (con usuario) para el picker individual. Una vez.
+  async function fetchContactsList() {
+    setContactsLoading(true);
+    try {
+      const res  = await fetch('/api/contacts');
+      const data = res.ok ? await res.json() : [];
+      setContactsList(Array.isArray(data) ? data : []);
+    } catch {
+      setContactsList([]);
+    } finally {
+      setContactsLoading(false); setContactsLoaded(true);
+    }
+  }
+
+  function handleTargetModeChange(mode: 'category' | 'individual') {
+    setTargetMode(mode);
+    setError('');
+    if (mode === 'individual' && !contactsLoaded && !contactsLoading) fetchContactsList();
+  }
+
+  function toggleContact(id: string) {
+    setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
   function handleFilterChange(f: string) {
     setFilter(f);
     fetchRecipientCount(effectiveFilter(f, inactiveDays), lineFilter);
@@ -216,6 +252,7 @@ export default function CampanasClient() {
     setStep(1); setName('');
     setTemplateName(''); setTemplateLang('es'); setTemplateBody(''); setTemplateButtons([]); setTemplateVars([]);
     setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setRecipientCount(null);
+    setTargetMode('category'); setSelectedIds([]); setContactSearch('');
     setSendLimit(''); setIntervalMin('1'); setIntervalMax('3'); setPauseEvery(''); setPauseSeconds('');
     setExcludePrevious(false); setExcludeCampaignIds([]);
     setError('');
@@ -229,6 +266,7 @@ export default function CampanasClient() {
 
   function canAdvance(): boolean {
     if (step === 1) return !!name.trim() && !!templateName.trim();
+    if (step === 2) return targetMode === 'individual' ? selectedIds.length > 0 : true;
     if (step === 3) {
       const lo = Number(intervalMin), hi = Number(intervalMax);
       return !isNaN(lo) && !isNaN(hi) && lo >= 0 && hi >= lo;
@@ -239,6 +277,7 @@ export default function CampanasClient() {
   function next() {
     if (!canAdvance()) {
       if (step === 1) setError('Completá el nombre y elegí una plantilla.');
+      else if (step === 2) setError('Elegí al menos un contacto.');
       else if (step === 3) setError('El intervalo mínimo no puede ser mayor que el máximo.');
       return;
     }
@@ -249,16 +288,20 @@ export default function CampanasClient() {
   async function launch() {
     setLaunching(true); setError('');
     try {
+      const isIndividual = targetMode === 'individual';
       const createBody = {
         name: name.trim(),
-        target_filter: effectiveFilter(filter, inactiveDays),
+        target_filter: isIndividual ? 'seleccion' : effectiveFilter(filter, inactiveDays),
         type: 'template_meta',
         template_name: templateName.trim(),
         template_language: templateLang.trim() || 'es',
         template_variables: templateVars.filter((v) => v.trim() !== ''),
-        send_limit: sendLimit ? Number(sendLimit) : null,
-        target_number_id: lineFilter !== 'todas' ? lineFilter : null,
-        exclude_campaign_ids: excludePrevious ? excludeCampaignIds : [],
+        // En individual: sin límite/exclusión y sin filtro de línea (cada contacto
+        // sale por su propio número). recipient_ids manda la lista elegida.
+        send_limit: isIndividual ? null : (sendLimit ? Number(sendLimit) : null),
+        target_number_id: isIndividual ? null : (lineFilter !== 'todas' ? lineFilter : null),
+        exclude_campaign_ids: isIndividual ? [] : (excludePrevious ? excludeCampaignIds : []),
+        recipient_ids: isIndividual ? selectedIds : [],
         interval_min_sec: Number(intervalMin) || 0,
         interval_max_sec: Number(intervalMax) || 0,
         pause_every:   pauseEvery ? Number(pauseEvery) : null,
@@ -453,40 +496,133 @@ export default function CampanasClient() {
 
           {/* ── PASO 2: Destinatarios ── */}
           {step === 2 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={labelStyle}>Destinatarios</label>
-              <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* Toggle de modo: por categoría vs elegir contactos */}
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {([['category', 'Por categoría'], ['individual', 'Elegir contactos']] as const).map(([mode, lbl]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => handleTargetModeChange(mode)}
+                    style={{
+                      flex: 1, padding: '9px 12px', fontSize: '13px', fontWeight: 700, cursor: 'pointer',
+                      borderRadius: '10px', border: targetMode === mode ? '2px solid #1a7a3a' : '2px solid #e0e0e0',
+                      background: targetMode === mode ? '#f0fff4' : '#fff', color: targetMode === mode ? '#1a7a3a' : '#888',
+                    }}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
 
-              {filter === 'inactivo_dias' && (
-                <>
-                  <label style={{ ...labelStyle, marginTop: '4px' }}>Días sin recargar</label>
-                  <input type="number" min={1} max={365} value={inactiveDays} onChange={(e) => handleDaysChange(e.target.value)} placeholder="30" style={inputStyle} />
-                  <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Inactivos sin recarga verificada en los últimos {inactiveDays} días (1 a 365).</p>
-                </>
-              )}
-
-              {lines.length > 0 && (
-                <>
-                  <label style={{ ...labelStyle, marginTop: '4px' }}>Línea</label>
-                  <select value={lineFilter} onChange={(e) => handleLineChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                    <option value="todas">Todas las líneas</option>
-                    {lines.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {(l.label ?? l.id)}{l.is_default ? ' (default)' : ''}{!l.active ? ' — inactiva' : ''}
-                      </option>
-                    ))}
+              {/* ── Modo categoría ── */}
+              {targetMode === 'category' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={labelStyle}>Destinatarios</label>
+                  <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                    {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </select>
-                </>
+
+                  {filter === 'inactivo_dias' && (
+                    <>
+                      <label style={{ ...labelStyle, marginTop: '4px' }}>Días sin recargar</label>
+                      <input type="number" min={1} max={365} value={inactiveDays} onChange={(e) => handleDaysChange(e.target.value)} placeholder="30" style={inputStyle} />
+                      <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Inactivos sin recarga verificada en los últimos {inactiveDays} días (1 a 365).</p>
+                    </>
+                  )}
+
+                  {lines.length > 0 && (
+                    <>
+                      <label style={{ ...labelStyle, marginTop: '4px' }}>Línea</label>
+                      <select value={lineFilter} onChange={(e) => handleLineChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                        <option value="todas">Todas las líneas</option>
+                        {lines.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {(l.label ?? l.id)}{l.is_default ? ' (default)' : ''}{!l.active ? ' — inactiva' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+
+                  {(countLoading || recipientCount !== null) && (
+                    <p style={{ fontSize: '12px', color: '#555', margin: '4px 0 0 0', fontWeight: 600 }}>
+                      {countLoading ? 'Contando…' : `~${recipientCount} contacto${recipientCount !== 1 ? 's' : ''}`}
+                      {filter === 'inactivo_dias' && !countLoading && <span style={{ color: '#888', fontWeight: 400 }}> (estimado — el filtro exacto aplica al enviar)</span>}
+                    </p>
+                  )}
+                </div>
               )}
 
-              {(countLoading || recipientCount !== null) && (
-                <p style={{ fontSize: '12px', color: '#555', margin: '4px 0 0 0', fontWeight: 600 }}>
-                  {countLoading ? 'Contando…' : `~${recipientCount} contacto${recipientCount !== 1 ? 's' : ''}`}
-                  {filter === 'inactivo_dias' && !countLoading && <span style={{ color: '#888', fontWeight: 400 }}> (estimado — el filtro exacto aplica al enviar)</span>}
-                </p>
-              )}
+              {/* ── Modo individual: buscador + lista con checkboxes ── */}
+              {targetMode === 'individual' && (() => {
+                const q = contactSearch.trim().toLowerCase();
+                const visible = q
+                  ? contactsList.filter((c) =>
+                      (c.casino_username ?? '').toLowerCase().includes(q) ||
+                      (c.name ?? '').toLowerCase().includes(q) ||
+                      (c.phone ?? '').toLowerCase().includes(q))
+                  : contactsList;
+                const visibleIds = visible.map((c) => c.id);
+                const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input
+                      value={contactSearch}
+                      onChange={(e) => setContactSearch(e.target.value)}
+                      placeholder="Buscar por usuario, nombre o teléfono…"
+                      style={inputStyle}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#1a7a3a' }}>
+                        {selectedIds.length} seleccionado{selectedIds.length !== 1 ? 's' : ''}
+                      </span>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedIds((prev) => allVisibleSelected
+                            ? prev.filter((id) => !visibleIds.includes(id))
+                            : Array.from(new Set([...prev, ...visibleIds])))}
+                          disabled={visibleIds.length === 0}
+                          style={{ background: 'none', border: 'none', color: visibleIds.length === 0 ? '#ccc' : '#1a7a3a', fontWeight: 700, fontSize: '12px', cursor: visibleIds.length === 0 ? 'default' : 'pointer', padding: 0 }}
+                        >
+                          {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+                        </button>
+                        {selectedIds.length > 0 && (
+                          <button type="button" onClick={() => setSelectedIds([])} style={{ background: 'none', border: 'none', color: '#E53935', fontWeight: 700, fontSize: '12px', cursor: 'pointer', padding: 0 }}>
+                            Limpiar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {contactsLoading ? (
+                      <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>Cargando contactos…</p>
+                    ) : contactsList.length === 0 ? (
+                      <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No hay contactos agendados (con usuario) para elegir.</p>
+                    ) : (
+                      <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #eee', borderRadius: '10px', padding: '6px' }}>
+                        {visible.length === 0 ? (
+                          <p style={{ fontSize: '13px', color: '#aaa', margin: 0, padding: '8px' }}>Sin resultados para “{contactSearch}”.</p>
+                        ) : visible.map((c) => {
+                          const checked = selectedIds.includes(c.id);
+                          return (
+                            <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', background: checked ? '#f0fff4' : 'transparent' }}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleContact(c.id)} />
+                              <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {c.casino_username || c.name || c.phone}
+                                </span>
+                                <span style={{ fontSize: '11px', color: '#999' }}>{c.phone}</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -505,10 +641,12 @@ export default function CampanasClient() {
               </div>
               <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>Entre cada mensaje se espera un tiempo al azar dentro de ese rango (evita parecer spam).</p>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={labelStyle}>Límite de contactos (opcional)</label>
-                <input type="number" min={1} value={sendLimit} onChange={(e) => setSendLimit(e.target.value)} placeholder="Sin límite" style={inputStyle} />
-              </div>
+              {targetMode === 'category' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={labelStyle}>Límite de contactos (opcional)</label>
+                  <input type="number" min={1} value={sendLimit} onChange={(e) => setSendLimit(e.target.value)} placeholder="Sin límite" style={inputStyle} />
+                </div>
+              )}
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
@@ -521,6 +659,7 @@ export default function CampanasClient() {
                 </div>
               </div>
 
+              {targetMode === 'category' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ fontSize: '13px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600 }}>
                   <input type="checkbox" checked={excludePrevious} onChange={(e) => { setExcludePrevious(e.target.checked); if (!e.target.checked) setExcludeCampaignIds([]); }} />
@@ -545,6 +684,7 @@ export default function CampanasClient() {
                   );
                 })()}
               </div>
+              )}
             </>
           )}
 
@@ -562,11 +702,13 @@ export default function CampanasClient() {
                   </div>
                 )}
                 {templateVars.length > 0 && <div><strong>Variables:</strong> {templateVars.map((v, i) => `{{${i + 1}}}=${v || '—'}`).join(', ')}</div>}
-                <div><strong>Destinatarios:</strong> {filterLabel(effectiveFilter(filter, inactiveDays))}{recipientCount !== null ? ` (~${recipientCount})` : ''}</div>
-                {lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
+                <div><strong>Destinatarios:</strong> {targetMode === 'individual'
+                  ? `${selectedIds.length} contacto${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}`
+                  : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
+                {targetMode === 'category' && lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
                 <div><strong>Ritmo:</strong> {intervalMin}–{intervalMax}s entre mensajes{pauseEvery && pauseSeconds ? ` · pausa de ${pauseSeconds}s cada ${pauseEvery}` : ''}</div>
-                {sendLimit && <div><strong>Límite:</strong> {sendLimit} contactos</div>}
-                {excludePrevious && excludeCampaignIds.length > 0 && <div><strong>Excluye:</strong> {excludeCampaignIds.length} campaña(s)</div>}
+                {targetMode === 'category' && sendLimit && <div><strong>Límite:</strong> {sendLimit} contactos</div>}
+                {targetMode === 'category' && excludePrevious && excludeCampaignIds.length > 0 && <div><strong>Excluye:</strong> {excludeCampaignIds.length} campaña(s)</div>}
               </div>
               <div style={{ background: '#fffbe6', border: '1px solid #f0c040', borderRadius: '12px', padding: '10px 14px' }}>
                 <p style={{ fontSize: '12px', color: '#7a5c00', margin: 0, lineHeight: 1.5 }}>
@@ -654,7 +796,7 @@ export default function CampanasClient() {
                   <p style={{ textAlign: 'center', padding: '20px 0', color: '#999', fontSize: '13px', margin: 0 }}>No hay campañas completadas en este período.</p>
                 ) : (
                   completadas.map((c) => {
-                    const sent = c.recipient_ids?.length ?? c.sent_count ?? 0;
+                    const sent = c.sent_count ?? c.recipient_ids?.length ?? 0;
                     const noCount = c.btn2_count ?? 0;
                     return (
                       <div key={c.id} style={{ background: '#F8F8F8', borderRadius: '12px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
