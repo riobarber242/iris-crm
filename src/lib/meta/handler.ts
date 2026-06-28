@@ -102,6 +102,10 @@ const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. T
 // 'offline_msg', editable vía Iris AI) con DEFAULT_OFFLINE_MSG como fallback.
 const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te respondemos cuando volvamos 🙏';
 
+// El cliente avisa que YA es usuario/cliente → handoff directo al operador, sin
+// onboardearlo. Se evalúa como primer mensaje y en varios estados del flujo.
+const ALREADY_CLIENT_RE = /ya teng|ya ten[eé]s|tengo (una )?cuenta|tengo usuario|tengo (una )?ficha|ya soy|soy cliente|ya jug|ya jugu[eé]|tengo (un )?user/;
+
 // ─── Image: full 4-step flow ──────────────────────────────────────────────────
 // Step 1: GET graph.facebook.com/v21.0/{mediaId}?fields=url  → temporary download URL
 // Step 2: GET that download URL with Bearer token             → image buffer
@@ -614,18 +618,19 @@ async function processMessage(
     console.log('[bot] OFFLINE — contacto nuevo/onboarding con bot prendido → sigue el flujo');
   }
 
-  // ── Cliente ya reconocido (fast path, ANTES de cualquier flujo) ─────────────
-  // Si el número ya existe en contacts con casino_username y está en el punto de
-  // entrada (contacto nuevo o conversation_state nulo), NO se onboardea: se lo
-  // saluda por su usuario y queda listo para atención humana. El estado
-  // 'known_client' hace que classifyPending lo marque ROJO mientras esté online.
-  // (Un contacto nuevo nunca trae casino_username, así que en la práctica esto
-  // aplica a números preexistentes que recién escriben.)
-  const atEntryPoint = isNew || (contact.conversation_state ?? null) === null;
-  if (atEntryPoint && botEnabled && !contact.blocked && contact.casino_username) {
-    console.log(`[bot] Cliente reconocido (${contact.casino_username}) → known_client, sin onboarding`);
+  // ── Bot SOLO onboardea contactos SIN nombre (conversaciones nuevas) ─────────
+  // Si el contacto ya tiene identidad asignada (name o casino_username — el sync
+  // de arriba los deja iguales) y no está ya derivado, NO se onboardea: se lo
+  // saluda por su nombre y queda en cola del operador. Cubre el caso de un
+  // contacto que el operador nombró a mitad del flujo (conversation_state en un
+  // estado de onboarding): aun así se corta el onboarding, sin importar el state.
+  // El estado 'known_client' hace que classifyPending lo marque ROJO online.
+  const known = (contact.casino_username ?? '').trim() || (contact.name ?? '').trim();
+  const alreadyHandled = ['known_client', 'done'].includes(contact.conversation_state ?? '');
+  if (known && botEnabled && !contact.blocked && !alreadyHandled) {
+    console.log(`[bot] Contacto con nombre asignado ("${known}") → handoff a humano, sin onboarding`);
     await replyAndSave(
-      `¡Hola ${contact.casino_username}! Ya te reconocemos, en un momento te atendemos 👋`,
+      `¡Hola ${known}! Ya te reconocemos, en un momento te atendemos 👋`,
       { newState: 'known_client' },
     );
     return;
@@ -691,13 +696,18 @@ async function processMessage(
     // ── Contacto nuevo: bienvenida + primera pregunta ─────────────────────────
     case null:
     case 'greeting': {
-      await replyAndSave(WELCOME_MSG, { newState: 'asked_intention' });
+      // Si en el primer mensaje ya avisa que es cliente → directo al operador.
+      if (ALREADY_CLIENT_RE.test(lowerText)) {
+        await replyAndSave(handoffMsg, { markInProgress: true });
+      } else {
+        await replyAndSave(WELCOME_MSG, { newState: 'asked_intention' });
+      }
       break;
     }
 
     // ── ¿Primera vez o ya tiene cuenta? ───────────────────────────────────────
     case 'asked_intention': {
-      if (/ya teng|ya ten[eé]s|tengo cuenta|tengo una cuenta|ya soy|tengo usuario/.test(lowerText)) {
+      if (ALREADY_CLIENT_RE.test(lowerText)) {
         // Ya tiene cuenta → lo atiende un operador.
         await replyAndSave(handoffMsg, { markInProgress: true });
       } else if (/primera|primer|nuev[oa]|reci[eé]n|no teng|empez|arranco|soy nuevo/.test(lowerText)) {
@@ -718,7 +728,7 @@ async function processMessage(
 
     // ── Waiting for channel screenshot (text message) ─────────────────────────
     case 'waiting_screenshot': {
-      if (/no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
+      if (ALREADY_CLIENT_RE.test(lowerText) || /no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
         await replyAndSave(handoffMsg, { markInProgress: true });
       } else {
         const ai = await aiSteerReply(
