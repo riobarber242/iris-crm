@@ -382,7 +382,7 @@ export default function LeadsClient() {
                     {c.casino_username ? `🎰 ${c.casino_username}` : c.phone}
                   </p>
                   <p className="leads-col-tel" style={{ margin: 0, fontSize: '13px', color: '#888' }}>{c.phone}</p>
-                  <span className="leads-col-estado" style={{ ...st, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '3px 10px', display: 'inline-block', textAlign: 'center' }}>
+                  <span className="leads-col-estado" style={{ ...st, fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.02em', borderRadius: '999px', padding: '3px 8px', display: 'inline-block', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
                     {c.status}
                   </span>
                   {/* Cargas: métrica principal del ranking. */}

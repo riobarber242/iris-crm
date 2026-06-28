@@ -176,14 +176,14 @@ button, input, textarea, select {
    reflowar por breakpoint sin pelear con estilos inline. */
 .leads-row {
   display: grid;
-  grid-template-columns: 46px 1fr 1fr 90px 120px 120px 36px;
+  grid-template-columns: 40px 180px 160px 100px 130px 130px 40px;
   gap: 12px;
   align-items: center;
 }
 
 /* Tablet (≤1024px): posición | nombre | cargas | pagos | chat (sin tel/estado). */
 @media (max-width: 1024px) {
-  .leads-row { grid-template-columns: 46px minmax(0, 1fr) 110px 110px 36px; }
+  .leads-row { grid-template-columns: 40px minmax(0, 1fr) 120px 120px 36px; }
   .leads-col-tel, .leads-col-estado { display: none; }
 }
 
@@ -219,24 +219,22 @@ button, input, textarea, select {
   /* Top Clientes: cards de resumen apiladas a ancho completo. */
   .leads-cards { grid-template-columns: 1fr !important; }
 
-  /* Top Clientes: cada fila es una CARD apilada (sin columnas). Se muestran
-     posición + nombre arriba, cargas y pagos abajo, y el botón de chat. El
-     teléfono y el estado siguen ocultos (heredado del bloque ≤1024px). */
+  /* Top Clientes: fila compacta tipo lista (NO card). Una sola fila por cliente
+     en ≤48px: medalla · nombre · cargas · pagos · chat. Teléfono y estado quedan
+     ocultos (heredado del bloque ≤1024px). Fuentes chicas para que entre todo. */
   .leads-header { display: none; }
   .leads-row {
-    grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      "pos    chat"
-      "name   name"
-      "cargas pagos";
-    gap: 6px 12px;
-    align-items: start;
+    grid-template-columns: 28px minmax(0, 1fr) auto auto 30px;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 10px !important;
+    border-radius: 10px !important;
   }
-  .leads-c-pos    { grid-area: pos;    justify-self: start; }
-  .leads-c-chat   { grid-area: chat;   justify-self: end; }
-  .leads-c-name   { grid-area: name; }
-  .leads-c-cargas { grid-area: cargas; }
-  .leads-c-pagos  { grid-area: pagos; }
+  .leads-c-pos  { font-size: 15px !important; }
+  .leads-c-name { font-size: 12px !important; }
+  .leads-c-cargas p, .leads-c-pagos p { font-size: 11px !important; line-height: 1.15 !important; }
+  .leads-c-cargas p + p, .leads-c-pagos p + p { font-size: 10px !important; margin-top: 1px !important; font-weight: 600 !important; }
+  .leads-c-chat div { width: 28px !important; height: 28px !important; font-size: 14px !important; }
 
   /* Operadores: cada fila se convierte en card vertical con todo apilado
      (usuario, nombre, email, rol, horario, estado y acciones abajo). */
