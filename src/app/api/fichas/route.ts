@@ -6,6 +6,7 @@ import {
   recargarFichas, isCajaEnabled,
   setStock, setBilletera, borrarMovimiento, resetTotal,
   verificarDescarga, rechazarDescarga, verificarTraspaso,
+  traspasarEntreOperadores,
 } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
 
@@ -221,6 +222,18 @@ export async function POST(request: Request) {
       const r = await borrarMovimiento(session, String(body.movimientoId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
       return NextResponse.json(r);
+    }
+
+    // Traspaso DIRECTO de un monto arbitrario entre dos billeteras (P2). Lo
+    // inicia el agente; mueve la plata al instante (fn_traspaso_directo, atómico).
+    case 'traspaso_directo': {
+      const r = await traspasarEntreOperadores(session, {
+        origenId:  String(body.origenId ?? ''),
+        destinoId: String(body.destinoId ?? ''),
+        monto:     Number(body.monto),
+      });
+      if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      return NextResponse.json({ ok: true, saldo_origen: r.saldoOrigen, saldo_destino: r.saldoDestino });
     }
 
     // Verificar una descarga pendiente (Etapa 5): mueve el monto de la billetera

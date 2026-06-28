@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { linkify } from '@/lib/linkify';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
@@ -909,7 +910,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
                 if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
                 if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
-                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{m.content}</p>;
+                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{linkify(m.content)}</p>;
               })()}
 
               {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →

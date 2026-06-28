@@ -638,6 +638,74 @@ export async function borrarMovimiento(session: SessionPayload, movimientoId: st
   }
 }
 
+export type TraspasoDirectoResult =
+  | { ok: true;  saldoOrigen: number; saldoDestino: number }
+  | { ok: false; error: string; degraded?: boolean };
+
+// Traspaso DIRECTO de un monto arbitrario entre dos billeteras del tenant. SOLO
+// staff (admin/agent): mueve la plata AL INSTANTE, atómico, sin comprobante ni
+// verificación (a diferencia del cierre de turno, que traspasa la billetera
+// entera con verificación diferida). La atomicidad y el guard de saldo negativo
+// viven en fn_traspaso_directo; acá validamos rol, mismo-tenant y monto.
+export async function traspasarEntreOperadores(
+  session: SessionPayload,
+  p: { origenId: string; destinoId: string; monto: number },
+): Promise<TraspasoDirectoResult> {
+  if (!isStaff(session)) return { ok: false, error: 'No autorizado' };
+  const origenId  = String(p.origenId ?? '').trim();
+  const destinoId = String(p.destinoId ?? '').trim();
+  if (!origenId || !destinoId) return { ok: false, error: 'Elegí el operador de origen y el de destino' };
+  if (origenId === destinoId)  return { ok: false, error: 'El origen y el destino deben ser distintos' };
+  const monto = Math.trunc(Number(p.monto));
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Ingresá un monto válido (mayor a 0)' };
+
+  // Ambas billeteras deben ser de agents del MISMO tenant (defensa además del
+  // scope por p_tenant en la RPC). Trae los nombres para el aviso del chat.
+  const { data: ops, error: opsErr } = await supabaseAdmin
+    .from('agents').select('id, name').eq('tenant_id', session.tenant_id).in('id', [origenId, destinoId]);
+  if (opsErr) return { ok: false, error: opsErr.message };
+  if (!ops || ops.length !== 2) return { ok: false, error: 'Operador de origen o destino inválido' };
+  const nameById = new Map((ops as any[]).map((a) => [a.id, a.name]));
+
+  try {
+    const { data, error } = await supabaseAdmin.rpc('fn_traspaso_directo', {
+      p_tenant:          session.tenant_id,
+      p_origen:          origenId,
+      p_destino:         destinoId,
+      p_monto:           monto,
+      p_creado_por:      session.sub,
+      p_creado_por_name: session.name,
+    });
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+      // Errores de negocio de la función (ej: "Saldo insuficiente en la billetera de origen").
+      return { ok: false, error: error.message };
+    }
+    const res = data as { saldo_origen: number; saldo_destino: number };
+
+    await logActivity({
+      session, action: ACTIVITY.MOVIMIENTO_CAJA, objectType: 'operador_billetera', objectId: origenId,
+      details: {
+        tipo: 'traspaso', directo: true, monto,
+        origen_id: origenId, destino_id: destinoId,
+        saldo_origen: res.saldo_origen, saldo_destino: res.saldo_destino,
+      },
+    });
+
+    const origenName  = nameById.get(origenId)  ?? 'operador';
+    const destinoName = nameById.get(destinoId) ?? 'operador';
+    await postInternalSystemMessage(
+      session,
+      `🔄 ${session.name} traspasó $${fmtMonto(monto)} de ${origenName} a ${destinoName}`,
+    );
+
+    return { ok: true, saldoOrigen: Number(res.saldo_origen), saldoDestino: Number(res.saldo_destino) };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: false, error: 'Caja no inicializada', degraded: true };
+    return { ok: false, error: err?.message ?? 'Error al traspasar' };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Etapa 5 — Descargas + Sueldo.
 //

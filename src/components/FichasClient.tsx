@@ -105,6 +105,12 @@ export default function FichasClient() {
   const [resetText,  setResetText]  = useState('');
   const [resetComps, setResetComps] = useState(false);
 
+  // ── P2: traspaso directo entre billeteras (monto arbitrario, instantáneo) ──
+  const [traspasoOpen,    setTraspasoOpen]    = useState(false);
+  const [traspasoOrigen,  setTraspasoOrigen]  = useState('');
+  const [traspasoDestino, setTraspasoDestino] = useState('');
+  const [traspasoMonto,   setTraspasoMonto]   = useState('');
+
   // ── Etapa 5: descargas ──
   const [histPage, setHistPage]     = useState(0);
   // ── Etapa 6: cierres de turno ──
@@ -253,6 +259,21 @@ export default function FichasClient() {
   async function resetBilletera(operadorId: string, name: string) {
     if (!window.confirm(`Resetear la billetera de ${name} a 0?`)) return;
     await post({ action: 'reset_billetera', operadorId });
+  }
+
+  function abrirTraspaso() {
+    setTraspasoOrigen(''); setTraspasoDestino(''); setTraspasoMonto('');
+    setError('');
+    setTraspasoOpen(true);
+  }
+
+  async function doTraspaso() {
+    const n = parseInt(traspasoMonto.replace(/\D/g, ''), 10);
+    if (!traspasoOrigen || !traspasoDestino) { setError('Elegí origen y destino'); return; }
+    if (traspasoOrigen === traspasoDestino)  { setError('El origen y el destino deben ser distintos'); return; }
+    if (!Number.isInteger(n) || n <= 0)      { setError('Ingresá un monto mayor a 0'); return; }
+    const ok = await post({ action: 'traspaso_directo', origenId: traspasoOrigen, destinoId: traspasoDestino, monto: n });
+    if (ok) setTraspasoOpen(false);
   }
 
   async function borrarMov(id: string) {
@@ -438,7 +459,16 @@ export default function FichasClient() {
       {/* Billeteras por operador (cards compactas, 2 columnas en desktop) */}
       {(data?.billeteras.length ?? 0) > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Billeteras por operador</p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+            <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#111' }}>Billeteras por operador</p>
+            {/* Traspaso directo: mueve un monto entre dos billeteras al instante.
+                Solo con la caja encendida y al menos 2 billeteras. */}
+            {data!.caja_enabled && (data?.billeteras.length ?? 0) >= 2 && (
+              <button onClick={abrirTraspaso} disabled={busy} style={{ ...btn('#e6f4ff', '#1d6fb8'), padding: '7px 14px', fontSize: '12px' }}>
+                🔄 Traspasar
+              </button>
+            )}
+          </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             {data!.billeteras.map((b) => {
               const editing = editBillId === b.operador_id;
@@ -793,6 +823,64 @@ export default function FichasClient() {
           </div>
         )}
       </div>
+
+      {/* ── P2: modal de traspaso directo entre billeteras ───────────────────── */}
+      {traspasoOpen && data && (
+        <div
+          onClick={() => { if (!busy) setTraspasoOpen(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: '16px', maxWidth: '400px', width: '100%', padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800 }}>Traspasar entre billeteras</h3>
+            <p style={{ margin: 0, fontSize: '13px', color: '#666', lineHeight: 1.5 }}>
+              Mueve un monto de una billetera a otra al instante. No requiere verificación.
+            </p>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', fontWeight: 700, color: '#888' }}>
+              DESDE
+              <select
+                value={traspasoOrigen}
+                onChange={(e) => setTraspasoOrigen(e.target.value)}
+                style={{ padding: '10px 12px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 700, outline: 'none', background: '#F7F7F7', color: '#222' }}
+              >
+                <option value="">Elegí el origen…</option>
+                {data.billeteras.map((b) => (
+                  <option key={b.operador_id} value={b.operador_id}>{b.name} — ${fmt(b.saldo)}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px', fontWeight: 700, color: '#888' }}>
+              HACIA
+              <select
+                value={traspasoDestino}
+                onChange={(e) => setTraspasoDestino(e.target.value)}
+                style={{ padding: '10px 12px', border: '2px solid #eee', borderRadius: '10px', fontSize: '14px', fontWeight: 700, outline: 'none', background: '#F7F7F7', color: '#222' }}
+              >
+                <option value="">Elegí el destino…</option>
+                {data.billeteras.filter((b) => b.operador_id !== traspasoOrigen).map((b) => (
+                  <option key={b.operador_id} value={b.operador_id}>{b.name} — ${fmt(b.saldo)}</option>
+                ))}
+              </select>
+            </label>
+
+            <input
+              type="number" min="1" step="1" value={traspasoMonto}
+              onChange={(e) => setTraspasoMonto(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') doTraspaso(); }}
+              placeholder="Monto a traspasar"
+              style={{ padding: '11px 13px', border: '2px solid #eee', borderRadius: '10px', fontSize: '15px', fontWeight: 700, outline: 'none', background: '#F7F7F7' }}
+            />
+
+            {error && <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontWeight: 600 }}>{error}</div>}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={() => { if (!busy) setTraspasoOpen(false); }} disabled={busy} style={{ ...btn('#F0F0F0', '#666'), flex: 1 }}>Cancelar</button>
+              <button onClick={doTraspaso} disabled={busy} style={{ ...btn('#1d6fb8', '#fff'), flex: 1 }}>{busy ? '…' : 'Traspasar'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

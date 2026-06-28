@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { linkify } from '@/lib/linkify';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
@@ -653,7 +654,7 @@ export default function InternalChatClient() {
                 ) : media?._type === 'audio' ? (
                   <audio controls src={media.url} style={{ width: '100%', minWidth: '200px', marginTop: '2px' }} />
                 ) : (
-                  <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{traspaso ? traspaso.text : m.content}</p>
+                  <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{linkify(traspaso ? traspaso.text : m.content)}</p>
                 )}
 
                 {/* Cierre de turno: si ya está resuelto (estado persistido en
