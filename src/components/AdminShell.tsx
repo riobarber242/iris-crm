@@ -155,6 +155,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
       unreadSupabaseRef.current = sb;
       const ch = sb.channel('unread-badge')
         .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, fetchUnread)
+        // Cargas/pagos: el badge de comprobantes aparece/baja al instante igual
+        // que el de conversaciones. '*' para reaccionar al alta (a verificar) y a
+        // la resolución (verificado/rechazado → el conteo baja).
+        .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'comprobantes' }, fetchUnread)
         .subscribe();
       unreadChannelRef.current = ch;
     }

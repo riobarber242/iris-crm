@@ -503,6 +503,7 @@ async function processMessage(
       title: 'IRIS',
       body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
       url: `/conversaciones/${contact.id}`,
+      kind: 'conversation', // suena, incluso en pantalla bloqueada
     });
   } catch (err) {
     console.warn('[webhook] notifyContactAgents falló (ignorado):', err);

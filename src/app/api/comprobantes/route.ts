@@ -187,6 +187,7 @@ export async function POST(request: Request) {
       title: tipo === 'carga' ? 'Nueva carga para verificar' : 'Nuevo pago para verificar',
       body:  `${quien} envió un comprobante para verificar.`,
       url:   tipo === 'carga' ? '/cargas' : '/pagos',
+      kind:  'comprobante', // silenciosa: solo badge, sin sonido
     });
   } catch (err) {
     console.warn('[comprobantes] push notifyContactAgents falló (ignorado):', err);

@@ -20,7 +20,10 @@ function ensureVapid(): boolean {
   return true;
 }
 
-export type PushPayload = { title: string; body: string; url?: string };
+// `kind` lo usa el Service Worker para decidir el sonido de la notificación:
+//  - 'conversation' → suena (mensaje de cliente, incl. pantalla bloqueada).
+//  - 'comprobante'  → silenciosa (carga/pago a verificar: solo badge, sin ruido).
+export type PushPayload = { title: string; body: string; url?: string; kind?: 'conversation' | 'comprobante' };
 
 // Envía a una suscripción concreta. Si la suscripción expiró (404/410) la borra.
 async function sendToSubscription(row: { id: string; subscription: any }, payload: PushPayload) {
