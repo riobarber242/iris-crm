@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 export default function CasinoConfigCard() {
   const [enabled, setEnabled]   = useState(false);
   const [baseUrl, setBaseUrl]   = useState('');
+  const [playerUrl, setPlayerUrl] = useState('');   // URL pública para el jugador
   const [password, setPassword] = useState('');     // vacío = no se cambia
   const [hasPassword, setHasPassword] = useState(false);
 
@@ -24,6 +25,7 @@ export default function CasinoConfigCard() {
         const j = await res.json();
         setEnabled(!!j.enabled);
         setBaseUrl(String(j.casino_api_base_url ?? ''));
+        setPlayerUrl(String(j.casino_player_url ?? ''));
         setHasPassword(!!j.has_password);
       } catch {
         setMsg({ kind: 'err', text: 'Error de red.' });
@@ -37,7 +39,7 @@ export default function CasinoConfigCard() {
     setSaving(true);
     setMsg(null);
     try {
-      const payload: Record<string, any> = { enabled, casino_api_base_url: baseUrl };
+      const payload: Record<string, any> = { enabled, casino_api_base_url: baseUrl, casino_player_url: playerUrl };
       // Solo mandamos el password si el agente escribió uno nuevo.
       if (password.trim()) payload.casino_agent_password = password.trim();
 
@@ -52,6 +54,7 @@ export default function CasinoConfigCard() {
       const j = await res.json();
       setEnabled(!!j.enabled);
       setBaseUrl(String(j.casino_api_base_url ?? ''));
+      setPlayerUrl(String(j.casino_player_url ?? ''));
       setHasPassword(!!j.has_password);
       setPassword('');   // limpiamos el input; queda enmascarado
       setMsg({ kind: 'ok', text: 'Configuración guardada.' });
@@ -114,15 +117,29 @@ export default function CasinoConfigCard() {
             : '🟡 Activado sin URL configurada'}
       </div>
 
-      {/* URL del casino */}
+      {/* URL del casino (panel / API admin — la usa el agente, NO el jugador) */}
       <div>
-        <label style={labelStyle}>URL del casino</label>
+        <label style={labelStyle}>URL del casino (panel / API)</label>
         <input
           type="text" value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
           placeholder="https://admin.tucasino.com"
           style={inputStyle}
         />
+      </div>
+
+      {/* URL para jugadores — la que recibe el cliente en sus credenciales */}
+      <div>
+        <label style={labelStyle}>URL para jugadores</label>
+        <input
+          type="text" value={playerUrl}
+          onChange={(e) => setPlayerUrl(e.target.value)}
+          placeholder="https://tucasino.com"
+          style={inputStyle}
+        />
+        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888' }}>
+          La que el jugador recibe en sus credenciales (la pública de juego, distinta de la del panel). Si la dejás vacía, se usa la URL del panel.
+        </p>
       </div>
 
       {/* Token / credenciales (enmascarado) */}

@@ -114,10 +114,16 @@ export async function POST(request: Request) {
   // Aviso de credenciales. Best-effort (no rompe la respuesta 200). El mensaje se
   // guarda SIEMPRE en el chat (no requiere phone); el WhatsApp solo si hay phone.
   try {
-    const { data: urlRow } = await supabaseAdmin
-      .from('settings').select('value')
-      .eq('key', 'casino_api_base_url').eq('tenant_id', session.tenant_id).maybeSingle();
-    const casinoUrl = String(urlRow?.value ?? process.env.CASINO_API_BASE_URL ?? '').trim();
+    // URL que recibe el JUGADOR: priorizamos casino_player_url (la pública de
+    // juego); si no está configurada, caemos a casino_api_base_url y al env, para
+    // no romper tenants que aún no cargaron la URL nueva.
+    const { data: urlRows } = await supabaseAdmin
+      .from('settings').select('key, value')
+      .in('key', ['casino_player_url', 'casino_api_base_url']).eq('tenant_id', session.tenant_id);
+    const byKey = new Map((urlRows ?? []).map((r: any) => [r.key, String(r.value ?? '').trim()]));
+    const casinoUrl = (byKey.get('casino_player_url')
+      || byKey.get('casino_api_base_url')
+      || String(process.env.CASINO_API_BASE_URL ?? '').trim());
     const urlLine = casinoUrl ? `Ingresá en ${casinoUrl} y empezá a jugar 🎲` : '¡Ya podés empezar a jugar! 🎲';
     const msg = `🎰 ¡Tu cuenta fue creada!\nUsuario: ${username}\nContraseña: ${password}\n${urlLine}`;
 
