@@ -219,21 +219,35 @@ button, input, textarea, select {
   /* Top Clientes: cards de resumen apiladas a ancho completo. */
   .leads-cards { grid-template-columns: 1fr !important; }
 
-  /* Top Clientes: fila compacta tipo lista (NO card). Una sola fila por cliente
-     en ≤48px: medalla · nombre · cargas · pagos · chat. Teléfono y estado quedan
-     ocultos (heredado del bloque ≤1024px). Fuentes chicas para que entre todo. */
+  /* Top Clientes: lista DENSA tipo exchange/tabla financiera (NO cards). Cada
+     fila ocupa ~56px en 2 renglones: medalla y chat a los costados (ocupan las
+     dos filas), nombre arriba, cargas/pagos abajo. Teléfono y estado ocultos.
+     Filas contiguas con separador fino, sin sombra ni bordes de card. */
   .leads-header { display: none; }
+  .leads-col-tel, .leads-col-estado { display: none !important; }
+  .leads-table { gap: 2px !important; }
   .leads-row {
-    grid-template-columns: 28px minmax(0, 1fr) auto auto 30px;
-    gap: 8px;
+    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) 32px;
+    grid-template-areas:
+      "pos nombre nombre chat"
+      "pos cargas pagos  chat";
+    column-gap: 8px;
+    row-gap: 2px;
     align-items: center;
-    padding: 6px 10px !important;
-    border-radius: 10px !important;
+    min-height: 56px;
+    padding: 4px 8px !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-bottom: 1px solid #f0f0f0 !important;
   }
-  .leads-c-pos  { font-size: 15px !important; }
-  .leads-c-name { font-size: 12px !important; }
-  .leads-c-cargas p, .leads-c-pagos p { font-size: 11px !important; line-height: 1.15 !important; }
-  .leads-c-cargas p + p, .leads-c-pagos p + p { font-size: 10px !important; margin-top: 1px !important; font-weight: 600 !important; }
+  .leads-c-pos    { grid-area: pos;    align-self: center; justify-self: center; font-size: 15px !important; }
+  .leads-c-name   { grid-area: nombre; align-self: center; font-size: 12px !important; }
+  .leads-c-cargas { grid-area: cargas; align-self: center; }
+  .leads-c-pagos  { grid-area: pagos;  align-self: center; }
+  .leads-c-chat   { grid-area: chat;   align-self: center; justify-self: end; }
+  .leads-c-cargas > p:first-child, .leads-c-pagos > p:first-child { font-size: 13px !important; font-weight: 700 !important; line-height: 1.1 !important; }
+  .leads-c-cargas > p + p, .leads-c-pagos > p + p { font-size: 10px !important; font-weight: 600 !important; margin-top: 0 !important; line-height: 1.1 !important; }
   .leads-c-chat div { width: 28px !important; height: 28px !important; font-size: 14px !important; }
 
   /* Operadores: cada fila se convierte en card vertical con todo apilado
