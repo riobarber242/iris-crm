@@ -33,8 +33,13 @@ async function sendToSubscription(row: { id: string; subscription: any }, payloa
   } catch (err: any) {
     const status = err?.statusCode;
     if (status === 404 || status === 410) {
-      console.log(`[push] Suscripción expirada (${status}) — borrando id=${row.id}`);
-      await supabaseAdmin.from('push_subscriptions').delete().eq('id', row.id);
+      // Borra SOLO ese dispositivo (por endpoint, su clave única; NUNCA por
+      // agent_id, que voltearía todos los dispositivos del operador). Fallback
+      // al id de la fila si la suscripción no trajera endpoint.
+      const ep = row.subscription?.endpoint;
+      console.log(`[push] Suscripción expirada (${status}) — borrando endpoint=${ep ?? `(id ${row.id})`}`);
+      if (ep) await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', ep);
+      else    await supabaseAdmin.from('push_subscriptions').delete().eq('id', row.id);
     } else {
       console.warn(`[push] Error enviando push (id=${row.id}):`, err?.message ?? err);
     }

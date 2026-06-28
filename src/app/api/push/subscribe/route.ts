@@ -16,9 +16,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'subscription es requerida' }, { status: 400 });
     }
 
+    // Una fila por DISPOSITIVO: la clave es el endpoint de la suscripción, no el
+    // agente. Así el celular y el desktop del mismo operador conviven y ninguno
+    // pisa al otro (push multi-dispositivo). Sin endpoint no podemos deduplicar.
+    const endpoint = subscription?.endpoint;
+    if (!endpoint) {
+      return NextResponse.json({ error: 'subscription sin endpoint' }, { status: 400 });
+    }
+
     const { error } = await supabaseAdmin
       .from('push_subscriptions')
-      .upsert({ agent_id: session.sub, subscription }, { onConflict: 'agent_id' });
+      .upsert({ agent_id: session.sub, endpoint, subscription }, { onConflict: 'endpoint' });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
