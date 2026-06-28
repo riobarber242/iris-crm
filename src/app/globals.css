@@ -197,20 +197,41 @@ button, input, textarea, select {
 .leads-dot[data-status='en_proceso']     { background: var(--status-activo); }
 .leads-dot[data-status='bloqueado']      { background: #FF4444; }
 
-/* Detalle expandible de una fila (se renderiza al tocar en mobile): teléfono y
-   estado. Oculto en desktop/tablet (ahí esas columnas ya están en la tabla). */
+/* Detalle expandible de una fila (se renderiza al tocar en mobile): usuario,
+   teléfono y estado. Oculto en desktop/tablet (ahí esas columnas ya están). */
 .leads-row-detail {
-  padding: 4px 10px 10px 24px;
-  font-size: 12px;
-  color: #555;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 8px 12px 10px 24px;
+  background: #f8f8f8;
+  border-bottom: 1px solid #eee;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
-/* El badge de estado dentro del detalle SÍ se muestra (la regla global oculta
-   .leads-col-estado en mobile; acá lo reactivamos con mayor especificidad). */
-.leads-row-detail .leads-col-estado { display: inline-block !important; }
+
+.leads-row-detail .detail-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111;
+}
+
+.leads-row-detail .detail-phone {
+  font-size: 12px;
+  color: #888;
+  letter-spacing: 0.3px;
+}
+
+/* El badge de estado dentro del detalle SÍ se muestra (la regla global lo oculta
+   en mobile; acá lo reactivamos con mayor especificidad) y queda como pill. */
+.leads-row-detail .leads-col-estado {
+  font-size: 10px !important;
+  padding: 3px 8px !important;
+  border-radius: 999px !important;
+  display: inline-block !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.04em !important;
+}
+
 @media (min-width: 640px) {
   .leads-row-detail { display: none; }
 }

@@ -422,8 +422,8 @@ export default function LeadsClient() {
                 {/* Detalle expandible (solo mobile): teléfono y estado. */}
                 {expandedId === c.contact_id && (
                   <div className="leads-row-detail">
-                    <span>{c.casino_username || c.phone}</span>
-                    <span>{c.phone}</span>
+                    <span className="detail-name">{c.casino_username || c.phone}</span>
+                    <span className="detail-phone">{c.phone}</span>
                     <span className="leads-col-estado" style={{ ...st }}>{c.status}</span>
                   </div>
                 )}
