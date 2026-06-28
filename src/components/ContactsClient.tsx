@@ -18,11 +18,11 @@ type ContactRow = {
 type SortDir = 'az' | 'za';
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
-  nuevo:          { bg: '#F0F0F0', fg: '#888' },
-  en_proceso:     { bg: '#fff8d6', fg: '#b8860b' },
-  cliente_activo: { bg: '#C8FF00', fg: '#000' },
-  inactivo:       { bg: '#888',    fg: '#fff' },
-  bloqueado:      { bg: '#FF4444', fg: '#fff' },
+  nuevo:          { bg: 'var(--status-nuevo)',    fg: '#000' },
+  en_proceso:     { bg: '#fff8d6',                fg: '#b8860b' },
+  cliente_activo: { bg: 'var(--status-activo)',   fg: '#000' },
+  inactivo:       { bg: 'var(--status-inactivo)', fg: '#fff' },
+  bloqueado:      { bg: '#FF4444',                fg: '#fff' },
 };
 
 // Ítem del menú desplegable "Acciones".

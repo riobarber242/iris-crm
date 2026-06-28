@@ -396,11 +396,13 @@ export default function ConversationsClient() {
                     </span>
                   )}
                   <span style={{
-                    background: contact.status === 'cliente_activo' ? '#C8FF00'
-                              : contact.status === 'inactivo'        ? '#888'
+                    background: contact.status === 'cliente_activo' ? 'var(--status-activo)'
+                              : contact.status === 'inactivo'        ? 'var(--status-inactivo)'
+                              : contact.status === 'nuevo'           ? 'var(--status-nuevo)'
                               : '#F0F0F0',
                     color: contact.status === 'cliente_activo' ? '#000'
                          : contact.status === 'inactivo'        ? '#fff'
+                         : contact.status === 'nuevo'           ? '#000'
                          : '#888',
                     borderRadius: '999px',
                     padding: '4px 12px',

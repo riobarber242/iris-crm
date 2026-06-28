@@ -22,10 +22,10 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
-  nuevo:          { bg: '#F0F0F0', fg: '#888' },
-  cliente_activo: { bg: '#C8FF00', fg: '#000' },
-  inactivo:       { bg: '#888',    fg: '#fff' },
-  en_proceso:     { bg: '#C8FF00', fg: '#000' },
+  nuevo:          { bg: 'var(--status-nuevo)',    fg: '#000' },
+  cliente_activo: { bg: 'var(--status-activo)',   fg: '#000' },
+  inactivo:       { bg: 'var(--status-inactivo)', fg: '#fff' },
+  en_proceso:     { bg: '#C8FF00',                fg: '#000' },
 };
 
 const BOT_STATE_LABEL: Record<string, string> = {

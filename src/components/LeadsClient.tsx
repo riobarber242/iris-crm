@@ -28,9 +28,9 @@ const PERIODS: { key: Period; label: string }[] = [
 ];
 
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
-  cliente_activo: { background: '#C8FF00', color: '#000' },
-  inactivo:       { background: '#888',    color: '#fff' },
-  nuevo:          { background: '#F0F0F0', color: '#888' },
+  cliente_activo: { background: 'var(--status-activo)',   color: '#000' },
+  inactivo:       { background: 'var(--status-inactivo)', color: '#fff' },
+  nuevo:          { background: 'var(--status-nuevo)',    color: '#000' },
 };
 
 // El layout del ranking (grid de columnas / card apilada según breakpoint) vive
@@ -378,6 +378,8 @@ export default function LeadsClient() {
                   }}>
                     {medal ?? `#${i + 1}`}
                   </span>
+                  {/* Dot de estado: solo visible en mobile (reemplaza la medalla). */}
+                  <span className="leads-dot" data-status={c.status} />
                   <p className="leads-c-name" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.casino_username ? `🎰 ${c.casino_username}` : c.phone}
                   </p>

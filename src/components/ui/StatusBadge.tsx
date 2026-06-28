@@ -3,13 +3,13 @@ type StatusBadgeProps = {
 };
 
 const statusStyles: Record<string, React.CSSProperties> = {
-  nuevo:      { background: '#F0F0F0', color: '#888' },
-  en_proceso: { background: '#C8FF00', color: '#000' },
-  activo:     { background: '#C8FF00', color: '#000' },
-  bloqueado:  { background: '#FFE5E5', color: '#CC3333' },
-  pendiente:  { background: '#FFF8DC', color: '#886600' },
-  verificado: { background: '#C8FF00', color: '#000' },
-  rechazado:  { background: '#FFE5E5', color: '#CC3333' },
+  nuevo:      { background: 'var(--status-nuevo)',  color: '#000' },
+  en_proceso: { background: '#C8FF00',              color: '#000' },
+  activo:     { background: 'var(--status-activo)', color: '#000' },
+  bloqueado:  { background: '#FFE5E5',              color: '#CC3333' },
+  pendiente:  { background: '#FFF8DC',              color: '#886600' },
+  verificado: { background: '#C8FF00',              color: '#000' },
+  rechazado:  { background: '#FFE5E5',              color: '#CC3333' },
 };
 
 const statusLabels: Record<string, string> = {
