@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'file requerido' }, { status: 400 });
 
-    const room = await resolveRoom(session.tenant_id, roomId);
+    const room = await resolveRoom(session.tenant_id, roomId, session.sub);
     if (!room) return NextResponse.json({ error: 'Sala no encontrada' }, { status: 404 });
 
     const ext = (file.type.split('/')[1] ?? 'jpg').replace('jpeg', 'jpg');

@@ -1,12 +1,6 @@
 import { supabaseAdmin } from './db';
 import { logActivity, ACTIVITY } from './activity-log';
-import { postInternalSystemMessage } from './internal-chat';
 import type { SessionPayload } from './session';
-
-// Formato de monto para los avisos del chat interno (es-AR, sin decimales).
-function fmtMonto(n: number): string {
-  return Math.trunc(Number(n) || 0).toLocaleString('es-AR');
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Caja de fichas y billeteras por operador (Etapa 2: lógica, sin enganchar).
@@ -307,8 +301,6 @@ export async function aplicarCargaComprobante(
           stock_actual: res.stock_actual, saldo_actual: res.saldo_actual,
         },
       });
-      const bonoTxt = bono > 0 ? ` (+${fmtMonto(bono)} bono)` : '';
-      await postInternalSystemMessage(session, `🟢 Carga de ${session.name}: $${fmtMonto(monto)}${bonoTxt}`);
       return { ok: true, applied: true };
     } catch (err: any) {
       if (isMissingCajaError(err)) return { ok: true, applied: false };
@@ -324,9 +316,6 @@ export async function aplicarCargaComprobante(
     comprobanteId: p.comprobanteId,
   });
   if (r.ok) {
-    // Aviso al chat interno (solo registro, sin botones).
-    const bonoTxt = p.bono && p.bono > 0 ? ` (+${fmtMonto(p.bono)} bono)` : '';
-    await postInternalSystemMessage(session, `🟢 Carga de ${session.name}: $${fmtMonto(monto)}${bonoTxt}`);
     return { ok: true, applied: true };
   }
   if (r.degraded) return { ok: true, applied: false };
@@ -607,26 +596,17 @@ export async function setBilletera(session: SessionPayload, operadorId: string, 
     });
 
     // Si el saldo cambió, dejar rastro en el ledger (movimiento 'ajuste' con
-    // billetera_delta = nuevo - anterior, para que el saldo corriendo cierre) y
-    // avisar al chat interno. Ambos best-effort: el override ya quedó hecho, así
-    // que un fallo acá (p. ej. migración -5 sin correr) no lo revierte.
+    // billetera_delta = nuevo - anterior, para que el saldo corriendo cierre).
+    // Best-effort: el override ya quedó hecho, así que un fallo acá (p. ej.
+    // migración -5 sin correr) no lo revierte.
     const delta = v - anterior;
     if (delta !== 0) {
-      const { data: op } = await supabaseAdmin
-        .from('agents').select('name').eq('id', operadorId).eq('tenant_id', tid).maybeSingle();
-      const opName = op?.name ?? 'operador';
-
       const { error: movErr } = await supabaseAdmin.from('movimientos').insert({
         tenant_id: tid, operador_id: operadorId, tipo: 'ajuste', monto: v, bono: null,
         fichas_delta: 0, billetera_delta: delta, comprobante_id: null, contraparte_id: null,
         creado_por: session.sub, creado_por_name: session.name,
       });
       if (movErr) console.warn('[setBilletera] no se pudo registrar el movimiento de ajuste:', movErr.message);
-
-      await postInternalSystemMessage(
-        session,
-        `💰 ${session.name} ajustó la billetera de ${opName}: $${fmtMonto(anterior)} → $${fmtMonto(v)}`,
-      );
     }
     return { ok: true, saldo: v };
   } catch (err: any) {
@@ -685,12 +665,11 @@ export async function traspasarEntreOperadores(
   if (!Number.isFinite(monto) || monto <= 0) return { ok: false, error: 'Ingresá un monto válido (mayor a 0)' };
 
   // Ambas billeteras deben ser de agents del MISMO tenant (defensa además del
-  // scope por p_tenant en la RPC). Trae los nombres para el aviso del chat.
+  // scope por p_tenant en la RPC).
   const { data: ops, error: opsErr } = await supabaseAdmin
-    .from('agents').select('id, name').eq('tenant_id', session.tenant_id).in('id', [origenId, destinoId]);
+    .from('agents').select('id').eq('tenant_id', session.tenant_id).in('id', [origenId, destinoId]);
   if (opsErr) return { ok: false, error: opsErr.message };
   if (!ops || ops.length !== 2) return { ok: false, error: 'Operador de origen o destino inválido' };
-  const nameById = new Map((ops as any[]).map((a) => [a.id, a.name]));
 
   try {
     const { data, error } = await supabaseAdmin.rpc('fn_traspaso_directo', {
@@ -716,13 +695,6 @@ export async function traspasarEntreOperadores(
         saldo_origen: res.saldo_origen, saldo_destino: res.saldo_destino,
       },
     });
-
-    const origenName  = nameById.get(origenId)  ?? 'operador';
-    const destinoName = nameById.get(destinoId) ?? 'operador';
-    await postInternalSystemMessage(
-      session,
-      `🔄 ${session.name} traspasó $${fmtMonto(monto)} de ${origenName} a ${destinoName}`,
-    );
 
     return { ok: true, saldoOrigen: Number(res.saldo_origen), saldoDestino: Number(res.saldo_destino) };
   } catch (err: any) {

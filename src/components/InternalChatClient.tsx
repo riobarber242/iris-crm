@@ -66,6 +66,12 @@ const actionItem: React.CSSProperties = {
   textAlign: 'left', cursor: 'pointer', fontSize: '14px', color: '#333',
 };
 
+const badgeStyle: React.CSSProperties = {
+  background: '#FF8C00', color: '#fff', borderRadius: '999px',
+  fontSize: '11px', fontWeight: 800, minWidth: '20px', height: '20px',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px', flexShrink: 0,
+};
+
 type MediaContent = { _type: 'image' | 'audio'; url: string; caption?: string };
 
 function parseMedia(raw: string): MediaContent | null {
@@ -90,6 +96,16 @@ function parseTraspaso(raw: string): TraspasoContent | null {
 function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+// Contraparte para el chat privado 1 a 1 (de /api/internal/members).
+type Member = {
+  id: string;
+  name: string | null;
+  role: string;
+  avatar_url: string | null;
+  dm_room_id: string | null;
+  unread?: number;
+};
 
 // Reemplaza el mensaje optimista `temp` por el guardado y deduplica por id.
 function reconcileSent(list: Message[], temp: Message, saved: Message | null): Message[] {
@@ -133,7 +149,12 @@ export default function InternalChatClient() {
   const [loadError, setLoadError] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const [unread, setUnread] = useState(0);
+
+  // Selector de conversaciones: sala grupal + DMs 1 a 1 con miembros.
+  const [groupRoomId,    setGroupRoomId]    = useState<string | null>(null);
+  const [members,        setMembers]        = useState<Member[]>([]);
+  const [activeMemberId, setActiveMemberId] = useState<string | null>(null); // null = grupo
+  const [roomUnreads,    setRoomUnreads]    = useState<Record<string, number>>({});
 
   // Image state
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -193,10 +214,49 @@ export default function InternalChatClient() {
     fetchWithTimeout('/api/internal/room')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.id) { setRoomId(d.id); if (d.name) setRoomName(d.name); }
+        if (d?.id) { setRoomId(d.id); setGroupRoomId(d.id); if (d.name) setRoomName(d.name); }
         else setRoomError(true);
       })
       .catch(() => setRoomError(true));
+  }, []);
+
+  // Miembros (para DMs) + no-leídos por sala (para los badges del selector).
+  // Refresca por poll y cuando alguna sala se marca como leída.
+  const fetchMembers = useCallback(async () => {
+    try {
+      const [mRes, uRes] = await Promise.all([
+        fetch('/api/internal/members'),
+        fetch('/api/internal/unread'),
+      ]);
+      if (mRes.ok) setMembers(await mRes.json());
+      if (uRes.ok) { const u = await uRes.json(); setRoomUnreads(u?.byRoom ?? {}); }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchMembers();
+    const poll = setInterval(fetchMembers, 10_000);
+    window.addEventListener('refresh-internal-unread', fetchMembers);
+    return () => { clearInterval(poll); window.removeEventListener('refresh-internal-unread', fetchMembers); };
+  }, [fetchMembers]);
+
+  // Abrir la sala grupal.
+  const openGroup = useCallback(() => {
+    setActiveMemberId(null);
+    setMessages([]);
+    if (groupRoomId) setRoomId(groupRoomId);
+  }, [groupRoomId]);
+
+  // Abrir (o crear) el DM 1 a 1 con un miembro.
+  const openDm = useCallback(async (member: Member) => {
+    setActiveMemberId(member.id);
+    setMessages([]);
+    try {
+      const res = await fetch(`/api/internal/room?dm=${encodeURIComponent(member.id)}`);
+      if (!res.ok) { setRoomError(true); return; }
+      const room = await res.json();
+      if (room?.id) { setRoomId(room.id); setRoomError(false); }
+    } catch { setRoomError(true); }
   }, []);
 
   const fetchMessages = useCallback(async () => {
@@ -224,7 +284,6 @@ export default function InternalChatClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId }),
       });
-      setUnread(0);
       window.dispatchEvent(new Event('refresh-internal-unread'));
     } catch {}
   }, [roomId]);
@@ -558,15 +617,28 @@ export default function InternalChatClient() {
     );
   }
 
+  const activeMember = members.find((m) => m.id === activeMemberId) ?? null;
+  const isGroup = activeMemberId === null;
+  // Badge del grupo: sus no-leídos salvo cuando es la sala activa (ya leída).
+  const groupUnread = isGroup ? 0 : (groupRoomId ? (roomUnreads[groupRoomId] ?? 0) : 0);
+  function memberUnread(m: Member): number {
+    if (m.id === activeMemberId) return 0; // activa → leída
+    return m.dm_room_id ? (roomUnreads[m.dm_room_id] ?? m.unread ?? 0) : (m.unread ?? 0);
+  }
+
   return (
     <div className="internal-chat" style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
-      {/* ── Columna izquierda: lista de salas (Etapa 1: una sola) ── */}
-      <aside className="internal-rooms" style={{ width: '280px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div
+      {/* ── Columna izquierda: selector de conversaciones (grupo + DMs) ── */}
+      <aside className="internal-rooms" style={{ width: '280px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
+        {/* Sala grupal */}
+        <button
+          type="button"
+          onClick={openGroup}
           style={{
+            textAlign: 'left', cursor: 'pointer', border: 'none', width: '100%',
             background: '#FFFFFF', borderRadius: '16px', padding: '16px 18px',
-            boxShadow: '0 1px 8px rgba(0,0,0,0.06), inset 3px 0 0 #C8FF00',
+            boxShadow: isGroup ? '0 1px 8px rgba(0,0,0,0.06), inset 3px 0 0 #C8FF00' : '0 1px 8px rgba(0,0,0,0.06)',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
           }}
         >
@@ -576,20 +648,68 @@ export default function InternalChatClient() {
             </p>
             <p style={{ fontSize: '12px', color: '#999', margin: '2px 0 0 0' }}>Equipo del tenant · interno</p>
           </div>
-          {unread > 0 && (
-            <span style={{
-              background: '#FF8C00', color: '#fff', borderRadius: '999px',
-              fontSize: '11px', fontWeight: 800, minWidth: '20px', height: '20px',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 6px',
-            }}>
-              {unread > 99 ? '99+' : unread}
-            </span>
+          {groupUnread > 0 && (
+            <span style={badgeStyle}>{groupUnread > 99 ? '99+' : groupUnread}</span>
           )}
-        </div>
+        </button>
+
+        {/* DMs 1 a 1 */}
+        {members.length > 0 && (
+          <p style={{ fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '6px 4px 0 4px' }}>
+            Mensajes directos
+          </p>
+        )}
+        {members.map((m) => {
+          const active = m.id === activeMemberId;
+          const n = memberUnread(m);
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => openDm(m)}
+              style={{
+                textAlign: 'left', cursor: 'pointer', border: 'none', width: '100%',
+                background: '#FFFFFF', borderRadius: '14px', padding: '12px 14px',
+                boxShadow: active ? '0 1px 8px rgba(0,0,0,0.06), inset 3px 0 0 #C8FF00' : '0 1px 8px rgba(0,0,0,0.06)',
+                display: 'flex', alignItems: 'center', gap: '10px',
+              }}
+            >
+              <Avatar url={m.avatar_url} name={m.name ?? ''} size={34} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ fontSize: '14px', fontWeight: 700, color: '#000', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {m.name || 'Sin nombre'}
+                </p>
+                <p style={{ fontSize: '11px', color: '#999', margin: '1px 0 0 0' }}>{ROLE_LABEL[m.role] ?? m.role}</p>
+              </div>
+              {n > 0 && <span style={badgeStyle}>{n > 99 ? '99+' : n}</span>}
+            </button>
+          );
+        })}
       </aside>
 
       {/* ── Columna derecha: chat (flex column de alto completo) ── */}
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, background: '#FFFFFF', borderRadius: '20px', padding: '20px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column' }}>
+
+        {/* Header de la conversación activa (grupo o DM). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '14px', marginBottom: '14px', borderBottom: '1px solid #f0f0f0' }}>
+          {isGroup ? (
+            <>
+              <span style={{ fontSize: '20px' }}>👥</span>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: 0 }}>{roomName}</p>
+                <p style={{ fontSize: '11px', color: '#999', margin: 0 }}>Sala del equipo · interno</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <Avatar url={activeMember?.avatar_url ?? null} name={activeMember?.name ?? ''} size={34} />
+              <div style={{ minWidth: 0 }}>
+                <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: 0 }}>{activeMember?.name || 'Mensaje directo'}</p>
+                <p style={{ fontSize: '11px', color: '#999', margin: 0 }}>Chat privado · {ROLE_LABEL[activeMember?.role ?? ''] ?? activeMember?.role ?? ''}</p>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Message list (scroller externo) + contenido observado por el RO.
             flex:1 + minHeight:0 → único que scrollea; la caja queda fija abajo. */}

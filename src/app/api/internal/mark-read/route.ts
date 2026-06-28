@@ -10,7 +10,7 @@ export async function POST(request: Request) {
   if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 
   const body = await request.json().catch(() => ({} as any));
-  const room = await resolveRoom(session.tenant_id, body?.roomId ?? null);
+  const room = await resolveRoom(session.tenant_id, body?.roomId ?? null, session.sub);
   if (!room) return new NextResponse('Sala no encontrada', { status: 404 });
 
   const { error } = await supabaseAdmin

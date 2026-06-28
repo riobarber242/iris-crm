@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 
   const url = new URL(request.url);
-  const room = await resolveRoom(session.tenant_id, url.searchParams.get('roomId'));
+  const room = await resolveRoom(session.tenant_id, url.searchParams.get('roomId'), session.sub);
   if (!room) return new NextResponse('Sala no encontrada', { status: 404 });
 
   const { data, error } = await supabaseAdmin
@@ -92,7 +92,7 @@ export async function POST(request: Request) {
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) return new NextResponse('Falta content', { status: 400 });
 
-  const room = await resolveRoom(session.tenant_id, body.roomId ?? null);
+  const room = await resolveRoom(session.tenant_id, body.roomId ?? null, session.sub);
   if (!room) return new NextResponse('Sala no encontrada', { status: 404 });
 
   const { data: saved, error } = await supabaseAdmin
