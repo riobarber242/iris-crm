@@ -197,6 +197,24 @@ button, input, textarea, select {
 .leads-dot[data-status='en_proceso']     { background: var(--status-activo); }
 .leads-dot[data-status='bloqueado']      { background: #FF4444; }
 
+/* Detalle expandible de una fila (se renderiza al tocar en mobile): teléfono y
+   estado. Oculto en desktop/tablet (ahí esas columnas ya están en la tabla). */
+.leads-row-detail {
+  padding: 4px 10px 10px 24px;
+  font-size: 12px;
+  color: #555;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* El badge de estado dentro del detalle SÍ se muestra (la regla global oculta
+   .leads-col-estado en mobile; acá lo reactivamos con mayor especificidad). */
+.leads-row-detail .leads-col-estado { display: inline-block !important; }
+@media (min-width: 640px) {
+  .leads-row-detail { display: none; }
+}
+
 /* Tablet (≤1024px): posición | nombre | cargas | pagos | chat (sin tel/estado).
    El hide va con !important: el badge de estado tiene display:inline-block inline
    y si no, gana el inline y rompe el grid (mete una celda extra). */
@@ -268,7 +286,6 @@ button, input, textarea, select {
    ════════════════════════════════════════════════════════════════════════════ */
 @media (max-width: 639px) {
   .leads-cards { grid-template-columns: 1fr !important; }
-  .leads-header { display: none !important; }
   .leads-col-tel, .leads-col-estado { display: none !important; }
   .leads-c-pos { display: none !important; }   /* en mobile va el dot, no la medalla */
   .leads-table { gap: 0 !important; }
@@ -287,6 +304,22 @@ button, input, textarea, select {
     border: none !important;
     border-bottom: 1px solid #f0f0f0 !important;
   }
+
+  /* Header visible y con EXACTAMENTE las mismas columnas que las filas, para que
+     USUARIO / CARGAS / PAGOS queden alineados con los valores. Auto-flow (sin
+     areas) porque el header no usa las clases de celda; compacto (alto auto). */
+  .leads-header {
+    display: grid !important;
+    grid-template-columns: 12px 1fr 90px 80px 32px !important;
+    grid-template-areas: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    column-gap: 8px !important;
+    padding: 4px 10px !important;
+    border-bottom: 1px solid #f0f0f0 !important;
+  }
+  /* CARGAS (5º hijo) y PAGOS (6º) alineados a la derecha sobre sus valores. */
+  .leads-header span:nth-child(5), .leads-header span:nth-child(6) { text-align: right !important; }
 
   .leads-dot      { display: block !important; grid-area: dot !important; align-self: center !important; }
   .leads-c-name   { grid-area: nombre !important; align-self: center !important; min-width: 0 !important; font-size: 13px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }

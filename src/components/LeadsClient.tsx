@@ -74,6 +74,8 @@ export default function LeadsClient() {
   const [clients,   setClients]    = useState<TopClient[]>([]);
   const [loading,   setLoading]    = useState(true);
   const [error,     setError]      = useState(false);
+  // Fila expandida en mobile (toca para ver teléfono/estado). null = ninguna.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // Panel de filtros colapsable (mismo patrón que Conversaciones).
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -364,12 +366,18 @@ export default function LeadsClient() {
               const medal  = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : null;
               const isTop1 = i === 0;
               return (
-                <div key={c.contact_id} className="leads-row" style={{
-                  background: isTop1 ? '#fff6da' : '#fff',
-                  borderRadius: '14px', padding: '12px 14px',
-                  boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
-                  border: isTop1 ? '1px solid #f0c040' : '1px solid #f0f0f0',
-                }}>
+                <React.Fragment key={c.contact_id}>
+                <div
+                  className="leads-row"
+                  onClick={() => setExpandedId(expandedId === c.contact_id ? null : c.contact_id)}
+                  style={{
+                    cursor: 'pointer',
+                    background: isTop1 ? '#fff6da' : '#fff',
+                    borderRadius: '14px', padding: '12px 14px',
+                    boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
+                    border: isTop1 ? '1px solid #f0c040' : '1px solid #f0f0f0',
+                  }}
+                >
                   <span className="leads-c-pos" style={{
                     fontSize: medal ? '20px' : '14px',
                     fontWeight: 900,
@@ -405,12 +413,21 @@ export default function LeadsClient() {
                       {c.pagos_total} {c.pagos_total === 1 ? 'pago' : 'pagos'}
                     </p>
                   </div>
-                  <Link className="leads-c-chat" href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
+                  <Link className="leads-c-chat" onClick={(e) => e.stopPropagation()} href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', cursor: 'pointer' }} title="Ir a conversación">
                       💬
                     </div>
                   </Link>
                 </div>
+                {/* Detalle expandible (solo mobile): teléfono y estado. */}
+                {expandedId === c.contact_id && (
+                  <div className="leads-row-detail">
+                    <span>{c.casino_username || c.phone}</span>
+                    <span>{c.phone}</span>
+                    <span className="leads-col-estado" style={{ ...st }}>{c.status}</span>
+                  </div>
+                )}
+                </React.Fragment>
               );
             })}
           </div>
