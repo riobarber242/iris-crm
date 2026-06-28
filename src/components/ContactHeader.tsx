@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './AuthProvider';
 import CasinoCreateUserModal from './CasinoCreateUserModal';
 
@@ -78,6 +78,10 @@ export default function ContactHeader({
   const [notes,         setNotes]         = useState(initialNotes ?? '');
   const [notesEditing,  setNotesEditing]  = useState(false);
   const [notesSaving,   setNotesSaving]   = useState(false);
+  // Panel flotante de notas + toast de "nota nueva".
+  const [notesOpen,     setNotesOpen]     = useState(false);
+  const [toastNote,     setToastNote]     = useState<string | null>(null);
+  const notesRef = useRef<HTMLDivElement>(null);
   const [botState,      setBotState]      = useState(conversationState ?? null);
   const [resetLoading,  setResetLoading]  = useState(false);
   const [provincia,     setProvincia]     = useState(initialProvincia ?? '');
@@ -102,6 +106,33 @@ export default function ContactHeader({
       .then((d: AgentOption[]) => setAgents(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, [isAdmin]);
+
+  // Cerrar el panel de notas al clickear afuera.
+  useEffect(() => {
+    if (!notesOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (notesRef.current && !notesRef.current.contains(e.target as Node)) setNotesOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [notesOpen]);
+
+  // Toast de nota nueva: escucha el evento custom y muestra el toast flotante.
+  useEffect(() => {
+    function onNotaNueva(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      setToastNote(typeof detail === 'string' ? detail : '');
+    }
+    window.addEventListener('iris:nota-nueva', onNotaNueva as EventListener);
+    return () => window.removeEventListener('iris:nota-nueva', onNotaNueva as EventListener);
+  }, []);
+
+  // Auto-cierre del toast a los 8 s.
+  useEffect(() => {
+    if (toastNote === null) return;
+    const t = setTimeout(() => setToastNote(null), 8000);
+    return () => clearTimeout(t);
+  }, [toastNote]);
 
   async function saveAssignedAgent(value: string) {
     setAssignedAgent(value);
@@ -187,12 +218,19 @@ export default function ContactHeader({
   async function saveNotes() {
     setNotesSaving(true);
     try {
-      await fetch('/api/conversations', {
+      const res = await fetch('/api/conversations', {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ contactId, notes }),
       });
-      setNotesEditing(false);
+      if (res.ok) {
+        setNotesEditing(false);
+        setNotesOpen(false);
+        // Aviso global: dispara el toast de nota nueva (si hay contenido).
+        if (notes.trim()) {
+          window.dispatchEvent(new CustomEvent('iris:nota-nueva', { detail: notes.trim() }));
+        }
+      }
     } catch {}
     setNotesSaving(false);
   }
@@ -268,7 +306,81 @@ export default function ContactHeader({
           ))}
         </select>
 
-        {/* Toggle expandir/contraer (se oculta en desktop vía CSS: ahí va todo expandido) */}
+        {/* Notas: botón 📝 + panel flotante (anclado a este wrapper relativo). */}
+        <div ref={notesRef} style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={() => setNotesOpen((v) => !v)}
+            title="Notas internas"
+            aria-label="Notas internas"
+            style={{
+              background: notesOpen ? '#E8FFB0' : '#F0F0F0', color: '#555', border: 'none',
+              borderRadius: '8px', width: '28px', height: '28px', display: 'inline-flex',
+              alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '14px', flexShrink: 0,
+            }}
+          >
+            📝
+          </button>
+
+          {notesOpen && (
+            <div className="notes-panel">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <p style={{ fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+                  Notas internas
+                </p>
+                <button onClick={() => setNotesOpen(false)} aria-label="Cerrar" style={{
+                  background: 'transparent', color: '#999', border: 'none', cursor: 'pointer',
+                  fontSize: '14px', fontWeight: 700, lineHeight: 1, padding: '2px 4px',
+                }}>✕</button>
+              </div>
+
+              {notesEditing ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    rows={4}
+                    placeholder="Notas sobre este contacto (solo visibles para operadores)..."
+                    autoFocus
+                    style={{
+                      width: '100%', background: '#F5F5F5', border: 'none', borderRadius: '10px',
+                      padding: '10px 12px', fontSize: '13px', color: '#000', outline: 'none',
+                      resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box',
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={saveNotes} disabled={notesSaving} style={{
+                      background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px',
+                      border: 'none', borderRadius: '8px', padding: '6px 14px',
+                      cursor: notesSaving ? 'not-allowed' : 'pointer', opacity: notesSaving ? 0.6 : 1,
+                    }}>
+                      {notesSaving ? 'Guardando...' : 'Guardar'}
+                    </button>
+                    <button onClick={() => { setNotesEditing(false); setNotes(initialNotes ?? ''); }} style={{
+                      background: '#F0F0F0', color: '#666', fontWeight: 600, fontSize: '12px',
+                      border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer',
+                    }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <p style={{ fontSize: '13px', color: notes ? '#333' : '#ccc', margin: 0, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                    {notes || 'Sin notas. Hacé clic en Editar para agregar.'}
+                  </p>
+                  <button onClick={() => setNotesEditing(true)} style={{
+                    alignSelf: 'flex-start', background: 'transparent', color: '#888', fontSize: '11px', fontWeight: 700,
+                    border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer',
+                  }}>
+                    ✏ Editar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Toggle expandir/contraer (visible en todos los tamaños). */}
         <button
           className="ch-toggle"
           onClick={() => setExpanded((v) => !v)}
@@ -454,65 +566,6 @@ export default function ContactHeader({
             </div>
           )}
         </div>
-
-      {/* ── Notas internas ── */}
-      <div style={{
-        background: '#FFFFFF', borderRadius: '14px', padding: '14px 18px',
-        boxShadow: '0 1px 8px rgba(0,0,0,0.05)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <p style={{ fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
-            Notas internas
-          </p>
-          {!notesEditing && (
-            <button onClick={() => setNotesEditing(true)} style={{
-              background: 'transparent', color: '#888', fontSize: '11px', fontWeight: 700,
-              border: '1px solid #e0e0e0', borderRadius: '6px', padding: '2px 8px', cursor: 'pointer',
-            }}>
-              ✏ Editar
-            </button>
-          )}
-        </div>
-
-        {notesEditing ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Notas sobre este contacto (solo visibles para operadores)..."
-              autoFocus
-              style={{
-                width: '100%', background: '#F5F5F5', border: 'none', borderRadius: '10px',
-                padding: '10px 14px', fontSize: '13px', color: '#000', outline: 'none',
-                resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box',
-              }}
-            />
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={saveNotes} disabled={notesSaving} style={{
-                background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px',
-                border: 'none', borderRadius: '8px', padding: '6px 14px', cursor: notesSaving ? 'not-allowed' : 'pointer',
-                opacity: notesSaving ? 0.6 : 1,
-              }}>
-                {notesSaving ? 'Guardando...' : 'Guardar'}
-              </button>
-              <button onClick={() => { setNotesEditing(false); setNotes(initialNotes ?? ''); }} style={{
-                background: '#F0F0F0', color: '#666', fontWeight: 600, fontSize: '12px',
-                border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer',
-              }}>
-                Cancelar
-              </button>
-            </div>
-          </div>
-        ) : (
-          <p style={{
-            fontSize: '13px', color: notes ? '#333' : '#ccc', margin: 0,
-            lineHeight: 1.6, whiteSpace: 'pre-wrap',
-          }}>
-            {notes || 'Sin notas. Hacé clic en Editar para agregar.'}
-          </p>
-        )}
-      </div>
       </div>
 
       {/* ── Modal: crear usuario en el casino (componente compartido) ── */}
@@ -523,6 +576,20 @@ export default function ContactHeader({
           onClose={() => setCreateOpen(false)}
           onCreated={(u) => { setCasinoUser(u); setCreateOpen(false); }}
         />
+      )}
+
+      {/* ── Toast de nota nueva (fixed; se cierra solo a los 8 s o con la X) ── */}
+      {toastNote !== null && (
+        <div className="iris-toast" role="status">
+          <span style={{ fontSize: '16px', flexShrink: 0 }}>📝</span>
+          <span style={{ fontSize: '13px', lineHeight: 1.4, flex: 1, overflow: 'hidden', maxHeight: '4.2em' }}>
+            {toastNote || 'Nota guardada'}
+          </span>
+          <button onClick={() => setToastNote(null)} aria-label="Cerrar" style={{
+            background: 'transparent', color: '#aaa', border: 'none', cursor: 'pointer',
+            fontSize: '14px', fontWeight: 700, lineHeight: 1, padding: '2px 4px', flexShrink: 0,
+          }}>✕</button>
+        </div>
       )}
 
     </div>

@@ -478,14 +478,48 @@ button, input, textarea, select {
   .c-phone::before { content: '·'; margin-right: 6px; color: #ccc; }
 }
 
-/* ── ContactHeader: en desktop va SIEMPRE expandido ───────────────────────────
-   El header es colapsable (mobile) vía estado React (max-height inline). En
-   desktop forzamos el contenido visible y ocultamos el chevron, sin tocar el
-   estado. !important para ganarle al max-height inline. */
+/* ── ContactHeader: en TODOS los tamaños el header es una sola fila compacta ───
+   T5: en desktop el bloque expandible también arranca colapsado (antes iba
+   siempre abierto) y el chevron se muestra siempre. Así el header ocupa una
+   fila y el chat gana alto. !important para ganarle al max-height inline. */
 @media (min-width: 768px) {
   .ch-expandable {
-    max-height: none !important;
-    overflow: visible !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
   }
-  .ch-toggle { display: none !important; }
+  .ch-toggle { display: flex !important; }
+}
+
+/* Panel flotante de notas (anclado al botón 📝 del header). */
+.notes-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  z-index: 50;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  border: 1px solid #eee;
+  padding: 14px 16px;
+}
+
+/* Toast flotante de "nota nueva". */
+.iris-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 12px;
+  padding: 12px 20px;
+  max-width: 320px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
