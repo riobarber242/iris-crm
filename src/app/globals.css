@@ -170,6 +170,23 @@ button, input, textarea, select {
   height: calc(100dvh - 128px);
 }
 
+/* ── Top Clientes: ranking responsive ──────────────────────────────────────
+   Desktop (>1024px): 7 columnas completas (posición · usuario · teléfono ·
+   estado · cargas · pagos · chat). El layout vive acá (no inline) para poder
+   reflowar por breakpoint sin pelear con estilos inline. */
+.leads-row {
+  display: grid;
+  grid-template-columns: 46px 1fr 1fr 90px 120px 120px 36px;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Tablet (≤1024px): posición | nombre | cargas | pagos | chat (sin tel/estado). */
+@media (max-width: 1024px) {
+  .leads-row { grid-template-columns: 46px minmax(0, 1fr) 110px 110px 36px; }
+  .leads-col-tel, .leads-col-estado { display: none; }
+}
+
 /* Celular. */
 @media (max-width: 768px) {
   .app-header { padding: 0 16px !important; min-width: 0 !important; overflow: hidden !important; }
@@ -202,11 +219,24 @@ button, input, textarea, select {
   /* Top Clientes: cards de resumen apiladas a ancho completo. */
   .leads-cards { grid-template-columns: 1fr !important; }
 
-  /* Top Clientes: ranking compacto — # / Usuario / Cargas (+ botón de chat).
-     Teléfono, Estado y Pagos se ocultan; siguen visibles en desktop. */
-  .leads-table { min-width: 0 !important; }
-  .leads-row   { grid-template-columns: 40px minmax(0, 1fr) auto 32px !important; gap: 8px !important; }
-  .leads-col-tel, .leads-col-estado, .leads-col-pagos { display: none !important; }
+  /* Top Clientes: cada fila es una CARD apilada (sin columnas). Se muestran
+     posición + nombre arriba, cargas y pagos abajo, y el botón de chat. El
+     teléfono y el estado siguen ocultos (heredado del bloque ≤1024px). */
+  .leads-header { display: none; }
+  .leads-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "pos    chat"
+      "name   name"
+      "cargas pagos";
+    gap: 6px 12px;
+    align-items: start;
+  }
+  .leads-c-pos    { grid-area: pos;    justify-self: start; }
+  .leads-c-chat   { grid-area: chat;   justify-self: end; }
+  .leads-c-name   { grid-area: name; }
+  .leads-c-cargas { grid-area: cargas; }
+  .leads-c-pagos  { grid-area: pagos; }
 
   /* Operadores: cada fila se convierte en card vertical con todo apilado
      (usuario, nombre, email, rol, horario, estado y acciones abajo). */

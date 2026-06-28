@@ -33,7 +33,11 @@ const STATUS_STYLE: Record<string, React.CSSProperties> = {
   nuevo:          { background: '#F0F0F0', color: '#888' },
 };
 
-const GRID = '46px 1fr 1fr 90px 120px 120px 36px';
+// El layout del ranking (grid de columnas / card apilada según breakpoint) vive
+// en globals.css: .leads-row + clases de celda (.leads-c-*, .leads-col-*).
+//   Desktop >1024px : 7 columnas completas.
+//   Tablet 640–1024 : posición | nombre | cargas | pagos | chat.
+//   Mobile <640px   : card apilada (grid-areas), sin columnas.
 
 // Rango [from, to] en ISO para un período relativo. `custom` se maneja aparte.
 function rangeFor(period: Exclude<Period, 'custom'>): { from: string; to: string } {
@@ -340,18 +344,18 @@ export default function LeadsClient() {
                 : `Ningún cliente supera $${minAmount.toLocaleString('es-AR')} en este período.`}
           </p>
         ) : (
-          /* En mobile (≤640px) se ocultan Teléfono/Estado/Pagos vía CSS y
-             quedan # / Usuario / Cargas. Desktop renderiza la tabla completa. */
+          /* Layout responsive en globals.css (.leads-row + clases de celda):
+             desktop 7 cols · tablet 5 cols (sin tel/estado) · mobile card. */
           <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-          <div className="leads-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '640px' }}>
-            {/* Header */}
-            <div className="leads-row" style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <div className="leads-table" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {/* Header (oculto en mobile, donde cada fila es una card) */}
+            <div className="leads-row leads-header" style={{ padding: '6px 14px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <span>#</span>
               <span>Usuario</span>
               <span className="leads-col-tel">Teléfono</span>
               <span className="leads-col-estado">Estado</span>
               <span>Cargas</span>
-              <span className="leads-col-pagos">Pagos</span>
+              <span>Pagos</span>
               <span />
             </div>
 
@@ -361,13 +365,12 @@ export default function LeadsClient() {
               const isTop1 = i === 0;
               return (
                 <div key={c.contact_id} className="leads-row" style={{
-                  display: 'grid', gridTemplateColumns: GRID, gap: '12px', alignItems: 'center',
                   background: isTop1 ? '#fff6da' : '#fff',
                   borderRadius: '14px', padding: '12px 14px',
                   boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
                   border: isTop1 ? '1px solid #f0c040' : '1px solid #f0f0f0',
                 }}>
-                  <span style={{
+                  <span className="leads-c-pos" style={{
                     fontSize: medal ? '20px' : '14px',
                     fontWeight: 900,
                     color: i < 3 ? '#b8860b' : '#bbb',
@@ -375,15 +378,15 @@ export default function LeadsClient() {
                   }}>
                     {medal ?? `#${i + 1}`}
                   </span>
-                  <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <p className="leads-c-name" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {c.casino_username ? `🎰 ${c.casino_username}` : c.phone}
                   </p>
                   <p className="leads-col-tel" style={{ margin: 0, fontSize: '13px', color: '#888' }}>{c.phone}</p>
                   <span className="leads-col-estado" style={{ ...st, fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', borderRadius: '999px', padding: '3px 10px', display: 'inline-block', textAlign: 'center' }}>
                     {c.status}
                   </span>
-                  {/* Cargas: métrica principal del ranking (siempre visible). */}
-                  <div>
+                  {/* Cargas: métrica principal del ranking. */}
+                  <div className="leads-c-cargas">
                     <p style={{ margin: 0, fontSize: '15px', fontWeight: 900, color: '#000' }}>
                       ${c.cargas_monto.toLocaleString('es-AR')}
                     </p>
@@ -391,8 +394,8 @@ export default function LeadsClient() {
                       {c.cargas_total} {c.cargas_total === 1 ? 'carga' : 'cargas'}
                     </p>
                   </div>
-                  {/* Pagos: informativo, no influye en el orden (oculto en mobile). */}
-                  <div className="leads-col-pagos">
+                  {/* Pagos: informativo, no influye en el orden. */}
+                  <div className="leads-c-pagos">
                     <p style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: c.pagos_monto > 0 ? '#1a7a3a' : '#bbb' }}>
                       ${c.pagos_monto.toLocaleString('es-AR')}
                     </p>
@@ -400,7 +403,7 @@ export default function LeadsClient() {
                       {c.pagos_total} {c.pagos_total === 1 ? 'pago' : 'pagos'}
                     </p>
                   </div>
-                  <Link href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
+                  <Link className="leads-c-chat" href={`/conversaciones/${c.contact_id}`} style={{ textDecoration: 'none' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', cursor: 'pointer' }} title="Ir a conversación">
                       💬
                     </div>
