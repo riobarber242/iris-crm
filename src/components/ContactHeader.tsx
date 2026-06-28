@@ -399,7 +399,9 @@ export default function ContactHeader({
       {/* ── Contenido expandible (recargas, provincia, operador, botones, notas) ── */}
       <div className="ch-expandable" style={{
         maxHeight: expanded ? '2000px' : '0',
-        overflow: 'hidden',
+        // Al expandir: overflow visible para que nada quede tapado/clipeado.
+        // Colapsado: hidden para ocultar el contenido por completo.
+        overflow: expanded ? 'visible' : 'hidden',
         transition: 'max-height 0.3s ease',
         display: 'flex', flexDirection: 'column', gap: '10px',
       }}>
