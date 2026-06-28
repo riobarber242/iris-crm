@@ -183,7 +183,7 @@ button, input, textarea, select {
   display: grid;
   /* Nombre flexible (mín. 180px) para que la tabla llene el 100% del ancho;
      el resto de las columnas fijas para que no se pisen. */
-  grid-template-columns: 40px minmax(180px, 1fr) 160px 100px 130px 130px 40px;
+  grid-template-columns: 40px minmax(180px, 1fr) 160px 140px 130px 130px 40px;
   gap: 12px;
   align-items: center;
 }
