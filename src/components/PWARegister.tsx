@@ -57,10 +57,6 @@ export default function PWARegister() {
   const [dismissed, setDismissed] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Botón "Probar notificación": visible solo con permiso concedido.
-  const [granted, setGranted] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testMsg, setTestMsg] = useState<string | null>(null);
 
   const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -122,14 +118,13 @@ export default function PWARegister() {
   // ── Decidir qué afiche mostrar (depende del agente logueado) ───────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!agent) { setPushPrompt(null); setGranted(false); return; }
+    if (!agent) { setPushPrompt(null); return; }
 
     const supported = 'serviceWorker' in navigator
       && 'PushManager' in window
       && 'Notification' in window;
 
     if (!supported) {
-      setGranted(false);
       // iOS en pestaña: las APIs de push no existen hasta instalar la PWA.
       setPushPrompt(isIOS() && !isStandalone() ? 'ios-install' : null);
       return;
@@ -137,20 +132,16 @@ export default function PWARegister() {
 
     if (!vapidKey) {
       console.warn('[pwa] NEXT_PUBLIC_VAPID_PUBLIC_KEY no configurada — sin push');
-      setGranted(false);
       setPushPrompt(null);
       return;
     }
 
     // Permiso ya concedido → suscribir en silencio (no requiere gesto).
     if (Notification.permission === 'granted') {
-      setGranted(true);
       ensureSubscription().catch((err) => console.warn('[pwa] Error suscribiendo push:', err));
       setPushPrompt(null);
       return;
     }
-
-    setGranted(false);
 
     // 'denied' → no insistimos (el usuario lo bloqueó). 'default' → ofrecer botón.
     setPushPrompt(Notification.permission === 'default' ? 'prompt' : null);
@@ -164,7 +155,6 @@ export default function PWARegister() {
       const permission = await Notification.requestPermission();
       if (permission === 'granted') {
         await ensureSubscription();
-        setGranted(true);
         setPushPrompt(null);
       } else if (permission === 'denied') {
         setError('Bloqueaste las notificaciones. Activalas desde el candado del navegador y recargá.');
@@ -185,53 +175,11 @@ export default function PWARegister() {
     setWaitingWorker(null);
   }
 
-  // Manda una notificación de prueba al propio agente (todos sus dispositivos).
-  async function testNotification() {
-    if (!agent) return;
-    setTesting(true);
-    setTestMsg(null);
-    try {
-      const res = await fetchWithTimeout('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: agent.id,
-          title: '🔔 Test IRIS',
-          body: 'Las notificaciones funcionan correctamente',
-        }),
-      }, 15000);
-      const data = await res.json().catch(() => null);
-      setTestMsg(res.ok ? `Enviada (${data?.sent ?? 0})` : 'No se pudo enviar');
-    } catch {
-      setTestMsg('No se pudo enviar');
-    } finally {
-      setTesting(false);
-      setTimeout(() => setTestMsg(null), 5000);
-    }
-  }
-
   const showPush = pushPrompt !== null && !dismissed;
-  const showTest = granted && !!agent;
-  if (!waitingWorker && !showPush && !showTest) return null;
+  if (!waitingWorker && !showPush) return null;
 
   return (
     <>
-    {showTest && (
-      <button
-        onClick={testNotification}
-        disabled={testing}
-        title="Enviarte una notificación de prueba"
-        style={{
-          position: 'fixed', bottom: '16px', left: '16px', zIndex: 9998,
-          background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '12px',
-          border: 'none', borderRadius: '999px', padding: '8px 14px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.28)', cursor: testing ? 'not-allowed' : 'pointer',
-          opacity: testing ? 0.6 : 1,
-        }}
-      >
-        {testing ? 'Enviando…' : testMsg ? `🔔 ${testMsg}` : '🔔 Probar notificación'}
-      </button>
-    )}
     {(waitingWorker || showPush) && (
     <div
       style={{
