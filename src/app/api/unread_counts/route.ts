@@ -4,8 +4,8 @@ import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
 
 // Devuelve los pendientes según la regla de negocio (ver lib/pending.ts):
-//   newPending       (🟠 naranja): último mensaje de un robot, sin leer.
-//   recurringPending (🔴 rojo):    online + onboarding 'done', sin leer.
+//   newPending       (🟠 naranja): bot terminó / entrante sin flujo de bot, sin leer.
+//   recurringPending (🔴 rojo):    ya la agarró un humano (human_taken) o cliente reconocido.
 // Sin filtro de fecha: mira TODOS los mensajes. Solo la lectura humana limpia.
 // Agentes y admin cuentan TODOS los contactos del tenant (sin filtro por
 // assigned_agent_id).
@@ -15,20 +15,11 @@ export async function GET() {
     if (!session) return new NextResponse('No autenticado', { status: 401 });
     const isAgent = session.role !== 'admin';
 
-    // Modo offline global: sin offline NO hay ROJO (la regla de done→rojo aplica
-    // solo cuando el CRM está operando).
-    let offline = false;
-    {
-      const { data } = await supabaseAdmin
-        .from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', session.tenant_id).limit(1).maybeSingle();
-      offline = data?.value === 'true';
-    }
-
     // 1. Contactos con su estado y last_read_at. TODOS los del tenant (agente y
     //    admin ven lo mismo; ya no se filtra por assigned_agent_id).
     const contactsQuery = supabaseAdmin
       .from('contacts')
-      .select('id, conversation_state, last_read_at')
+      .select('id, conversation_state, last_read_at, human_taken')
       .eq('tenant_id', session.tenant_id);
     const { data: contacts, error: cErr } = await contactsQuery;
     if (cErr) return new NextResponse(cErr.message, { status: 500 });
@@ -58,7 +49,7 @@ export async function GET() {
         lastMsgAt:         lm?.created_at,
         lastReadAt:        c.last_read_at,
         conversationState: c.conversation_state,
-        offline,
+        humanTaken:        c.human_taken,
       });
       if (level === 'red')         recurringPending++;
       else if (level === 'orange') newPending++;

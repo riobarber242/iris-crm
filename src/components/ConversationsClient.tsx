@@ -16,7 +16,6 @@ export default function ConversationsClient() {
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
   const [readFilter,     setReadFilter]     = useState<'todos' | 'no_leidos'>('todos');
   const [query,          setQuery]          = useState('');
-  const [offline,        setOffline]        = useState(false);
   const [filtersOpen,    setFiltersOpen]    = useState(false);
   const fetchRef       = useRef<() => void>(() => {});
   const sbRef          = useRef<any>(null);
@@ -86,11 +85,6 @@ export default function ConversationsClient() {
       requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
     }
     fetchConversations();
-    // El modo offline afecta la clasificación (sin offline no hay rojo).
-    fetch('/api/settings/offline-mode')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d) setOffline(!!d.offline); })
-      .catch(() => {});
     const timer = setInterval(() => fetchRef.current(), 5_000);
 
     const sb = getSupabaseBrowser();
@@ -129,7 +123,7 @@ export default function ConversationsClient() {
       lastMsgAt:         lastMessage?.created_at,
       lastReadAt:        c.last_read_at,
       conversationState: c.conversation_state,
-      offline,
+      humanTaken:        c.human_taken,
     });
   }
 
@@ -326,7 +320,7 @@ export default function ConversationsClient() {
           lastMsgAt:         lastMessage?.created_at,
           lastReadAt:        contact.last_read_at,
           conversationState: contact.conversation_state,
-          offline,
+          humanTaken:        contact.human_taken,
         });
 
         // Cantidad de mensajes del cliente sin leer (para el número del badge).
@@ -334,7 +328,7 @@ export default function ConversationsClient() {
         let pendingCount = 0;
         for (const msg of messages) {
           if (lastReadAt && new Date(msg.created_at) <= lastReadAt) break; // resto ya leído
-          if (msg.role === 'user') pendingCount++;
+          if (msg.role !== 'human') pendingCount++; // todo entrante (cliente o bot) que genera la alerta
         }
 
         const borderColor = badgeType === 'red' ? '#E53935'

@@ -155,14 +155,12 @@ export async function GET() {
   }
 
   // ── Pendientes (misma regla que el sidebar/lista, ver lib/pending.ts) ─────────
-  // Sin filtro de fecha. 🟠 naranja = robot respondió y sin leer;
-  // 🔴 rojo = online + onboarding 'done' y sin leer. Solo la lectura humana limpia.
-  const [offlineSetRes, pendContactsRes, pendMsgsRes] = await Promise.all([
-    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', tid).limit(1).maybeSingle(),
-    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at').eq('tenant_id', tid),
+  // Sin filtro de fecha. 🟠 naranja = bot terminó / entrante sin flujo de bot;
+  // 🔴 rojo = ya la agarró un humano (human_taken) o cliente reconocido. Solo la lectura humana limpia.
+  const [pendContactsRes, pendMsgsRes] = await Promise.all([
+    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at, human_taken').eq('tenant_id', tid),
     supabaseAdmin.from('messages').select('contact_id, role, created_at').eq('tenant_id', tid).order('created_at', { ascending: false }),
   ]);
-  const offlineMode = offlineSetRes.data?.value === 'true';
 
   const lastMsgByContact = new Map<string, { role: string; created_at: string }>();
   for (const m of (pendMsgsRes.data ?? [])) {
@@ -178,7 +176,7 @@ export async function GET() {
       lastMsgAt:         lm?.created_at,
       lastReadAt:        c.last_read_at,
       conversationState: c.conversation_state,
-      offline:           offlineMode,
+      humanTaken:        c.human_taken,
     });
     if (level === 'red')         pendingRed++;
     else if (level === 'orange') pendingOrange++;

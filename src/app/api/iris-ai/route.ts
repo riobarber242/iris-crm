@@ -565,14 +565,12 @@ async function getClientHistory(tid: string, input: any) {
 async function getConversationSummary(tid: string) {
   const todayStart = periodRange('hoy').gte!;
 
-  const [offlineRes, contactsRes, msgsRes, activeTodayRes] = await Promise.all([
-    supabaseAdmin.from('settings').select('value').eq('key', 'offline_mode').eq('tenant_id', tid).limit(1).maybeSingle(),
-    supabaseAdmin.from('contacts').select('id, name, phone, conversation_state, last_read_at').eq('tenant_id', tid),
+  const [contactsRes, msgsRes, activeTodayRes] = await Promise.all([
+    supabaseAdmin.from('contacts').select('id, name, phone, conversation_state, last_read_at, human_taken').eq('tenant_id', tid),
     supabaseAdmin.from('messages').select('contact_id, role, content, created_at')
       .eq('tenant_id', tid).order('created_at', { ascending: false }).limit(1000),
     supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', todayStart),
   ]);
-  const offlineMode = offlineRes.data?.value === 'true';
 
   const lastMsgByContact = new Map<string, { role: string; content: string; created_at: string }>();
   for (const m of (msgsRes.data ?? [])) {
@@ -591,7 +589,7 @@ async function getConversationSummary(tid: string) {
       lastMsgAt: lm?.created_at,
       lastReadAt: c.last_read_at,
       conversationState: c.conversation_state,
-      offline: offlineMode,
+      humanTaken: c.human_taken,
     });
     if (!level) continue;
     if (level === 'red') rojo++;

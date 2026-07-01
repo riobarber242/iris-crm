@@ -64,11 +64,12 @@ export default async function ConversationPage({ params }: any) {
 
   // Mark as read server-side so badge clears on next poll. De paso registramos
   // el "visto" (quién/ cuándo) y filtramos por tenant_id (además del id).
-  // last_read_at se mantiene igual: alimenta el no-leído; el visto es aparte.
+  // human_taken=true: abrir la conversación = "ya la agarró un humano"; de acá en
+  // más cualquier mensaje nuevo entrante se muestra en 🔴 (nunca vuelve a 🟠).
   const nowIso = new Date().toISOString();
   await supabaseAdmin
     .from('contacts')
-    .update({ last_read_at: nowIso, last_seen_by: session.sub, last_seen_at: nowIso })
+    .update({ last_read_at: nowIso, last_seen_by: session.sub, last_seen_at: nowIso, human_taken: true })
     .eq('id', id)
     .eq('tenant_id', session.tenant_id);
 
