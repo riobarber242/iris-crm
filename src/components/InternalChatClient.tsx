@@ -658,8 +658,11 @@ export default function InternalChatClient() {
 
       <div className={`internal-chat${panelOpen ? '' : ' panel-collapsed'}`} style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
+      {/* T4 (solo mobile): fondo oscuro; tocarlo cierra el dropdown. */}
+      {panelOpen && <div className="internal-panel-backdrop" onClick={() => setPanel(false)} aria-hidden />}
+
       {/* ── Columna izquierda: selector de conversaciones (grupo + DMs) ── */}
-      <aside className="internal-rooms" style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
+      <aside className="internal-rooms" style={{ gap: '10px', overflowY: 'auto' }}>
         {/* Sala grupal */}
         <button
           type="button"
@@ -1016,14 +1019,21 @@ export default function InternalChatClient() {
         .wa-icon-btn:hover { background: #f0f2f5; }
         .wa-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
         .wa-send-btn { width: 44px; height: 44px; min-width: 44px; flex-shrink: 0; padding: 0; border: none; border-radius: 50%; cursor: pointer; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; }
-        /* Ancho fijo del panel movido del inline al CSS para que mobile pueda sobreescribirlo. En desktop queda 280px, idéntico a antes. */
-        .internal-rooms { width: 280px; flex-shrink: 0; }
+        /* Ancho y display del panel movidos del inline al CSS para que mobile pueda sobreescribirlos (el inline le gana al stylesheet). En desktop queda 280px en columna, idéntico a antes. */
+        .internal-rooms { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; }
         .internal-mobile-toggle { display: none; }
+        .internal-panel-backdrop { display: none; }
         @media (max-width: 768px) {
-          /* T4: en mobile el panel EMPUJA el chat (row) y se puede colapsar; el indicador aparece arriba. */
-          .internal-chat { flex-direction: row; }
-          .internal-rooms { width: 60%; max-width: 240px; }
+          /* T4: en mobile el panel se DESPLIEGA como dropdown que tapa el chat; el chat queda al 100% de ancho (así el input no se aplasta). */
+          .internal-chat { position: relative; }
+          .internal-rooms {
+            position: absolute; top: 0; left: 0; right: 0; width: auto; max-width: none;
+            max-height: 70vh; overflow-y: auto; z-index: 20;
+            background: #F5F5F5; padding: 12px;
+            border-radius: 0 0 16px 16px; box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+          }
           .internal-chat.panel-collapsed .internal-rooms { display: none; }
+          .internal-panel-backdrop { display: block; position: absolute; inset: 0; z-index: 15; background: rgba(0,0,0,0.35); }
           .internal-mobile-toggle {
             display: flex; align-items: center; justify-content: space-between; gap: 8px;
             width: 100%; margin-bottom: 12px; padding: 10px 14px;
