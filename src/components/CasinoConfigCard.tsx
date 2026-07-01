@@ -9,7 +9,9 @@ import React, { useEffect, useState } from 'react';
 export default function CasinoConfigCard() {
   const [enabled, setEnabled]   = useState(false);
   const [baseUrl, setBaseUrl]   = useState('');
-  const [playerUrl, setPlayerUrl] = useState('');   // URL pública para el jugador
+  const [playerUrl, setPlayerUrl] = useState('');   // URL pública para el jugador ({link1})
+  const [playerUrl2, setPlayerUrl2] = useState(''); // URL pública 2 opcional ({link2})
+  const [template, setTemplate] = useState('');     // template del mensaje de credenciales
   const [password, setPassword] = useState('');     // vacío = no se cambia
   const [hasPassword, setHasPassword] = useState(false);
 
@@ -26,6 +28,8 @@ export default function CasinoConfigCard() {
         setEnabled(!!j.enabled);
         setBaseUrl(String(j.casino_api_base_url ?? ''));
         setPlayerUrl(String(j.casino_player_url ?? ''));
+        setPlayerUrl2(String(j.casino_player_url_2 ?? ''));
+        setTemplate(String(j.casino_credentials_template ?? ''));
         setHasPassword(!!j.has_password);
       } catch {
         setMsg({ kind: 'err', text: 'Error de red.' });
@@ -39,7 +43,7 @@ export default function CasinoConfigCard() {
     setSaving(true);
     setMsg(null);
     try {
-      const payload: Record<string, any> = { enabled, casino_api_base_url: baseUrl, casino_player_url: playerUrl };
+      const payload: Record<string, any> = { enabled, casino_api_base_url: baseUrl, casino_player_url: playerUrl, casino_player_url_2: playerUrl2, casino_credentials_template: template };
       // Solo mandamos el password si el agente escribió uno nuevo.
       if (password.trim()) payload.casino_agent_password = password.trim();
 
@@ -55,6 +59,8 @@ export default function CasinoConfigCard() {
       setEnabled(!!j.enabled);
       setBaseUrl(String(j.casino_api_base_url ?? ''));
       setPlayerUrl(String(j.casino_player_url ?? ''));
+      setPlayerUrl2(String(j.casino_player_url_2 ?? ''));
+      setTemplate(String(j.casino_credentials_template ?? ''));
       setHasPassword(!!j.has_password);
       setPassword('');   // limpiamos el input; queda enmascarado
       setMsg({ kind: 'ok', text: 'Configuración guardada.' });
@@ -128,9 +134,9 @@ export default function CasinoConfigCard() {
         />
       </div>
 
-      {/* URL para jugadores — la que recibe el cliente en sus credenciales */}
+      {/* URL para jugadores 1 — {link1} del mensaje de credenciales */}
       <div>
-        <label style={labelStyle}>URL para jugadores</label>
+        <label style={labelStyle}>URL para jugadores 1 ({'{link1}'})</label>
         <input
           type="text" value={playerUrl}
           onChange={(e) => setPlayerUrl(e.target.value)}
@@ -139,6 +145,35 @@ export default function CasinoConfigCard() {
         />
         <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888' }}>
           La que el jugador recibe en sus credenciales (la pública de juego, distinta de la del panel). Si la dejás vacía, se usa la URL del panel.
+        </p>
+      </div>
+
+      {/* URL para jugadores 2 — {link2}, opcional */}
+      <div>
+        <label style={labelStyle}>URL para jugadores 2 — opcional ({'{link2}'})</label>
+        <input
+          type="text" value={playerUrl2}
+          onChange={(e) => setPlayerUrl2(e.target.value)}
+          placeholder="https://tucasino-alternativo.com"
+          style={inputStyle}
+        />
+        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888' }}>
+          Segundo enlace opcional. Si la dejás vacía, la línea de {'{link2}'} no aparece en el mensaje.
+        </p>
+      </div>
+
+      {/* Template editable del mensaje de credenciales */}
+      <div>
+        <label style={labelStyle}>Mensaje de credenciales</label>
+        <textarea
+          value={template}
+          onChange={(e) => setTemplate(e.target.value)}
+          rows={6}
+          placeholder={'Usuario: {username}\nContraseña: {password}\n👉 {link1}\n      {link2}\nIngresá y ya podés comenzar 😊'}
+          style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5, fontFamily: 'inherit' }}
+        />
+        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888' }}>
+          Placeholders: {'{username}'}, {'{password}'}, {'{link1}'}, {'{link2}'}. Sin saludo con nombre. Si {'{link2}'} está vacío, esa línea se omite. Dejalo vacío para volver al texto por defecto.
         </p>
       </div>
 

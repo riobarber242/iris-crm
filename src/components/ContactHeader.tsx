@@ -576,7 +576,11 @@ export default function ContactHeader({
           contactId={contactId}
           contactName={contactName ?? null}
           onClose={() => setCreateOpen(false)}
-          onCreated={(u) => { setCasinoUser(u); setCreateOpen(false); }}
+          onCreated={(u, message) => {
+            setCasinoUser(u);
+            setCreateOpen(false);
+            if (message) window.dispatchEvent(new CustomEvent('iris:casino-credentials', { detail: { contactId, message } }));
+          }}
         />
       )}
 

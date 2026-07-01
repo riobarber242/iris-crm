@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { createPlayer, getPlayerTargetId } from '@/lib/casino/client';
-import { sendWhatsAppText } from '@/lib/meta/client';
+import { renderCredentials } from '@/lib/casino/credentials';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
 
@@ -30,8 +30,10 @@ function nextUsername(username: string): string {
 }
 
 // POST /api/casino/create-player — crea un jugador en el casino y lo guarda en
-// el contacto. Body: { contactId, suggestedUsername }.
-// Respuesta: { success, username, password } | { success: false, error }.
+// el contacto. Body: { contactId, suggestedUsername, password? }.
+// Respuesta: { success, username, password, message } | { success: false, error }.
+// El `message` es el texto de credenciales (armado con el template editable del
+// tenant) para que el operador lo mande desde el chat. Ya NO se auto-envía.
 export async function POST(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -111,42 +113,29 @@ export async function POST(request: Request) {
     }, { status: 500 });
   }
 
-  // Aviso de credenciales. Best-effort (no rompe la respuesta 200). El mensaje se
-  // guarda SIEMPRE en el chat (no requiere phone); el WhatsApp solo si hay phone.
+  // Armamos el texto de credenciales con el template editable del tenant y lo
+  // DEVOLVEMOS. Ya NO se auto-inserta en el chat ni se auto-envía por WhatsApp:
+  // el operador lo manda con el botón de enviar normal (que dispara WhatsApp y lo
+  // guarda como mensaje 'human'). Best-effort: si falla, cae al template default.
+  let message = '';
   try {
-    // URL que recibe el JUGADOR: priorizamos casino_player_url (la pública de
-    // juego); si no está configurada, caemos a casino_api_base_url y al env, para
-    // no romper tenants que aún no cargaron la URL nueva.
-    const { data: urlRows } = await supabaseAdmin
+    // {link1}: URL para jugadores (casino_player_url) con fallback a la del panel
+    //          y al env, para tenants que aún no cargaron la URL nueva.
+    // {link2}: casino_player_url_2 (opcional; si falta, se omite su línea).
+    const { data: cfgRows } = await supabaseAdmin
       .from('settings').select('key, value')
-      .in('key', ['casino_player_url', 'casino_api_base_url']).eq('tenant_id', session.tenant_id);
-    const byKey = new Map((urlRows ?? []).map((r: any) => [r.key, String(r.value ?? '').trim()]));
-    const casinoUrl = (byKey.get('casino_player_url')
-      || byKey.get('casino_api_base_url')
+      .in('key', ['casino_player_url', 'casino_player_url_2', 'casino_api_base_url', 'casino_credentials_template'])
+      .eq('tenant_id', session.tenant_id);
+    const byKey = new Map<string, string>((cfgRows ?? []).map((r: any) => [r.key, String(r.value ?? '')]));
+    const link1 = (byKey.get('casino_player_url')?.trim()
+      || byKey.get('casino_api_base_url')?.trim()
       || String(process.env.CASINO_API_BASE_URL ?? '').trim());
-    const urlLine = casinoUrl ? `Ingresá en ${casinoUrl} y empezá a jugar 🎲` : '¡Ya podés empezar a jugar! 🎲';
-    const msg = `🎰 ¡Tu cuenta fue creada!\nUsuario: ${username}\nContraseña: ${password}\n${urlLine}`;
-
-    // 1) Guardar en el chat SIEMPRE.
-    const { error: msgErr } = await supabaseAdmin.from('messages').insert({
-      contact_id: contactId, role: 'human', content: msg, tenant_id: session.tenant_id,
-    });
-    if (msgErr) console.warn('[casino/create-player] no se pudo guardar credenciales en el chat:', msgErr.message);
-    else        console.log(`[casino/create-player] credenciales guardadas en el chat para ${contactId}`);
-
-    // 2) WhatsApp solo si el contacto tiene teléfono.
-    if (contact.phone) {
-      try {
-        await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
-        console.log(`[casino/create-player] WhatsApp de credenciales enviado a ${contact.phone}`);
-      } catch (e: any) {
-        console.warn('[casino/create-player] WhatsApp de credenciales falló (posible ventana 24h):', e?.message ?? e);
-      }
-    } else {
-      console.warn(`[casino/create-player] contacto ${contactId} sin phone — no se envía WhatsApp (el mensaje quedó en el chat)`);
-    }
+    const link2 = (byKey.get('casino_player_url_2') ?? '').trim();
+    const template = byKey.get('casino_credentials_template') ?? null;
+    message = renderCredentials(template, { username, password, link1, link2 });
   } catch (err) {
-    console.warn('[casino/create-player] aviso de credenciales falló (ignorado):', err);
+    console.warn('[casino/create-player] no se pudo armar el mensaje con el template, usando default:', err);
+    message = renderCredentials(null, { username, password, link1: '', link2: '' });
   }
 
   await logActivity({
@@ -154,5 +143,5 @@ export async function POST(request: Request) {
     details: { username },
   });
 
-  return NextResponse.json({ success: true, username, password });
+  return NextResponse.json({ success: true, username, password, message });
 }

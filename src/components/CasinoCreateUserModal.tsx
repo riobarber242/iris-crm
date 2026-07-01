@@ -23,9 +23,9 @@ function generatePassword(): string {
 const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 // Modal para crear un usuario en el casino. Compartido por ContactHeader y
-// ChatWindow. En éxito llama onCreated(username): el padre actualiza su estado y
-// cierra. Las credenciales NO se muestran acá — el endpoint las manda al cliente
-// por WhatsApp y las deja guardadas en el chat.
+// ChatWindow. En éxito llama onCreated(username, message): el padre actualiza su
+// estado, cierra y precarga `message` (las credenciales, armadas con el template
+// editable del tenant) en el input del chat para que el operador lo envíe.
 export default function CasinoCreateUserModal({
   contactId,
   contactName,
@@ -35,7 +35,7 @@ export default function CasinoCreateUserModal({
   contactId: string;
   contactName: string | null;
   onClose: () => void;
-  onCreated: (username: string) => void;
+  onCreated: (username: string, message: string) => void;
 }) {
   const [createUser,  setCreateUser]  = useState(() => suggestUsername(contactName));
   const [password,    setPassword]    = useState(() => generatePassword());
@@ -61,7 +61,7 @@ export default function CasinoCreateUserModal({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        onCreated(data.username);
+        onCreated(data.username, typeof data.message === 'string' ? data.message : '');
       } else {
         setCreateError(data.error || 'No se pudo crear el usuario en el casino');
       }
@@ -92,8 +92,8 @@ export default function CasinoCreateUserModal({
         </h3>
 
         <p style={{ margin: 0, fontSize: '13px', color: '#666', lineHeight: 1.5 }}>
-          Se creará un jugador con una contraseña automática. Las credenciales se le
-          envían al cliente por WhatsApp y quedan en el chat.
+          Se creará un jugador con una contraseña automática. El mensaje con las
+          credenciales se carga en el chat, editable, para que lo envíes vos.
         </p>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', fontWeight: 700, color: '#888' }}>

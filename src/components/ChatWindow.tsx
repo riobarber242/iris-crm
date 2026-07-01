@@ -311,6 +311,23 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showQR, showEmoji, showActions]);
 
+  // Precarga de credenciales de casino: al crear un usuario (desde el header o el
+  // chat, vía CustomEvent 'iris:casino-credentials'), dejamos el mensaje editable
+  // en el input para que el operador lo envíe con el botón normal.
+  useEffect(() => {
+    function onCreds(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail.contactId !== contactId || typeof detail.message !== 'string') return;
+      setInput(detail.message);
+      requestAnimationFrame(() => {
+        const el = textInputRef.current;
+        if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); }
+      });
+    }
+    window.addEventListener('iris:casino-credentials', onCreds as EventListener);
+    return () => window.removeEventListener('iris:casino-credentials', onCreds as EventListener);
+  }, [contactId]);
+
   function insertEmoji(emoji: string) {
     setShowEmoji(false);
     const el = textInputRef.current;
@@ -1172,7 +1189,11 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
             contactId={contactId}
             contactName={contactName ?? null}
             onClose={() => setCreateCasinoOpen(false)}
-            onCreated={(u) => { setCasinoUser(u); setCreateCasinoOpen(false); }}
+            onCreated={(u, message) => {
+              setCasinoUser(u);
+              setCreateCasinoOpen(false);
+              if (message) window.dispatchEvent(new CustomEvent('iris:casino-credentials', { detail: { contactId, message } }));
+            }}
           />
         )}
 
