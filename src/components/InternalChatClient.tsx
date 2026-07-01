@@ -175,6 +175,18 @@ export default function InternalChatClient() {
   const [traspasoBusy, setTraspasoBusy] = useState<string | null>(null);
   const [traspasoErr, setTraspasoErr] = useState<Record<string, string>>({});
 
+  // ── T4 (solo mobile): panel de conversaciones colapsable, recordado por operador ──
+  const [panelOpen, setPanelOpen] = useState(false);
+  const panelKey = myId ? `iris:internal-panel-open:${myId}` : null;
+  useEffect(() => {
+    if (!panelKey) return;
+    try { setPanelOpen(localStorage.getItem(panelKey) === '1'); } catch {}
+  }, [panelKey]);
+  const setPanel = useCallback((open: boolean) => {
+    setPanelOpen(open);
+    if (panelKey) { try { localStorage.setItem(panelKey, open ? '1' : '0'); } catch {} }
+  }, [panelKey]);
+
   const listRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   // Scroll estilo WhatsApp: abrir abajo y seguir el fondo solo si el usuario ya
@@ -626,15 +638,32 @@ export default function InternalChatClient() {
     return m.dm_room_id ? (roomUnreads[m.dm_room_id] ?? m.unread ?? 0) : (m.unread ?? 0);
   }
 
+  const activeTargetName = isGroup ? roomName : (activeMember?.name || 'Mensaje directo');
+
   return (
-    <div className="internal-chat" style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+    <div className="internal-chat-wrap" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+
+      {/* T4 (solo mobile): indicador del destino activo; tocarlo abre/cierra el panel. */}
+      <button
+        type="button"
+        className="internal-mobile-toggle"
+        onClick={() => setPanel(!panelOpen)}
+        aria-expanded={panelOpen}
+      >
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {isGroup ? '👥 ' : ''}{activeTargetName}
+        </span>
+        <span aria-hidden style={{ flexShrink: 0, transition: 'transform .15s', transform: panelOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+      </button>
+
+      <div className={`internal-chat${panelOpen ? '' : ' panel-collapsed'}`} style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
       {/* ── Columna izquierda: selector de conversaciones (grupo + DMs) ── */}
-      <aside className="internal-rooms" style={{ width: '280px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
+      <aside className="internal-rooms" style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
         {/* Sala grupal */}
         <button
           type="button"
-          onClick={openGroup}
+          onClick={() => { openGroup(); setPanel(false); }}
           style={{
             textAlign: 'left', cursor: 'pointer', border: 'none', width: '100%',
             background: '#FFFFFF', borderRadius: '16px', padding: '16px 18px',
@@ -666,7 +695,7 @@ export default function InternalChatClient() {
             <button
               key={m.id}
               type="button"
-              onClick={() => openDm(m)}
+              onClick={() => { openDm(m); setPanel(false); }}
               style={{
                 textAlign: 'left', cursor: 'pointer', border: 'none', width: '100%',
                 background: '#FFFFFF', borderRadius: '14px', padding: '12px 14px',
@@ -971,6 +1000,7 @@ export default function InternalChatClient() {
           </form>
         </div>
       </div>
+      </div>
 
       {/* Lightbox */}
       {lightboxUrl && (
@@ -986,9 +1016,21 @@ export default function InternalChatClient() {
         .wa-icon-btn:hover { background: #f0f2f5; }
         .wa-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
         .wa-send-btn { width: 44px; height: 44px; min-width: 44px; flex-shrink: 0; padding: 0; border: none; border-radius: 50%; cursor: pointer; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+        /* Ancho fijo del panel movido del inline al CSS para que mobile pueda sobreescribirlo. En desktop queda 280px, idéntico a antes. */
+        .internal-rooms { width: 280px; flex-shrink: 0; }
+        .internal-mobile-toggle { display: none; }
         @media (max-width: 768px) {
-          .internal-chat { flex-direction: column; }
-          .internal-rooms { width: 100%; }
+          /* T4: en mobile el panel EMPUJA el chat (row) y se puede colapsar; el indicador aparece arriba. */
+          .internal-chat { flex-direction: row; }
+          .internal-rooms { width: 60%; max-width: 240px; }
+          .internal-chat.panel-collapsed .internal-rooms { display: none; }
+          .internal-mobile-toggle {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            width: 100%; margin-bottom: 12px; padding: 10px 14px;
+            background: #FFFFFF; border: none; border-radius: 12px;
+            box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+            font-size: 14px; font-weight: 700; color: #000; cursor: pointer;
+          }
           .wa-icon-btn { width: 44px; height: 44px; min-width: 44px; }
         }
       `}</style>
