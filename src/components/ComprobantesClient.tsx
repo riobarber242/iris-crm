@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import PdfPreview from '@/components/PdfPreview';
+
+// Detecta si el comprobante es un PDF (preview con pdf.js en vez de <img>).
+const isPdfUrl = (u: string | null | undefined) => !!u && /\.pdf(\?|$)/i.test(u);
 
 type ComprobanteItem = {
   id: string;
@@ -521,10 +525,13 @@ export default function ComprobantesClient(
                   cursor: item.image_url ? 'zoom-in' : 'default',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-                onClick={() => item.image_url && setLightbox(item.image_url)}
-                title={item.image_url ? 'Ver imagen completa' : 'Sin imagen'}
+                onClick={() => { if (!item.image_url) return; if (isPdfUrl(item.image_url)) window.open(item.image_url, '_blank', 'noopener,noreferrer'); else setLightbox(item.image_url); }}
+                title={!item.image_url ? 'Sin archivo' : isPdfUrl(item.image_url) ? 'Abrir PDF' : 'Ver imagen completa'}
               >
                 {item.image_url ? (
+                  isPdfUrl(item.image_url) ? (
+                    <PdfPreview url={item.image_url} maxWidth={88} showLabel={false} />
+                  ) : (
                   <img
                     src={item.image_url}
                     alt="Comprobante"
@@ -535,6 +542,7 @@ export default function ComprobantesClient(
                         '<span style="font-size:11px;color:#aaa;padding:4px;text-align:center;word-break:break-all;">Sin imagen</span>';
                     }}
                   />
+                  )
                 ) : (
                   <span style={{ fontSize: '11px', color: '#bbb', textAlign: 'center', padding: '4px' }}>
                     Sin imagen
@@ -670,7 +678,7 @@ export default function ComprobantesClient(
                           }}
                         />
                       )}
-                      {item.image_url && (
+                      {item.image_url && !isPdfUrl(item.image_url) && (
                         <button
                           type="button"
                           onClick={() => detectMonto(item.id)}

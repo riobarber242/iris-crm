@@ -175,6 +175,9 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
                  : (contentType.includes('mp4') || contentType.includes('m4a')) ? 'm4a'
                  : contentType.includes('amr')  ? 'amr'
                  : contentType.startsWith('audio/') ? 'ogg'
+                 // Documentos: PDF con su extensión real para que se sirva y
+                 // se previsualice correctamente (antes caía al fallback jpg).
+                 : contentType.includes('pdf')  ? 'pdf'
                  : 'jpg';
   const filePath = `${contactId}/${Date.now()}.${ext}`;
 
@@ -467,6 +470,7 @@ async function processMessage(
     : (type === 'image' && inboundMediaUrl)    ? JSON.stringify({ _type: 'image', url: inboundMediaUrl, caption: (message.image?.caption ?? '').trim() })
     : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'sticker', url: inboundMediaUrl })
     : (['audio', 'voice'].includes(type) && inboundMediaUrl) ? JSON.stringify({ _type: 'audio', url: inboundMediaUrl })
+    : (type === 'document' && inboundMediaUrl) ? JSON.stringify({ _type: 'document', url: inboundMediaUrl, filename: (message.document?.filename ?? '').trim() || null, mime: message.document?.mime_type ?? null, caption: (message.document?.caption ?? '').trim() })
     : type;
 
   // ── Save user message ──────────────────────────────────────────────────────

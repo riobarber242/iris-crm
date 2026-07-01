@@ -87,9 +87,9 @@ function imageUrlFromMessage(content: string | null): string | null {
   if (!c) return null;
   try {
     const p = JSON.parse(c);
-    if (p?._type === 'image' && typeof p.url === 'string') return p.url;
+    if ((p?._type === 'image' || p?._type === 'document') && typeof p.url === 'string') return p.url;
   } catch {}
-  if (/^https?:\/\//i.test(c) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(c)) return c;
+  if (/^https?:\/\//i.test(c) && /\.(jpe?g|png|webp|gif|pdf)(\?|$)/i.test(c)) return c;
   return null;
 }
 
@@ -116,7 +116,7 @@ export async function POST(request: Request) {
   if (msgErr || !msg) return new NextResponse('Mensaje no encontrado', { status: 404 });
 
   const imageUrl = imageUrlFromMessage(msg.content);
-  if (!imageUrl) return new NextResponse('El mensaje no tiene una imagen para verificar', { status: 400 });
+  if (!imageUrl) return new NextResponse('El mensaje no tiene un archivo para verificar', { status: 400 });
 
   // Tipo según quién mandó la imagen (defensa server-side, espeja el front):
   //   cliente (role 'user')          → carga  (bandeja Cargas)

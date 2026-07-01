@@ -10,6 +10,7 @@ import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { useAuth } from '@/components/AuthProvider';
 import { Avatar } from '@/components/ProfileCard';
 import { searchEmojisEs } from '@/lib/emoji-es';
+import PdfPreview from '@/components/PdfPreview';
 import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
 import CasinoCreateUserModal from '@/components/CasinoCreateUserModal';
 
@@ -98,13 +99,13 @@ function Ticks({ status }: { status?: string }) {
 }
 
 type QuickReply = { id: string; title: string; content: string };
-type MediaContent = { _type: 'image' | 'audio' | 'sticker'; url: string; caption?: string };
+type MediaContent = { _type: 'image' | 'audio' | 'sticker' | 'document'; url: string; caption?: string; filename?: string | null; mime?: string | null };
 
 
 function parseMedia(raw: string): MediaContent | null {
   try {
     const p = JSON.parse(raw);
-    if ((p?._type === 'image' || p?._type === 'audio' || p?._type === 'sticker') && typeof p.url === 'string') return p;
+    if ((p?._type === 'image' || p?._type === 'audio' || p?._type === 'sticker' || p?._type === 'document') && typeof p.url === 'string') return p;
   } catch {}
   return null;
 }
@@ -802,7 +803,8 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
           // un pago lo origina una imagen que mandó una persona del equipo.
           const hasImage   = media?._type === 'image' || classifyBody(m.content).kind === 'image';
-          const canVerify  = hasImage && !!m.id && (m.role === 'user' || m.role === 'human');
+          const isPdfDoc   = media?._type === 'document' && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
+          const canVerify  = (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
           const verifSent  = !!m.id && verifSentIds.has(m.id);
           const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
           return (
@@ -889,6 +891,15 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   onLoad={handleMediaLoad}
                   onClick={() => setLightboxUrl(media.url)}
                 />
+              ) : media?._type === 'document' ? (
+                (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url)) ? (
+                  <div>
+                    <PdfPreview url={media.url} filename={media.filename} />
+                    {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+                  </div>
+                ) : (
+                  <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
+                )
               ) : (() => {
                 const b = classifyBody(m.content);
                 if (b.kind === 'image' && b.url) {
@@ -932,7 +943,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                       type="button"
                       onClick={() => sendToVerify(m)}
                       disabled={verifSendingId === m.id}
-                      title={`Mandar esta imagen a la bandeja de ${verifDest}`}
+                      title={`Mandar este comprobante a la bandeja de ${verifDest}`}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: '6px',
                         fontSize: '12px', fontWeight: 800, cursor: verifSendingId === m.id ? 'wait' : 'pointer',
