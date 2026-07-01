@@ -95,7 +95,7 @@ export default function OfflineConfig() {
           </p>
           <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0 0' }}>
             {offline
-              ? 'Activado: el bot responde a todos los clientes con el mensaje de abajo.'
+              ? 'Activado: el bot responde con el mensaje de abajo al terminar un registro nuevo y a los contactos ya conocidos.'
               : 'Desactivado: el bot atiende normalmente.'}
           </p>
         </div>
@@ -119,7 +119,7 @@ export default function OfflineConfig() {
       {/* Mensaje editable */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         <p style={{ fontSize: '13px', color: '#555', margin: '0 0 2px 0' }}>
-          Mensaje que reciben los clientes mientras el modo offline esté activo.
+          Mensaje que reciben los clientes en modo offline: al terminar el registro o al escribir un contacto ya conocido.
         </p>
 
         {loadingMsg ? (

@@ -98,9 +98,10 @@ const BOT_ENABLED_KEY     = 'bot_enabled';
 const WELCOME_MSG     = '¡Hola! Soy Iris, asistente virtual 🤖 Para orientarte mejor necesito hacerte un par de preguntas. ¿Es tu primera vez con nosotros o ya tenés cuenta?';
 const HANDOFF_MSG     = '¡Listo! Un operador humano te va a atender en breve 👋';
 const OUT_OF_HOURS_MSG = 'Hola! En este momento no hay operadores disponibles. Te respondemos en cuanto volvamos 🙏';
-// El mensaje de offline ahora es configurable por tenant (settings key
-// 'offline_msg', editable vía Iris AI) con DEFAULT_OFFLINE_MSG como fallback.
-const OFFLINE_HANDOFF_MSG = 'En este momento no hay operadores disponibles. Te respondemos cuando volvamos 🙏';
+// El mensaje de offline es configurable por tenant (settings key 'offline_msg',
+// editable vía Iris AI / Configuración) con DEFAULT_OFFLINE_MSG como fallback.
+// Se usa tanto para el aviso a contactos conocidos como para el cierre de
+// onboarding cuando el modo offline está activo (mismo texto en ambos casos).
 
 // El cliente avisa que YA es usuario/cliente → handoff directo al operador, sin
 // onboardearlo. Se evalúa como primer mensaje y en varios estados del flujo.
@@ -598,7 +599,7 @@ async function processMessage(
   // El onboarding SIEMPRE corre para contactos bot-owned (nuevos o ya en un
   // onboarding iniciado por el bot), aunque haya offline_mode: así un cliente
   // nuevo se onboardea igual y al terminar recibe el cierre con "esperá al
-  // operador" (handoffMsg → OFFLINE_HANDOFF_MSG, ver más abajo).
+  // operador" (handoffMsg → getOfflineMsg/offline_msg en offline, ver más abajo).
   // Los contactos conocidos/preexistentes sí reciben el aviso de offline y corta.
   // OJO: tiene que ser `isNew || inBotFlow`, no solo `isNew`: isNew es true una
   // única vez (primer mensaje); los mensajes 2..N del onboarding traen isNew=false
@@ -636,8 +637,9 @@ async function processMessage(
     return;
   }
 
-  // Mensaje de cierre del onboarding (handoff): cambia si estamos offline.
-  const handoffMsg = offline ? OFFLINE_HANDOFF_MSG : HANDOFF_MSG;
+  // Mensaje de cierre del onboarding (handoff): en offline usa el mismo mensaje
+  // editable (offline_msg) que reciben los contactos conocidos; online, HANDOFF_MSG.
+  const handoffMsg = offline ? await getOfflineMsg(tenantId) : HANDOFF_MSG;
 
   // ── Decisión del bot (regla principal + horario) ─────────────────────────
   // Lógica pura en bot-decision.ts (testeable). Resumen:
