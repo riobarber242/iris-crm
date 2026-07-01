@@ -1015,7 +1015,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               {/* Reacción aplicada */}
               {m.reaction && (
                 <span style={{
-                  position: 'absolute', bottom: '-9px', right: '8px',
+                  position: 'absolute', bottom: '-9px', left: '8px',
                   background: '#fff', borderRadius: '999px', padding: '1px 5px',
                   fontSize: '13px', lineHeight: 1, boxShadow: '0 1px 4px rgba(0,0,0,0.22)',
                 }}>
@@ -1032,7 +1032,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   }}
                   onMouseLeave={() => setReactBarFor(null)}
                   style={{
-                  position: 'absolute', top: '-44px', right: 0,
+                  position: 'absolute', top: '-44px', left: 0,
                   display: 'flex', gap: '2px',
                   background: '#fff', borderRadius: '999px', padding: '4px 6px', paddingBottom: '4px',
                   boxShadow: '0 3px 12px rgba(0,0,0,0.18)', zIndex: 5,
