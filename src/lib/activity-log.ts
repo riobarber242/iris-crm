@@ -29,6 +29,9 @@ export const ACTIVITY = {
   CONTACT_IMPORTED:       'contact_imported',
   CONFIG_CHANGED:         'config_changed',         // details.key: system_prompt | bot_enabled | offline_mode | …
   BOT_CONFIG_UPDATED:     'bot_config_updated',     // via Iris AI; details guarda los valores ANTERIORES (respaldo)
+
+  PUSH_ACTIVATED:         'push_activated',         // activó notificaciones OK en un dispositivo (details: userAgent, standalone)
+  PUSH_ACTIVATION_FAILED: 'push_activation_failed', // falló la activación de push (details: code, errorName, stage, userAgent, …)
 } as const;
 
 export type ActivityAction = typeof ACTIVITY[keyof typeof ACTIVITY];
