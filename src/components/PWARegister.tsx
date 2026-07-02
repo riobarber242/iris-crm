@@ -94,7 +94,7 @@ function postDiagnostics(payload: Record<string, unknown>) {
 // ¿La suscripción existente fue creada con la MISMA VAPID key que usamos ahora?
 // Si rotó la key, la vieja quedó desapareada y hay que rehacerla. Si no podemos
 // leer la key existente, asumimos que está OK (no forzamos rehacer sin motivo).
-function sameApplicationServerKey(sub: PushSubscription, key: Uint8Array): boolean {
+function sameApplicationServerKey(sub: PushSubscription, key: Uint8Array<ArrayBuffer>): boolean {
   const existing = sub.options?.applicationServerKey;
   if (!existing) return true;
   const a = new Uint8Array(existing);
@@ -104,7 +104,7 @@ function sameApplicationServerKey(sub: PushSubscription, key: Uint8Array): boole
 }
 
 // Crea una suscripción nueva (con timeout, porque subscribe() no acepta AbortSignal).
-function subscribeFresh(registration: ServiceWorkerRegistration, appServerKey: Uint8Array) {
+function subscribeFresh(registration: ServiceWorkerRegistration, appServerKey: Uint8Array<ArrayBuffer>) {
   return withTimeout(
     registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appServerKey }),
     12000, 'suscripción push',
