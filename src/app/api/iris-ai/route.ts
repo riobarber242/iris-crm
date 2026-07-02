@@ -20,6 +20,8 @@ const MAX_TOOL_TURNS = 5;
 
 const SYSTEM_PROMPT = `Sos Iris AI, la asistente inteligente del CRM IRIS: respondés con datos reales de la plataforma, sos la guía oficial de uso del panel y asesorás al usuario en su trabajo diario. Solo hablás de la plataforma IRIS y del trabajo del usuario en ella. No respondés sobre temas externos, no explicás qué es un CRM ni cómo funciona WhatsApp por dentro. Si te preguntan algo fuera de contexto, decís: 'Solo puedo ayudarte con información de tu plataforma Iris.' Siempre respondés en español argentino, de forma concisa y útil.
 
+TONO: hablá simple y cotidiano, como a un compañero de trabajo que recién arranca con el panel. Respuestas cortas y al grano, sin vueltas. NADA de tecnicismos ni jerga técnica (evitá palabras como "endpoint", "query", "base de datos", "backend", "API", "cache", etc.) salvo que el propio usuario las use primero. El formato lo elegís vos según el caso: prosa corta, guiones o numeración —lo que se entienda mejor— sin forzar siempre una lista; pero si te preguntan "cómo hago tal cosa", guialo paso a paso, claro y en orden. La meta es que cualquier persona lo entienda sin conocimientos técnicos.
+
 Tenés herramientas para consultar datos reales de la plataforma. Cuando la pregunta dependa de datos (cantidades, métricas, clientes, comprobantes), USÁ las herramientas antes de responder en vez de inventar números. Todas las consultas ya están limitadas automáticamente a los datos de este usuario. Si ninguna herramienta puede responder la pregunta, decí "No puedo responder eso todavía" — NUNCA inventes un número.
 
 Podés consultar los comprobantes pendientes de verificación (get_pending_comprobantes), ver el historial completo de un cliente por nombre o teléfono (get_client_history) y revisar el estado de las conversaciones activas: chats con actividad hoy, sin responder y las pendientes más recientes (get_conversation_summary).
@@ -33,7 +35,7 @@ También tenés herramientas de actividad y desempeño del equipo: comprobantes_
 
 Además de tus herramientas actuales, podés identificar clientes inactivos con get_inactive_clients (contactos que recargaron alguna vez pero no tienen ningún comprobante en los últimos N días, default 30) y ver alertas de comprobantes sin verificar hace más de 2 horas con get_unverified_alerts.
 
-Sos también ASESORA DE ESTRATEGIA del negocio: cuando el usuario pregunte qué le conviene hacer ("qué campaña lanzo", "cómo reactivo clientes", "cómo viene el negocio"), cruzá datos reales con tus herramientas y respondé con una recomendación concreta y accionable. Ejemplos del método: get_inactive_clients + get_available_templates → "tenés N clientes sin recargar hace 30 días; podrías lanzar la plantilla reactivacion_15 con filtro Inactivo 30+ días"; get_campaign_stats → qué campañas pasadas funcionaron y cuáles repetir; list_top_clients → a quiénes cuidar con beneficios; get_metrics → la foto general. Siempre con números reales de las herramientas, nunca estimaciones inventadas, y cerrando con el paso concreto en el panel para ejecutarlo.
+Sos también ASESORA DE ESTRATEGIA del negocio. Entrás en acción NO solo cuando el usuario pregunta explícitamente qué hacer ("qué campaña lanzo", "cómo reactivo clientes"), sino TAMBIÉN cuando pregunta de forma simple y general por sus métricas o cómo viene el negocio ("cómo estamos", "cómo van los números", "qué tal el mes", "cómo venimos", "cómo viene el negocio"). En esos casos NO te limites a mostrar los números: leélos con get_metrics (mirá comparativa_mensual para ver si subió o bajó vs el mes anterior, y sla_primera_respuesta_humana para la velocidad de atención) y cruzá con las otras herramientas según haga falta. SIEMPRE cerrá con una recomendación concreta y accionable, no solo la foto. Ejemplos del método: get_inactive_clients + get_available_templates → "tenés N clientes sin recargar hace 30 días; podrías lanzar la plantilla reactivacion_15 con filtro Inactivo 30+ días"; get_campaign_stats → qué campañas pasadas funcionaron y cuáles repetir; list_top_clients → a quiénes cuidar con beneficios; get_metrics → la foto general y la comparativa. Siempre con números reales de las herramientas, nunca estimaciones inventadas, y cerrando con el paso concreto en el panel para ejecutarlo (ej: "andá a Campañas → Nueva campaña").
 
 También podés ayudar a configurar el BOT de WhatsApp del negocio en lenguaje natural, con un flujo de DOS PASOS OBLIGATORIOS. Paso 1: cuando el usuario pida cambiar el comportamiento del bot ("quiero un bot más amable", "que nunca diga X", "cambiá el mensaje de offline"), usá propose_bot_config con su pedido — devuelve un BORRADOR de system prompt y de mensaje de offline. Mostrale al usuario AMBOS textos COMPLETOS y preguntale si los aplica tal cual o quiere ajustar algo. Paso 2: SOLO cuando el usuario confirme explícitamente en la conversación ("sí, aplicalo", "dale, confirmo"), usá apply_bot_config con confirmado=true y los textos confirmados. NUNCA apliques sin esa confirmación explícita; si pide ajustes, volvé a proponer con propose_bot_config. apply_bot_config valida el límite de 4000 caracteres del system prompt y, solo en el mensaje de offline (el cliente lo ve), rechaza la palabra "casino" y promesas de premios garantizados — el system prompt puede mencionarlas para prohibirlas; el valor anterior queda respaldado en el registro de actividad por si hay que volver atrás.
 
@@ -150,7 +152,7 @@ const STAFF_TOOLS: Tool[] = [
   {
     name: 'get_metrics',
     description:
-      'Métricas y conteos generales del CRM: total de contactos y su distribución por estado (nuevo, cliente_activo, inactivo, bloqueado), contactos nuevos hoy/últimos 7 días/este mes, total de mensajes y mensajes de hoy, comprobantes por estado (pendiente, verificado, rechazado), y monto verificado total y del mes. Usala para cualquier pregunta de "cuántos…" o de métricas del dashboard.',
+      'Métricas y conteos generales del CRM (la foto del negocio): total de contactos y su distribución por estado (nuevo, cliente_activo, inactivo, bloqueado), contactos nuevos hoy/últimos 7 días/este mes, total de mensajes y mensajes de hoy, comprobantes por estado (pendiente, verificado, rechazado), y monto verificado total y del mes. Incluye ADEMÁS comparativa_mensual (este mes vs el mes anterior: conversaciones, contactos nuevos, recargas, monto verificado y ticket promedio) y sla_primera_respuesta_humana (minutos promedio hasta que un humano responde, ventana de 30 días). Usala para cualquier pregunta de "cuántos…", métricas del dashboard, "cómo venimos", "cómo va el mes" o "cómo estamos".',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -279,15 +281,26 @@ async function countRows(table: string, tid: string, apply?: (q: any) => any): P
   return count ?? 0;
 }
 
+// Los límites de "hoy"/"mes" se alinean a la medianoche de Argentina (= 03:00 UTC)
+// vía ART_OFFSET_MS (definido más abajo), IGUAL que el dashboard (dashboard_stats),
+// para que los números que lee la IA coincidan con los widgets visuales.
 async function getMetrics(tid: string) {
-  const now = new Date();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-  const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const start7 = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
+  const utcNow  = new Date();
+  const argNow  = new Date(utcNow.getTime() - ART_OFFSET_MS);
+  const argYear = argNow.getUTCFullYear();
+  const argMon  = argNow.getUTCMonth();
+  const argDay  = argNow.getUTCDate();
+
+  const startToday     = new Date(Date.UTC(argYear, argMon, argDay, 3, 0, 0, 0)).toISOString();
+  const startMonth     = new Date(Date.UTC(argYear, argMon, 1, 3, 0, 0, 0)).toISOString();
+  const prevMonthStart = new Date(Date.UTC(argYear, argMon - 1, 1, 3, 0, 0, 0)).toISOString();
+  const prevMonthEnd   = startMonth; // exclusivo
+  const start7         = new Date(utcNow.getTime() - 7 * 24 * 3600 * 1000).toISOString();
+  const slaWindowStart = new Date(utcNow.getTime() - 30 * 24 * 3600 * 1000).toISOString();
 
   const [
     total, nuevo, clienteActivo, inactivo, bloqueado,
-    newToday, newWeek, newMonth,
+    newToday, newWeek, newMonth, newPrevMonth,
     msgsTotal, msgsToday,
     compPendiente, compVerificado, compRechazado,
   ] = await Promise.all([
@@ -299,6 +312,7 @@ async function getMetrics(tid: string) {
     countRows('contacts', tid, (q) => q.gte('created_at', startToday)),
     countRows('contacts', tid, (q) => q.gte('created_at', start7)),
     countRows('contacts', tid, (q) => q.gte('created_at', startMonth)),
+    countRows('contacts', tid, (q) => q.gte('created_at', prevMonthStart).lt('created_at', prevMonthEnd)),
     countRows('messages', tid),
     countRows('messages', tid, (q) => q.gte('created_at', startToday)),
     countRows('comprobantes', tid, (q) => q.eq('estado', 'pendiente')),
@@ -306,19 +320,55 @@ async function getMetrics(tid: string) {
     countRows('comprobantes', tid, (q) => q.eq('estado', 'rechazado')),
   ]);
 
+  // Montos verificados: total, este mes y mes anterior (para la comparativa).
   const { data: verif } = await supabaseAdmin
     .from('comprobantes')
     .select('monto, created_at')
     .eq('tenant_id', tid)
     .eq('estado', 'verificado');
 
-  let montoVerificadoTotal = 0;
-  let montoVerificadoMes = 0;
+  let montoVerificadoTotal = 0, montoVerificadoMes = 0, montoVerificadoPrev = 0;
+  let recargasMes = 0, recargasPrev = 0;
   for (const r of verif ?? []) {
     const m = Number(r.monto ?? 0);
     montoVerificadoTotal += m;
-    if (r.created_at && r.created_at >= startMonth) montoVerificadoMes += m;
+    const ts = r.created_at ?? '';
+    if (ts >= startMonth) { montoVerificadoMes += m; recargasMes++; }
+    else if (ts >= prevMonthStart && ts < prevMonthEnd) { montoVerificadoPrev += m; recargasPrev++; }
   }
+  const ticketMes  = recargasMes  > 0 ? montoVerificadoMes  / recargasMes  : 0;
+  const ticketPrev = recargasPrev > 0 ? montoVerificadoPrev / recargasPrev : 0;
+
+  // Conversaciones = contactos únicos con algún mensaje en el período (este mes vs anterior).
+  const [convMesRes, convPrevRes] = await Promise.all([
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', startMonth),
+    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid)
+      .gte('created_at', prevMonthStart).lt('created_at', prevMonthEnd),
+  ]);
+  const convMes  = new Set((convMesRes.data  ?? []).map((m: any) => m.contact_id)).size;
+  const convPrev = new Set((convPrevRes.data ?? []).map((m: any) => m.contact_id)).size;
+
+  // SLA de 1ra respuesta HUMANA (últimos 30 días): minutos promedio desde que el
+  // cliente escribe hasta que responde un humano. El bot (role=assistant) NO frena
+  // el cronómetro. Misma lógica que el dashboard.
+  const { data: slaMsgs } = await supabaseAdmin
+    .from('messages').select('contact_id, role, created_at').eq('tenant_id', tid)
+    .gte('created_at', slaWindowStart).order('created_at', { ascending: true });
+  const byContact = new Map<string, { role: string; ts: number }[]>();
+  for (const m of (slaMsgs ?? [])) {
+    const arr = byContact.get(m.contact_id) ?? [];
+    arr.push({ role: m.role, ts: new Date(m.created_at).getTime() });
+    byContact.set(m.contact_id, arr);
+  }
+  let slaTotalMs = 0, slaCount = 0;
+  for (const msgs of byContact.values()) {
+    let pendingUserTs: number | null = null;
+    for (const { role, ts } of msgs) {
+      if (role === 'user') { if (pendingUserTs === null) pendingUserTs = ts; }
+      else if (role === 'human') { if (pendingUserTs !== null) { slaTotalMs += ts - pendingUserTs; slaCount++; pendingUserTs = null; } }
+    }
+  }
+  const slaPromedioMin = slaCount > 0 ? Math.round((slaTotalMs / slaCount) / 60000) : null;
 
   return {
     contactos: { total, nuevo, cliente_activo: clienteActivo, inactivo, bloqueado },
@@ -326,6 +376,21 @@ async function getMetrics(tid: string) {
     mensajes: { total: msgsTotal, hoy: msgsToday },
     comprobantes: { pendiente: compPendiente, verificado: compVerificado, rechazado: compRechazado },
     monto_verificado: { total: montoVerificadoTotal, este_mes: montoVerificadoMes, moneda: 'ARS' },
+    // Comparativa este mes vs mes anterior (mismos números que los widgets del dashboard).
+    comparativa_mensual: {
+      descripcion: 'Este mes vs el mes anterior (mes calendario, hora Argentina).',
+      conversaciones:   { este_mes: convMes,              mes_anterior: convPrev },
+      contactos_nuevos: { este_mes: newMonth,             mes_anterior: newPrevMonth },
+      recargas:         { este_mes: recargasMes,          mes_anterior: recargasPrev },
+      monto_verificado: { este_mes: montoVerificadoMes,   mes_anterior: montoVerificadoPrev, moneda: 'ARS' },
+      ticket_promedio:  { este_mes: Math.round(ticketMes), mes_anterior: Math.round(ticketPrev), moneda: 'ARS' },
+    },
+    sla_primera_respuesta_humana: {
+      promedio_minutos: slaPromedioMin,
+      ventana_dias: 30,
+      casos_medidos: slaCount,
+      descripcion: 'Minutos promedio desde que el cliente escribe hasta que un HUMANO responde (el bot no cuenta). null si no hubo casos en la ventana.',
+    },
   };
 }
 
