@@ -13,7 +13,6 @@ export async function GET() {
   try {
     const session = await getSessionAgent();
     if (!session) return new NextResponse('No autenticado', { status: 401 });
-    const isAgent = session.role !== 'admin';
 
     // 1. Contactos con su estado y last_read_at. TODOS los del tenant (agente y
     //    admin ven lo mismo; ya no se filtra por assigned_agent_id).
@@ -55,10 +54,12 @@ export async function GET() {
       else if (level === 'orange') newPending++;
     }
 
-    // 4. Pendientes de la bandeja, separados por tipo (cargas / pagos). Para
-    //    agentes, solo los de sus contactos. `tipoFilter`=null → no filtra por
-    //    tipo (degradación si la columna `tipo` aún no existe).
-    const ownedIds = Array.from(contactMap.keys());
+    // 4. Pendientes de la bandeja, separados por tipo (cargas / pagos). Se cuenta
+    //    por tenant (agente y admin ven lo mismo, igual que los contactos de
+    //    arriba); NO se filtra por contact_id: la lista de contactos del tenant
+    //    puede tener cientos de IDs y meterlos todos en un `.in()` hace fallar la
+    //    query en silencio (devolvía 0). `tipoFilter`=null → no filtra por tipo
+    //    (degradación si la columna `tipo` aún no existe).
     async function countPendientes(tipoFilter: 'carga' | 'pago' | null): Promise<number | null> {
       let q = supabaseAdmin
         .from('comprobantes')
@@ -66,7 +67,6 @@ export async function GET() {
         .eq('estado', 'pendiente')
         .eq('tenant_id', session!.tenant_id);
       if (tipoFilter) q = q.eq('tipo', tipoFilter);
-      if (isAgent) q = q.in('contact_id', ownedIds.length ? ownedIds : ['00000000-0000-0000-0000-000000000000']);
       const { count, error } = await q;
       if (error) return null; // columna ausente u otro error → degradar
       return count ?? 0;
