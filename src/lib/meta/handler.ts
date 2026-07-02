@@ -625,19 +625,22 @@ async function processMessage(
 
   // ── Bot SOLO onboardea contactos SIN nombre (conversaciones nuevas) ─────────
   // Si el contacto ya tiene identidad asignada (name o casino_username — el sync
-  // de arriba los deja iguales) y no está ya derivado, NO se onboardea: se lo
-  // saluda por su nombre y queda en cola del operador. Cubre el caso de un
-  // contacto que el operador nombró a mitad del flujo (conversation_state en un
-  // estado de onboarding): aun así se corta el onboarding, sin importar el state.
-  // El estado 'known_client' hace que classifyPending lo marque ROJO online.
+  // de arriba los deja iguales) y no está ya derivado, NO se onboardea: queda en
+  // cola del operador EN SILENCIO, sin mandarle ningún mensaje al cliente. Cubre
+  // el caso de un contacto que el operador nombró a mitad del flujo
+  // (conversation_state en un estado de onboarding): aun así se corta el
+  // onboarding, sin importar el state. Solo marcamos conversation_state en
+  // 'known_client' para que classifyPending lo pinte ROJO 🔴 online; el humano lo
+  // atiende vía los indicadores de color, no vía un saludo del bot.
   const known = (contact.casino_username ?? '').trim() || (contact.name ?? '').trim();
   const alreadyHandled = ['known_client', 'done'].includes(contact.conversation_state ?? '');
   if (known && botEnabled && !contact.blocked && !alreadyHandled) {
-    console.log(`[bot] Contacto con nombre asignado ("${known}") → handoff a humano, sin onboarding`);
-    await replyAndSave(
-      `¡Hola ${known}! Ya te reconocemos, en un momento te atendemos 👋`,
-      { newState: 'known_client' },
-    );
+    console.log(`[bot] Contacto con nombre asignado ("${known}") → handoff a humano, SIN mensaje (solo estado)`);
+    const { error: kcErr } = await supabaseAdmin
+      .from('contacts')
+      .update({ conversation_state: 'known_client' })
+      .eq('id', contact.id);
+    if (kcErr) console.warn('[bot] known_client state update error (columna puede no existir):', kcErr.message);
     return;
   }
 
