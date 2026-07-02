@@ -6,8 +6,10 @@
 //    el chat (bump de last_read_at) la marca como leída → limpia el pendiente.
 //  · Si el último mensaje es de un operador humano (role 'human') → NO pendiente
 //    (ya está siendo atendida).
-//  · 🔴 ROJO = no leída y (a) un humano YA la agarró (human_taken), o (b) es un
-//    cliente ya reconocido (conversation_state 'known_client', no pasa por el bot).
+//  · 🔴 ROJO = no leída, el último mensaje NO es automático del sistema, y (a) un
+//    humano YA la agarró (human_taken), o (b) es un cliente ya reconocido
+//    (conversation_state 'known_client'). Si la última palabra fue un mensaje
+//    automático (bot/offline, role 'assistant'), es 🟠 naranja, no rojo.
 //  · Sin color mientras el bot hace onboarding activo (conversation_state ∈
 //    BOT_FLOW_STATES): el bot está trabajando, todavía no hay nada para un humano.
 //  · 🟠 NARANJA = no leída y ninguno de los anteriores: el bot terminó el
@@ -34,6 +36,16 @@ export function classifyPending(opts: {
 
   // El operador humano fue el último en hablar → la conversación ya está atendida.
   if (lastRole === 'human') return null;
+
+  // Un mensaje automático del sistema (bot u offline, role 'assistant') como
+  // ÚLTIMA palabra NO es rojo: todavía no lo atendió ningún humano. Queda 🟠
+  // naranja aunque sea un cliente conocido (known_client) o tenga human_taken
+  // de antes — el rojo se reserva para cuando el cliente escribió y hay un
+  // humano realmente involucrado. Excepción: onboarding activo del bot
+  // (BOT_FLOW_STATES), que sigue SIN color más abajo.
+  if (lastRole === 'assistant' && !BOT_FLOW_STATES.has(conversationState ?? '')) {
+    return 'orange';
+  }
 
   // 🔴 ROJO: (a) ya la agarró un humano, o (b) cliente ya reconocido.
   if (humanTaken) return 'red';
