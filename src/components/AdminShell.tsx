@@ -476,7 +476,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     )}
                     {item === 'cargas' && unread.cargasPending > 0 && (
                       <span style={{
-                        background: '#b8860b', color: '#fff', borderRadius: '999px',
+                        background: '#E53935', color: '#fff', borderRadius: '999px',
                         fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                         padding: '0 5px', lineHeight: 1,
@@ -486,7 +486,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     )}
                     {item === 'pagos' && unread.pagosPending > 0 && (
                       <span style={{
-                        background: '#1a7a3a', color: '#fff', borderRadius: '999px',
+                        background: '#E53935', color: '#fff', borderRadius: '999px',
                         fontSize: '10px', fontWeight: 800, minWidth: '18px', height: '18px',
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                         padding: '0 5px', lineHeight: 1,

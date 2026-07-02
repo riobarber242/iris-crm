@@ -217,10 +217,16 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
 
   // ── Scroll helpers ───────────────────────────────────────────────────────
   const NEAR_BOTTOM_PX = 120; // margen para considerar "está mirando lo último"
-  function updateNearBottom() {
+  // Lee el DOM en vivo. En notebooks (DPI/zoom) el valor cacheado en el ref se
+  // desactualiza si cambió el layout sin un evento de scroll, así que medimos
+  // contra scrollHeight/scrollTop/clientHeight reales en el momento crítico.
+  function computeNearBottom(): boolean {
     const el = listRef.current;
-    if (!el) return;
-    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }
+  function updateNearBottom() {
+    isNearBottomRef.current = computeNearBottom();
   }
   function scrollToBottom() {
     const el = listRef.current;
@@ -364,6 +370,10 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
     supabaseRef.current = client;
 
     function onInsert(payload: any) {
+      // Recalcular contra el DOM real ANTES de insertar (el mensaje nuevo todavía
+      // no creció el alto). Así el setTimeout de abajo y el ResizeObserver, que
+      // dispara justo después, leen un ref fresco en vez de uno desactualizado.
+      isNearBottomRef.current = computeNearBottom();
       setMessages((m) => {
         const incoming = payload.new;
         // Ya está por id → no duplicar.
