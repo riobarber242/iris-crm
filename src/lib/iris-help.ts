@@ -112,6 +112,19 @@ Sección "Modo offline": cuando lo activás, el bot deja de atender y responde a
 
 "Plantillas de WhatsApp": mensajes predefinidos para campañas Template Meta. "+ Agregar plantilla" (nombre, idioma, cuerpo con variables {{1}}, botones opcionales) y "Enviar a Meta" para mandarla a aprobación. El control del bot y el modo offline NO están acá: se manejan en "Mi Bot".`,
   },
+
+  notificaciones: {
+    titulo: 'Notificaciones (instalar la app y activarlas)',
+    contenido: `Sirven para enterarte al instante cuando entra un mensaje de un cliente. Para activarlas: iniciá sesión en el panel y, cuando aparece abajo el cartel "🔔 Activá las notificaciones", tocá "Activar" y luego "Permitir" en el pedido del navegador. Conviene tener la app instalada (ver abajo según tu teléfono). Si falla, el propio cartel te dice la causa concreta (no un error genérico) y ese intento queda registrado para soporte.
+
+ANDROID + CHROME: para instalar la app, abrí el panel en Chrome, tocá el menú ⋮ arriba a la derecha y elegí "Instalar app" (o "Agregar a la pantalla principal"); después abrí IRIS desde ese ícono, no desde la pestaña. Activá las notificaciones desde el cartel. Si no llegan, revisá: permiso de notificaciones de Chrome en Ajustes de Android; optimización de batería (dejá Chrome/IRIS "sin restricción", si el sistema lo duerme no llegan); datos en segundo plano permitidos; y que no haya un DNS privado o VPN bloqueando los servidores de Google.
+
+ANDROID + SAMSUNG INTERNET: para instalar, abrí el panel en Samsung Internet, tocá el menú ☰ (abajo a la derecha) y elegí "Agregar página a → Pantalla de inicio"; abrí IRIS desde el ícono. El bloqueo más común en Samsung es el ahorro de energía: en Ajustes → Batería y cuidado del dispositivo → Batería → Límites de uso en segundo plano, asegurate de que IRIS y Samsung Internet NO estén en "Apps en suspensión" ni "suspensión profunda", y dejalos "Sin restricciones". Además revisá el permiso de notificaciones del sitio (Samsung Internet → Ajustes → Sitios web → Notificaciones) y que Google Play Services esté actualizado (las push pasan por Google).
+
+iPHONE / iPAD (iOS + SAFARI): en iOS las notificaciones SOLO funcionan si la app está instalada en la pantalla de inicio (nunca en una pestaña normal de Safari) y con iOS 16.4 o superior. Instalala así: abrí el panel en Safari, tocá el botón Compartir (el cuadrito con la flecha hacia arriba), deslizá y tocá "Agregar a inicio", confirmá con "Agregar". Después abrí IRIS desde ese ícono y recién ahí activá las notificaciones desde el cartel. Si el permiso quedó denegado, activalo en Ajustes de iOS → Notificaciones → IRIS.
+
+SEGÚN EL MENSAJE DE ERROR que veas al activar: "Las notificaciones están bloqueadas" = rechazaste el permiso antes, activalo en los ajustes del navegador y recargá; "No se pudo conectar con el servicio de notificaciones de Google" = suele ser Google Play Services, el ahorro de batería, un DNS privado o una VPN en ese teléfono (revisá la sección de tu equipo); "El navegador tardó demasiado" = conexión inestable, reintentá; "Había una suscripción anterior incompatible" = tocá Reintentar, se limpia sola; "La clave del servidor está mal configurada" = es del servidor, avisá al soporte de IRIS (no es tu teléfono). Aclaración honesta: la tecnología de notificaciones web no garantiza el 100% en todos los modelos (depende de Google/Apple y del manejo de batería de cada fabricante), pero con el mensaje de causa concreta cualquier fallo se identifica rápido.`,
+  },
 };
 
 export type HelpFlags = { top_clientes?: boolean; campanas?: boolean };
@@ -120,14 +133,14 @@ export type HelpFlags = { top_clientes?: boolean; campanas?: boolean };
 // middleware). Operador: base reducida + extras solo con permiso explícito.
 export function helpSectionsForRole(role: string, flags: HelpFlags = {}): string[] {
   if (role === 'operator') {
-    const base = ['conversaciones', 'contactos', 'cargas', 'pagos'];
+    const base = ['conversaciones', 'contactos', 'cargas', 'pagos', 'notificaciones'];
     if (flags.top_clientes) base.push('top_clientes');
     if (flags.campanas) base.push('campanas');
     return base;
   }
   if (role === 'admin') {
-    return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'operadores', 'agentes', 'mi_bot', 'configuracion'];
+    return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'operadores', 'agentes', 'mi_bot', 'configuracion', 'notificaciones'];
   }
   // agente: todo menos administración global (Operadores, Agentes/tenants).
-  return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'mi_bot', 'configuracion'];
+  return ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'top_clientes', 'campanas', 'mi_bot', 'configuracion', 'notificaciones'];
 }
