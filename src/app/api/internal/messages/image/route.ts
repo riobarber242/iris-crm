@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-import { requireInternalMember, resolveRoom } from '@/lib/internal-chat';
+import { requireInternalMember, resolveRoom, insertInternalMessage } from '@/lib/internal-chat';
 
 // POST /api/internal/messages/image — imagen en el chat interno.
 // multipart/form-data: file, caption?, roomId?. Sube al bucket 'comprobantes'
@@ -35,20 +35,16 @@ export async function POST(req: NextRequest) {
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
     const content = JSON.stringify({ _type: 'image', url: publicUrl, caption });
 
-    const { data: saved, error: dbError } = await supabaseAdmin
-      .from('internal_messages')
-      .insert({
-        tenant_id:   session.tenant_id,
-        room_id:     room.id,
-        author_id:   session.sub,
-        author_name: session.name,
-        author_role: session.role,
-        content,
-      })
-      .select('*')
-      .single();
+    const { data: saved, error: dbError } = await insertInternalMessage({
+      tenant_id:   session.tenant_id,
+      room_id:     room.id,
+      author_id:   session.sub,
+      author_name: session.name,
+      author_role: session.role,
+      content,
+    });
 
-    if (dbError || !saved) return NextResponse.json({ error: dbError?.message ?? 'Error guardando' }, { status: 500 });
+    if (dbError || !saved) return NextResponse.json({ error: dbError ?? 'Error guardando' }, { status: 500 });
 
     return NextResponse.json(saved, { status: 201 });
   } catch (err: any) {

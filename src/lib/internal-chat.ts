@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
+import { broadcastNewInternalMessage } from '@/lib/realtime-broadcast';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat interno del equipo (Etapa 1) — helpers compartidos.
@@ -141,8 +142,41 @@ export async function countRoomUnread(tenantId: string, roomId: string, agentId:
   return count ?? 0;
 }
 
+// Campos de un mensaje del chat interno a insertar.
+export type InternalMessageFields = {
+  tenant_id:    string;
+  room_id:      string;
+  author_id?:   string | null;
+  author_name?: string | null;
+  author_role?: string | null;
+  content:      string;
+};
+
+// ÚNICO punto de escritura del chat interno: inserta el mensaje y, si salió bien,
+// emite la señal de Realtime Broadcast para la sala (Fase 2). Todos los callers
+// (rutas de texto/imagen/audio y los avisos de sistema) pasan por acá, así el
+// broadcast queda garantizado sin duplicar lógica. El broadcast es best-effort:
+// no bloquea ni hace fallar el insert (el front tiene polling de respaldo).
+// Devuelve la fila guardada (o null) y el mensaje de error si lo hubo.
+export async function insertInternalMessage(
+  fields: InternalMessageFields,
+): Promise<{ data: any | null; error: string | null }> {
+  const { data, error } = await supabaseAdmin
+    .from('internal_messages')
+    .insert(fields)
+    .select('*')
+    .single();
+
+  if (error || !data) return { data: null, error: error?.message ?? 'No se pudo guardar el mensaje' };
+
+  // Señal de Realtime (sin contenido). No await-eamos el resultado como crítico:
+  // si falla, el mensaje ya está guardado y el polling lo trae igual.
+  await broadcastNewInternalMessage(fields.room_id).catch(() => {});
+  return { data, error: null };
+}
+
 // Postea un mensaje en la sala del tenant desde el SERVER (avisos de caja:
-// sueldo, cargas, descargas, cierres). Best-effort: si falla, devuelve null y el
+// sueldo, cargas, descargas, cierres). Best-effort: si falla, devuelve false y el
 // caller NO debe abortar su operación principal por esto. Si se pasa imageUrl, el
 // mensaje va como JSON {_type:'image', url, caption}; si no, como texto plano.
 export async function postInternalSystemMessage(
@@ -156,7 +190,7 @@ export async function postInternalSystemMessage(
     const content = imageUrl
       ? JSON.stringify({ _type: 'image', url: imageUrl, caption: text })
       : text;
-    const { error } = await supabaseAdmin.from('internal_messages').insert({
+    const { data } = await insertInternalMessage({
       tenant_id:   session.tenant_id,
       room_id:     room.id,
       author_id:   session.sub,
@@ -164,7 +198,7 @@ export async function postInternalSystemMessage(
       author_role: session.role,
       content,
     });
-    return !error;
+    return !!data;
   } catch {
     return false;
   }

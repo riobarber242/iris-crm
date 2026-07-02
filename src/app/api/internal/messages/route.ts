@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { checkRateLimit } from '@/lib/ratelimit';
-import { requireInternalMember, resolveRoom } from '@/lib/internal-chat';
+import { requireInternalMember, resolveRoom, insertInternalMessage } from '@/lib/internal-chat';
 
 // Mensajes del chat interno del equipo. NO sale a WhatsApp/Meta.
 // Aislamiento estricto: todo filtra por session.tenant_id y por una sala que
@@ -95,20 +95,16 @@ export async function POST(request: Request) {
   const room = await resolveRoom(session.tenant_id, body.roomId ?? null, session.sub);
   if (!room) return new NextResponse('Sala no encontrada', { status: 404 });
 
-  const { data: saved, error } = await supabaseAdmin
-    .from('internal_messages')
-    .insert({
-      tenant_id:   session.tenant_id,
-      room_id:     room.id,
-      author_id:   session.sub,
-      author_name: session.name,
-      author_role: session.role,
-      content,
-    })
-    .select('*')
-    .single();
+  const { data: saved, error } = await insertInternalMessage({
+    tenant_id:   session.tenant_id,
+    room_id:     room.id,
+    author_id:   session.sub,
+    author_name: session.name,
+    author_role: session.role,
+    content,
+  });
 
-  if (error || !saved) return new NextResponse(error?.message ?? 'Error guardando mensaje', { status: 500 });
+  if (error || !saved) return new NextResponse(error ?? 'Error guardando mensaje', { status: 500 });
 
   return NextResponse.json(saved, { status: 201 });
 }

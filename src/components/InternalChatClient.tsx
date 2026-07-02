@@ -329,6 +329,16 @@ export default function InternalChatClient() {
       setTimeout(() => { if (isNearBottomRef.current) scrollToBottom(); }, 50);
     }
 
+    // Fase 2 — Realtime Broadcast desde el server (señal, sin contenido). El
+    // postgres_changes de arriba dejó de emitir a la anon key al activar RLS; esta
+    // señal recupera la inmediatez. Al recibirla re-fetcheamos por la API
+    // autenticada (que trae el mensaje enriquecido: avatar + estado de traspaso) y
+    // marcamos leído porque la sala está abierta. Convive con el polling de 8s.
+    function onBroadcast() {
+      fetchMessages();
+      markRead();
+    }
+
     let retry = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
@@ -337,6 +347,7 @@ export default function InternalChatClient() {
       const channel = client
         .channel(`internal:room:${roomId}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'internal_messages', filter: `room_id=eq.${roomId}` }, onInsert)
+        .on('broadcast', { event: 'new_message' }, onBroadcast)
         .subscribe((status: string) => {
           if (status === 'SUBSCRIBED') { retry = 0; fetchMessages(); return; }
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
