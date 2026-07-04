@@ -8,6 +8,7 @@ import { inferProvinciaFromPhone } from '../phone-province';
 import { decideBotResponse, BOT_FLOW_STATES } from './bot-decision';
 import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
+import { insertMessage } from '../messages';
 
 // Tenant principal (fallback cuando no se puede resolver por whatsapp_phone_id).
 const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -475,7 +476,7 @@ async function processMessage(
 
   // ── Save user message ──────────────────────────────────────────────────────
   try {
-    const { error } = await supabaseAdmin.from('messages').insert({
+    const { error } = await insertMessage({
       contact_id:          contact.id,
       role:                'user',
       content:             userContent,
@@ -486,7 +487,7 @@ async function processMessage(
     if (error) {
       console.warn('[webhook] Insert mensaje usuario falló:', error.message, '— reintentando sin campos opcionales');
       // Retry without fields that might not exist in the schema
-      const { error: err2 } = await supabaseAdmin.from('messages').insert({
+      const { error: err2 } = await insertMessage({
         contact_id:          contact.id,
         role:                'user',
         content:             userContent,
@@ -536,11 +537,9 @@ async function processMessage(
     let dbInsertOk = false;
     let insertedId: string | null = null;
     try {
-      const { data: inserted, error } = await supabaseAdmin
-        .from('messages')
-        .insert({ contact_id: contact.id, role: 'assistant', content: textResp, tenant_id: tenantId })
-        .select('id')
-        .single();
+      const { data: inserted, error } = await insertMessage({
+        contact_id: contact.id, role: 'assistant', content: textResp, tenant_id: tenantId,
+      });
       if (error) {
         console.error('[replyAndSave] DB insert error:', error.message);
       } else {

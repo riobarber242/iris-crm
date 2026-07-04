@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
+import { insertMessage } from '@/lib/messages';
 
 // El envío hace sleeps entre mensajes (intervalo configurable + pausas). Subimos
 // el límite de ejecución de la función para listas grandes. OJO: aun así el plan
@@ -161,7 +162,7 @@ export async function POST(request: Request) {
         ? `[Template: ${campaign.template_name}]${resolvedVars.length ? ` (${resolvedVars.join(', ')})` : ''}`
         : campaign.message;
 
-      await supabaseAdmin.from('messages').insert({
+      await insertMessage({
         contact_id: contact.id,
         role:       'human',
         content:    msgContent,

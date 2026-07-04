@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppImage } from '@/lib/meta/client';
+import { insertMessage } from '@/lib/messages';
 
 export async function POST(req: NextRequest) {
   try {
@@ -49,19 +50,15 @@ export async function POST(req: NextRequest) {
       // Imagen subida pero WhatsApp falló: guardamos la fila como 'failed' y la
       // devolvemos con 207 (igual que audio). Así el cliente la reconcilia por id
       // y el evento Realtime no genera una burbuja duplicada.
-      const { data: saved } = await supabaseAdmin
-        .from('messages')
-        .insert({ contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'failed', tenant_id: session.tenant_id })
-        .select()
-        .single();
+      const { data: saved } = await insertMessage({
+        contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'failed', tenant_id: session.tenant_id,
+      });
       return NextResponse.json(saved ?? {}, { status: 207 });
     }
 
-    const { data: saved, error: dbError } = await supabaseAdmin
-      .from('messages')
-      .insert({ contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'sent', tenant_id: session.tenant_id })
-      .select()
-      .single();
+    const { data: saved, error: dbError } = await insertMessage({
+      contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'sent', tenant_id: session.tenant_id,
+    });
 
     if (dbError) {
       return NextResponse.json({ error: dbError.message }, { status: 500 });

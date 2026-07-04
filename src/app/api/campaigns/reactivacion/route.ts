@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppTemplate } from '@/lib/meta/client';
+import { insertMessage } from '@/lib/messages';
 
 // Campaña de reactivación de contactos inactivos.
 // Envía la plantilla de WhatsApp "reactivacion_inactivos" con {{1}} = nombre del
@@ -89,7 +90,7 @@ export async function POST(request: Request) {
     const nombre = nombreParaTemplate(c);
     try {
       await sendWhatsAppTemplate(c.phone, TEMPLATE_NAME, TEMPLATE_LANG, [nombre], REACTIVACION_PHONE_ID, session.tenant_id);
-      await supabaseAdmin.from('messages').insert({
+      await insertMessage({
         contact_id: c.id,
         role:       'human',
         content:    `[Campaña reactivación] plantilla ${TEMPLATE_NAME} ({{1}}=${nombre})`,

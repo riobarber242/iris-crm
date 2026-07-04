@@ -106,6 +106,17 @@ export default function ConversationsClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fase 2 — la señal de Realtime Broadcast la centraliza AdminShell (único
+  // suscriptor del canal por tenant, por el dedup de canales de la librería) y la
+  // reparte por este CustomEvent. Al recibirlo, re-fetcheamos la lista (ignoramos
+  // el contact_id del payload). Aditivo: el postgres_changes y el polling de 5s de
+  // arriba quedan de respaldo.
+  useEffect(() => {
+    function onBroadcast() { fetchRef.current(); }
+    window.addEventListener('iris:message-broadcast', onBroadcast);
+    return () => window.removeEventListener('iris:message-broadcast', onBroadcast);
+  }, []);
+
   const FILTERS: { key: typeof activeFilter; label: string }[] = [
     { key: 'todos',          label: 'Todos' },
     { key: 'nuevo',          label: 'Nuevo' },

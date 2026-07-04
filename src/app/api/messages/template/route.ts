@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppTemplate } from '@/lib/meta/client';
 import { getTemplate, previewTemplate } from '@/lib/meta/templates';
+import { insertMessage } from '@/lib/messages';
 
 // Envía una plantilla de WhatsApp a un contacto desde el chat (fallback de la
 // ventana de 24h). Body: { contactId, templateName }. {{1}} = nombre del contacto.
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
   }
 
   // Guardamos en el chat el texto real enviado (placeholder ya resuelto).
-  const { data: inserted, error } = await supabaseAdmin.from('messages').insert({
+  const { data: inserted, error } = await insertMessage({
     contact_id: contactId,
     role:       'human',
     content:    previewTemplate(def, nombre),
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
     agent_name: session.name,
     tenant_id:  session.tenant_id,
     status:     failureReason ? 'failed' : 'sent',
-  }).select('*').single();
+  });
 
   if (error) return new NextResponse(error.message, { status: 500 });
 

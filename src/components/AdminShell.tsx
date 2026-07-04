@@ -170,6 +170,32 @@ export function AdminShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Fase 2 — Realtime Broadcast por tenant (señal). AdminShell está montado siempre
+  // en el shell, así que es el ÚNICO suscriptor del canal `messages:tenant:${tid}`:
+  // la librería dedupea los canales por topic, de modo que si cada vista se
+  // suscribiera por su cuenta, el cleanup de una desmontaría el canal COMPARTIDO de
+  // las otras. Concentramos la suscripción acá y repartimos la señal al resto por
+  // un CustomEvent de window (mismo patrón que 'refresh-unread'). Cada mensaje nuevo
+  // del tenant refresca el badge y avisa a ConversationsClient/ChatWindow con el
+  // contact_id. Aditivo: el postgres_changes y el polling de 15s quedan de respaldo.
+  const messagesTenant = agent?.tenant_id ?? null;
+  useEffect(() => {
+    if (!messagesTenant) return;
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    const ch = sb.channel(`messages:tenant:${messagesTenant}`)
+      .on('broadcast' as any, { event: 'new_message' }, (msg: any) => {
+        fetchUnreadRef.current();
+        window.dispatchEvent(new CustomEvent('iris:message-broadcast', {
+          detail: { contact_id: msg?.payload?.contact_id ?? null },
+        }));
+      })
+      .subscribe();
+    return () => {
+      try { sb.removeChannel(ch); } catch (err) { console.warn('[messages broadcast] removeChannel falló:', err); }
+    };
+  }, [messagesTenant]);
+
   // Badge de no-leídos del CHAT INTERNO. Solo para miembros (agent/operator);
   // el admin de plataforma no participa, así que no consultamos para ese rol.
   // Refresca por polling, por el evento que dispara InternalChatClient al marcar

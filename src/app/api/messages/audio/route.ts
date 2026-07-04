@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppAudio } from '@/lib/meta/client';
 import { toOggOpus } from '@/lib/audio/toOggOpus';
+import { insertMessage } from '@/lib/messages';
 
 export async function POST(req: NextRequest) {
   try {
@@ -66,11 +67,9 @@ export async function POST(req: NextRequest) {
       whatsappStatus = 'failed';
     }
 
-    const { data: saved, error: dbError } = await supabaseAdmin
-      .from('messages')
-      .insert({ contact_id: contactId, role: 'human', content, status: whatsappStatus, tenant_id: session.tenant_id })
-      .select()
-      .single();
+    const { data: saved, error: dbError } = await insertMessage({
+      contact_id: contactId, role: 'human', content, status: whatsappStatus, tenant_id: session.tenant_id,
+    });
 
     if (dbError) {
       return NextResponse.json({ error: dbError.message }, { status: 500 });

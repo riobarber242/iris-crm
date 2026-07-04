@@ -41,3 +41,23 @@ export async function broadcastNewInternalMessage(roomId: string): Promise<void>
   if (!roomId) return;
   await broadcast(internalRoomTopic(roomId), 'new_message', { room_id: roomId });
 }
+
+// ─── Chat de clientes (messages) — Fase 2 ────────────────────────────────────
+// Topic por TENANT. DEBE coincidir con el nombre del canal del cliente
+// (ChatWindow, ConversationsClient y AdminShell usan
+// `client.channel('messages:tenant:${tenantId}')`). Con un único broadcast por
+// insert cubrimos las tres vistas: el chat abierto de un contacto (que filtra por
+// el contact_id del payload), la lista de conversaciones y el badge del sidebar.
+export function messagesTenantTopic(tenantId: string): string {
+  return `messages:tenant:${tenantId}`;
+}
+
+// Señal 'new_message' para el chat de clientes de un tenant. El contact_id viaja
+// en el payload (SIN contenido) para que el chat abierto de ESE contacto filtre y
+// re-fetchee; las vistas de todo el tenant lo ignoran y refrescan su scope. No se
+// expone ningún dato a la anon key: el cliente trae el mensaje por su API
+// autenticada. Best-effort: nunca lanza.
+export async function broadcastNewMessage(tenantId: string, contactId: string): Promise<void> {
+  if (!tenantId || !contactId) return;
+  await broadcast(messagesTenantTopic(tenantId), 'new_message', { contact_id: contactId });
+}

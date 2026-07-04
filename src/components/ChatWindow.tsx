@@ -434,6 +434,28 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
     };
   }, [contactId, fetchMessages, fetchVerifSent]);
 
+  // Fase 2 — señal de Realtime Broadcast del chat de clientes. El canal por tenant
+  // lo suscribe UNA sola vez AdminShell (la librería dedupea los canales por topic,
+  // así que si cada vista se suscribiera por su cuenta el cleanup de una tiraría el
+  // canal compartido de las otras) y reparte la señal por este CustomEvent con el
+  // contact_id. Si es de ESTE contacto, re-fetcheamos por la API autenticada (trae
+  // el mensaje enriquecido) y marcamos leído (el chat está abierto). Aditivo:
+  // convive con el postgres_changes y el polling de 8s de arriba, de respaldo.
+  useEffect(() => {
+    function onBroadcast(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail.contact_id !== contactId) return;
+      fetchMessages();
+      fetch('/api/messages/mark-read', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contactId }),
+      }).catch(() => {});
+    }
+    window.addEventListener('iris:message-broadcast', onBroadcast as EventListener);
+    return () => window.removeEventListener('iris:message-broadcast', onBroadcast as EventListener);
+  }, [contactId, fetchMessages]);
+
   // Sigue el fondo de forma robusta: el ResizeObserver dispara cada vez que el
   // contenido cambia de alto (mensajes nuevos, e imágenes/comprobantes que
   // cargan y expanden el alto). Si el usuario está pegado al fondo, baja al

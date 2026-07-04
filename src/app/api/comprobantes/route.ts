@@ -8,6 +8,7 @@ import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
 import { creditPlayer } from '@/lib/casino/client';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
+import { insertMessage } from '@/lib/messages';
 import type { SessionPayload } from '@/lib/session';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
@@ -429,7 +430,7 @@ export async function PATCH(request: Request) {
           await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
           // Registrar el aviso en el chat (mismo patrón que campañas: mensaje
           // 'human' enviado por el sistema, sin atribución a un agente).
-          await supabaseAdmin.from('messages').insert({
+          await insertMessage({
             contact_id: comprobante.contact_id,
             role:       'human',
             content:    msg,

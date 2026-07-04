@@ -5,6 +5,7 @@ import { getSessionAgent } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { insertMessage } from '@/lib/messages';
 
 // Acceso por TENANT: admin, agente y operador acceden a cualquier contacto de
 // su tenant (la asignación no restringe). Devuelve null si tiene acceso, o una
@@ -120,14 +121,14 @@ export async function POST(request: Request) {
       agent_role: session?.role ?? null,
       tenant_id:  session.tenant_id,
     };
-    let { data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert(messageRow).select('*').single();
+    let { data: inserted, error: insertError } = await insertMessage(messageRow);
 
     // Degradación elegante: si la columna agent_role aún no existe (migración
     // supabase-message-author-role.sql sin correr), reintentar sin ella para no
     // romper el envío. El rol igual se muestra (resuelto en vivo) y se registra.
     if (insertError && /agent_role|column|schema cache/i.test(insertError.message ?? '')) {
       const { agent_role: _omit, ...withoutRole } = messageRow;
-      ({ data: inserted, error: insertError } = await supabaseAdmin.from('messages').insert(withoutRole).select('*').single());
+      ({ data: inserted, error: insertError } = await insertMessage(withoutRole));
     }
 
     if (insertError || !inserted) {

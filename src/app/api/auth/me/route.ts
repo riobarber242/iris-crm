@@ -25,6 +25,10 @@ export async function GET() {
     id:   agent.id,
     name: agent.name,
     role: agent.role,
+    // tenant_id del token de sesión: lo necesita el browser para suscribirse al
+    // canal de Realtime Broadcast por tenant (Fase 2). No es sensible para el
+    // propio usuario (es su tenant). Sale de la sesión, no de un select nuevo.
+    tenant_id: session.tenant_id ?? null,
     can_see_top_clients: !!agent.can_see_top_clients,
     can_see_campaigns:   !!agent.can_see_campaigns,
     avatar_url: agent.avatar_url ?? null,
