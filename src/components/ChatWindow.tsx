@@ -254,7 +254,32 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
       const server: Message[] = (await res.json()).reverse();
       setMessages((prev) => {
         const optimistic = prev.filter((m) => !m.id); // sin id = aún no guardado
-        return [...server, ...optimistic];
+        if (optimistic.length === 0) return server;
+        // Descartar los optimistas que el server ya devolvió: un envío inserta la
+        // fila y dispara el Broadcast de Fase 2 ANTES de que el POST responda, así
+        // que este refetch (Broadcast o poll de 8s) trae la fila guardada mientras
+        // el temp sigue en vuelo → sin esto se ve la burbuja DUPLICADA hasta que el
+        // POST reconcilia (~2s). Espejo del dedup de onInsert (postgres_changes).
+        // Match por (rol, contenido) contra filas RECIENTES del server (ventana de
+        // recencia para no confundir con un mensaje viejo de idéntico texto del
+        // historial) y consumo 1-a-1 (mandar el mismo texto dos veces conserva las
+        // dos burbujas). Los que aún no están en el server se conservan (enviando /
+        // fallidos): el polling nunca borra una burbuja en vuelo.
+        const RECENT_MS = 60_000;
+        const now = Date.now();
+        const recent = new Map<string, number>();
+        for (const s of server) {
+          if (!s.created_at || now - new Date(s.created_at).getTime() > RECENT_MS) continue;
+          const k = `${s.role} ${s.content}`;
+          recent.set(k, (recent.get(k) ?? 0) + 1);
+        }
+        const stillPending = optimistic.filter((o) => {
+          const k = `${o.role} ${o.content}`;
+          const n = recent.get(k) ?? 0;
+          if (n > 0) { recent.set(k, n - 1); return false; } // ya está guardado → descartar
+          return true;                                       // aún en vuelo → conservar
+        });
+        return [...server, ...stillPending];
       });
     } catch {
       setLoadError(true);
