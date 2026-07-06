@@ -133,6 +133,18 @@ export default function PWARegister() {
   // ── Registro del SW + detección de versión nueva ──────────────────────────
   useEffect(() => {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+    // NO registrar el SW en dev: su fallback de navegación (caches.match('/'))
+    // sirve la landing para cualquier ruta cuando el fetch falla, y `next dev`
+    // recompila seguido → todas las rutas mostraban la landing "sin sesión".
+    // El SW solo tiene sentido en prod (PWA instalada / push). Además, desregistramos
+    // cualquier SW viejo que haya quedado de una corrida previa, así dev queda SW-free
+    // sin tener que limpiarlo a mano en el navegador.
+    if (process.env.NODE_ENV !== 'production') {
+      navigator.serviceWorker.getRegistrations?.()
+        .then((regs) => regs.forEach((r) => r.unregister()))
+        .catch(() => {});
+      return;
+    }
 
     let reloaded = false;
 
