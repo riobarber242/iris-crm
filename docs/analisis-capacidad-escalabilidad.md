@@ -197,11 +197,18 @@ Todos comparten la misma patología: **traer todo y procesar en Node** en vez de
 
 ---
 
-## 7. Cuello de botella #2 — el `.in()` gigante (bug latente, mismo que unread_counts)
+## 7. Cuello de botella #2 — el `.in()` gigante silencioso
 
-`src/app/api/campaigns/reactivacion/route.ts:31` arma un `.in('contact_id', ids)` donde `ids = todos los contactos inactivos del tenant` (mapeados de un `select` sin límite). **Es exactamente el bug que ya conocés en `unread_counts`:** supabase-js manda el `.in()` como query-string en la URL; con miles de UUIDs (~37 chars c/u) se excede el largo máximo de URL de PostgREST y **la query falla en silencio (devuelve 0)**.
+El bug de clase `.in()` gigante (supabase-js manda la lista como query-string; con >~180 UUIDs se excede el largo de URL → **HTTP 414, la query falla en silencio y devuelve 0**) es real. **Verificado en vivo:** un `.in('id', ids)` con 12.000 UUIDs devuelve `414 Request-URI Too Large` (lo corta Cloudflare antes de PostgREST); chunkeado en lotes de 200 devuelve las 12.000 filas completas.
 
-**Dónde explota:** en el tenant importado (`derqui17star`, 54.415 contactos) una reactivación masiva genera un `.in()` con decenas de miles de IDs → falla. El fix de `unread_counts` (usar `count head:true` en lugar de `.in()`) **no se replicó acá**.
+> ### ✅ RESUELTO — 2026-07-05/06 (commit `c998713`)
+> **Corrección al diagnóstico original:** este análisis apuntaba a `campaigns/reactivacion/route.ts:31`, pero esa ruta **y su componente `ReactivacionInactivos` estaban MUERTOS** — habían sido removidos de la UI en el commit `83fc01b` y no los llamaba ningún flujo vivo. El bug con el que ese `.in()` "fallaba en producción" **no podía dispararse por la app**. Además, en la práctica el tenant de 54k (`derqui17star`) tiene **0 inactivos** (están todos en `nuevo`), así que ni siquiera era latente por ahí.
+>
+> **El bug real y alcanzable estaba en el flujo vivo** (`/campanas` → wizard → `campaigns/send/route.ts:86`): cuando se eligen contactos a mano, `recipient_ids` iba a un solo `.in('id', ...)` con el mismo 414 silencioso. Se arregló ahí:
+> - `.in('id', explicitIds)` **chunkeado en lotes de 200** + **error surfacing** (antes `const { data } = ...` se tragaba el error → "0 enviados" en silencio; ahora revierte la campaña a borrador y devuelve el error).
+> - Se **borró el código muerto** (`ReactivacionInactivos` + `api/campaigns/reactivacion`).
+>
+> El fix del timeout del mismo flujo va en la §8.
 
 Otros `.in()` de riesgo medio (crecen con el histórico, hoy acotados): `iris-ai listTopClients:417`, `dashboard_stats:153`. El resto de los `.in()` del repo están acotados o ya chunked a 200 (bien).
 
@@ -212,7 +219,12 @@ El proyecto sube a Supabase Storage: media entrante de WhatsApp (`handler.ts`), 
 
 ## 8. Cuello de botella #3 — campañas masivas (N+1 secuencial)
 
-`campaigns/send/route.ts` y `campaigns/reactivacion/route.ts` envían **uno por uno** en un loop: por cada contacto → 1 llamada a Meta + `insertMessage` (1 INSERT) + `insert campaign_message_status` (1 INSERT), en serie con `sleep` entre cada uno. Además, **cargan todos los destinatarios sin paginar** y el `send_limit` se aplica *después* de traer todo. Para una campaña de miles de contactos (el tenant importado tiene 54k) son **miles de queries secuenciales**, protegidas solo por `maxDuration=300 s`. Es el patrón que puede **cortar una campaña por timeout** antes de terminar.
+`campaigns/send/route.ts` envía **uno por uno** en un loop: por cada contacto → 1 llamada a Meta + `insertMessage` (1 INSERT) + `insert campaign_message_status` (1 INSERT), en serie con `sleep` entre cada uno. Además **cargaba todos los destinatarios sin paginar** y el `send_limit` se aplicaba *después* de traer todo. Con el intervalo por defecto (1–3 s/mensaje) el techo real caía en **~100–150 contactos** antes del `maxDuration=300 s` → la campaña se **cortaba por timeout** a la mitad, en silencio. (La ruta vieja `campaigns/reactivacion` compartía el patrón, pero era código muerto — ver §7 — y se borró.)
+
+> ### ✅ RESUELTO — 2026-07-05/06 (commit `c998713`)
+> El loop ahora corre con **presupuesto de tiempo (270 s)**: corta limpio antes del `maxDuration`, deja la campaña en estado `enviando` y devuelve `done:false`. El **cliente reanuda automáticamente** (el wizard re-llama a `/send` hasta `done:true`, con barra de progreso). El resume se apoya en `campaign_recipients`, que ahora registra **cada intento** (éxito o fallo) → el avance es monótono y **el resume siempre termina** aunque un contacto falle siempre; `sent_count` sigue contando solo éxitos. Orden estable por `id` para que el `send_limit` y la reanudación sean deterministas entre llamadas.
+>
+> Verificado end-to-end (1 contacto, plantilla real): `status=completada`, `sent_count=1`, 1 fila en `campaign_recipients`. El corte-por-tiempo real (cientos de contactos) queda cubierto por lógica; no se forzó en prod por ser envíos reales.
 
 ---
 
