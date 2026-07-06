@@ -61,3 +61,17 @@ export async function broadcastNewMessage(tenantId: string, contactId: string): 
   if (!tenantId || !contactId) return;
   await broadcast(messagesTenantTopic(tenantId), 'new_message', { contact_id: contactId });
 }
+
+// ─── Comprobantes / movimientos — Fase 2 (completa) ──────────────────────────
+// Reusan el MISMO canal por tenant que los mensajes (una sola suscripción en
+// AdminShell), con eventos propios. Señal SIN contenido: el cliente re-fetchea por
+// su API autenticada (bandeja / caja / dashboard / badge). Best-effort: nunca lanza.
+// Recuperan la inmediatez que RLS le cortó a los postgres_changes de la anon key.
+export async function broadcastComprobanteChange(tenantId: string): Promise<void> {
+  if (!tenantId) return;
+  await broadcast(messagesTenantTopic(tenantId), 'comprobante_change', {});
+}
+export async function broadcastMovimientoChange(tenantId: string): Promise<void> {
+  if (!tenantId) return;
+  await broadcast(messagesTenantTopic(tenantId), 'movimiento_change', {});
+}

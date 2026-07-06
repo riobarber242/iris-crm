@@ -69,11 +69,14 @@ export default function CajaResumen() {
     }
     const refreshAll = () => { load(); fetchCasinoBalance(); };
     refreshAll();
-    const t = setInterval(refreshAll, 15_000);
+    // Poll de respaldo relajado a 30 s: la inmediatez la da el Broadcast de Fase 2.
+    const t = setInterval(refreshAll, 30_000);
 
-    // Realtime: cualquier movimiento de caja (carga, pago, sueldo, descarga,
-    // traspaso) escribe en `movimientos` y refresca los saldos al instante.
-    // El poll de arriba queda como respaldo si el canal no está disponible.
+    // Fase 2: señal de movimiento (via AdminShell) → refresca los saldos al instante.
+    const onMov = () => refreshAll();
+    window.addEventListener('iris:movimiento-broadcast', onMov);
+
+    // postgres_changes de respaldo (dead bajo RLS para la anon key).
     const sb = getSupabaseBrowser();
     let ch: any = null;
     if (sb && tid) {
@@ -85,6 +88,7 @@ export default function CajaResumen() {
     return () => {
       alive = false;
       clearInterval(t);
+      window.removeEventListener('iris:movimiento-broadcast', onMov);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[caja-resumen realtime] removeChannel falló:', err); } }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

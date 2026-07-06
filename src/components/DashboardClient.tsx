@@ -239,6 +239,16 @@ export default function DashboardClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tid]);
 
+  // Fase 2: señal de comprobante (via AdminShell). Refresca montos/pendientes, y
+  // "de rebote" el status de contactos (una verificación cambia el status → cuentas
+  // del embudo). Los cambios por mensaje ya los cubre el poll de 15s.
+  useEffect(() => {
+    const h = () => { fetchStats(); fetchCharts(); };
+    window.addEventListener('iris:comprobante-broadcast', h);
+    return () => window.removeEventListener('iris:comprobante-broadcast', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function saveLayout(next: WidgetConfig[]) {
     setLayout(next); // optimista
     layoutRef.current = next;

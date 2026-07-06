@@ -193,6 +193,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
           detail: { contact_id: msg?.payload?.contact_id ?? null },
         }));
       })
+      // Fase 2 completa: comprobantes y movimientos reusan este mismo canal por
+      // tenant (una sola suscripción). AdminShell reparte por CustomEvent; el badge
+      // se refresca en comprobante_change (cargas/pagos pendientes cambian).
+      .on('broadcast' as any, { event: 'comprobante_change' }, () => {
+        fetchUnreadRef.current();
+        window.dispatchEvent(new CustomEvent('iris:comprobante-broadcast'));
+      })
+      .on('broadcast' as any, { event: 'movimiento_change' }, () => {
+        window.dispatchEvent(new CustomEvent('iris:movimiento-broadcast'));
+      })
       .subscribe();
     return () => {
       try { sb.removeChannel(ch); } catch (err) { console.warn('[messages broadcast] removeChannel falló:', err); }

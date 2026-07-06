@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { isCajaEnabled, isCasinoEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
 import { postInternalSystemMessage } from '@/lib/internal-chat';
+import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -357,6 +358,7 @@ export async function POST(request: Request) {
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
     // Aviso al chat interno (solo registro, sin botones).
     await postInternalSystemMessage(session, `💙 ${session.name} cobró su sueldo: $${(r.monto ?? 0).toLocaleString('es-AR')}`);
+    await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2: caja al instante
     return NextResponse.json({ ok: true, monto: r.monto, saldo: r.saldo });
   }
 
@@ -391,6 +393,7 @@ export async function POST(request: Request) {
       `🟠 Descarga de ${session.name}: $${monto.toLocaleString('es-AR')}`,
       imageUrl,
     );
+    await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId });
   }
 
@@ -400,6 +403,7 @@ export async function POST(request: Request) {
     const destinoId = body.destinoId != null && String(body.destinoId).trim() ? String(body.destinoId) : null;
     const r = await cerrarTurno(session, destinoId);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
     return NextResponse.json({ ok: true, comprobanteId: r.comprobanteId, monto: r.monto });
   }
 

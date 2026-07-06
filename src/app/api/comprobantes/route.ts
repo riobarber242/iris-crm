@@ -9,6 +9,7 @@ import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoCompro
 import { creditPlayer } from '@/lib/casino/client';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import { insertMessage } from '@/lib/messages';
+import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import type { SessionPayload } from '@/lib/session';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
@@ -183,6 +184,9 @@ export async function POST(request: Request) {
   }
   if (error) return new NextResponse(error.message, { status: 500 });
 
+  // Fase 2: señal de comprobante nuevo (bandeja/badge/dashboard re-fetchean). Best-effort.
+  await broadcastComprobanteChange(session.tenant_id).catch(() => {});
+
   await logActivity({
     session,
     action:     ACTIVITY.COMPROBANTE_ENVIADO,
@@ -258,6 +262,8 @@ export async function PATCH(request: Request) {
     }
     if (error) return new NextResponse(error.message, { status: 500 });
 
+    await broadcastComprobanteChange(session.tenant_id).catch(() => {});
+
     await logActivity({
       session,
       action:     ACTIVITY.COMPROBANTE_EDITADO,
@@ -282,6 +288,7 @@ export async function PATCH(request: Request) {
     const { data, error } = await supabaseAdmin
       .from('comprobantes').update({ monto }).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single();
     if (error) return new NextResponse(error.message, { status: 500 });
+    await broadcastComprobanteChange(session.tenant_id).catch(() => {});
     return NextResponse.json(data);
   }
 
@@ -398,6 +405,14 @@ export async function PATCH(request: Request) {
       .from('comprobantes').update(fallback).eq('id', comprobanteId).eq('tenant_id', session.tenant_id).select('*').single());
   }
   if (error) return new NextResponse(error.message, { status: 500 });
+
+  // Fase 2: señal de comprobante verificado/rechazado. Como el status del contacto
+  // se reconcilia acá abajo, esta señal cubre "de rebote" el cambio de contacto
+  // (ConversationsClient/DashboardClient re-fetchean en comprobante_change). Y como
+  // verificar una carga/pago mueve plata de caja (billetera/pozo), emitimos también
+  // movimiento_change para que las pantallas de caja refresquen al instante.
+  await broadcastComprobanteChange(session.tenant_id).catch(() => {});
+  if (estado === 'verificado') await broadcastMovimientoChange(session.tenant_id).catch(() => {});
 
   // ── Reconciliar status del contacto con la regla de 3 estados ──
   // (nuevo / cliente_activo este mes / inactivo). Misma lógica que el cron.

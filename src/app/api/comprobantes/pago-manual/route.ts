@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { broadcastComprobanteChange } from '@/lib/realtime-broadcast';
 
 // Carga manual de un pago hecho por el agente desde afuera (premio grande pagado
 // por fuera del sistema). SOLO admin/agent. Sube la imagen del comprobante y
@@ -69,6 +70,9 @@ export async function POST(req: NextRequest) {
     }
     return new NextResponse(error.message, { status: 500 });
   }
+
+  // Fase 2: señal de comprobante nuevo (aparece en la bandeja Pagos / badge). Best-effort.
+  await broadcastComprobanteChange(session.tenant_id).catch(() => {});
 
   await logActivity({
     session,

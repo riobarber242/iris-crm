@@ -121,7 +121,13 @@ export default function ConversationsClient() {
   useEffect(() => {
     function onBroadcast() { fetchRef.current(); }
     window.addEventListener('iris:message-broadcast', onBroadcast);
-    return () => window.removeEventListener('iris:message-broadcast', onBroadcast);
+    // Piggyback Fase 2: una verificación de comprobante puede cambiar el status del
+    // contacto (→ badge/estado en la lista). Re-fetcheamos también con esa señal.
+    window.addEventListener('iris:comprobante-broadcast', onBroadcast);
+    return () => {
+      window.removeEventListener('iris:message-broadcast', onBroadcast);
+      window.removeEventListener('iris:comprobante-broadcast', onBroadcast);
+    };
   }, []);
 
   const FILTERS: { key: typeof activeFilter; label: string }[] = [

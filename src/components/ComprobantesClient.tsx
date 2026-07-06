@@ -96,6 +96,7 @@ export default function ComprobantesClient(
   const [loadingMore, setLoadingMore]         = useState(false);
   const loadedCountRef                        = useRef(0);
   const searchMountRef                        = useRef(true);
+  const fetchSilentRef                         = useRef<() => void>(() => {});
   const PAGE_SIZE = 50;
 
   // Sustantivo de la bandeja para los textos (vacío/errores), según el tipo.
@@ -325,6 +326,17 @@ export default function ComprobantesClient(
   // la ventana ya cargada sin depender de un closure viejo.
   useEffect(() => { loadedCountRef.current = comprobantes.length; }, [comprobantes]);
 
+  // fetchSilent siempre al día (evita el closure viejo en el poll/realtime/broadcast,
+  // que si no refrescarían con el filtro/búsqueda del primer render).
+  useEffect(() => { fetchSilentRef.current = fetchSilent; });
+
+  // Fase 2: al recibir la señal de comprobante (via AdminShell), refresca al instante.
+  useEffect(() => {
+    const h = () => fetchSilentRef.current();
+    window.addEventListener('iris:comprobante-broadcast', h);
+    return () => window.removeEventListener('iris:comprobante-broadcast', h);
+  }, []);
+
   // Búsqueda server-side con debounce: al tipear, reseteamos a la 1ª página con `q`.
   // Saltamos el primer render (el fetch inicial lo hace el effect de montaje de abajo).
   useEffect(() => {
@@ -337,15 +349,16 @@ export default function ComprobantesClient(
   useEffect(() => {
     fetchComprobantes();
 
-    // Polling every 10 s — works even if Supabase Realtime isn't configured
-    const interval = setInterval(fetchSilent, 10_000);
+    // Poll de respaldo relajado a 30 s: la inmediatez la da el Broadcast de Fase 2
+    // (iris:comprobante-broadcast). El poll queda de red de seguridad.
+    const interval = setInterval(() => fetchSilentRef.current(), 30_000);
 
     const sb = getSupabaseBrowser();
     if (sb && tid) {
       supabaseRef.current = sb;
       const ch = sb
         .channel('realtime-comprobantes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes', filter: `tenant_id=eq.${tid}` }, fetchSilent)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes', filter: `tenant_id=eq.${tid}` }, () => fetchSilentRef.current())
         .subscribe();
       channelRef.current = ch;
     }

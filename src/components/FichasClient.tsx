@@ -174,7 +174,12 @@ export default function FichasClient() {
     // movimiento de caja escribe en `movimientos` y refresca pozo/billeteras
     // al instante. Si el canal no está disponible, el poll cubre igual.
     const refreshAll = () => { fetchResumen(); fetchCasinoBalance(); };
-    const t = setInterval(refreshAll, 15_000);
+    // Poll de respaldo relajado a 30 s: la inmediatez la da el Broadcast de Fase 2.
+    const t = setInterval(refreshAll, 30_000);
+
+    // Fase 2: señal de movimiento (via AdminShell) → refresca pozo/billeteras/descargas al instante.
+    const onMov = () => refreshAll();
+    window.addEventListener('iris:movimiento-broadcast', onMov);
 
     const sb = getSupabaseBrowser();
     let ch: any = null;
@@ -186,6 +191,7 @@ export default function FichasClient() {
 
     return () => {
       clearInterval(t);
+      window.removeEventListener('iris:movimiento-broadcast', onMov);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[fichas realtime] removeChannel falló:', err); } }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

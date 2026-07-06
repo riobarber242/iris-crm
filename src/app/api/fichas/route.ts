@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import {
   recargarFichas, isCajaEnabled,
   setStock, setBilletera, borrarMovimiento, resetTotal,
@@ -182,6 +183,7 @@ export async function POST(request: Request) {
     case 'recargar': {
       const r = await recargarFichas(session, Number(body.cantidad));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json({ ok: true, stock: r.stock });
     }
 
@@ -195,6 +197,7 @@ export async function POST(request: Request) {
         session, action: ACTIVITY.CONFIG_CHANGED, objectType: 'config', objectId: 'caja_enabled',
         details: { key: 'caja_enabled', value: enabled },
       });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2: refleja el toggle en las otras vistas
       return NextResponse.json({ ok: true, caja_enabled: enabled });
     }
 
@@ -203,24 +206,28 @@ export async function POST(request: Request) {
     case 'set_stock': {
       const r = await setStock(session, Number(body.stock));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json(r);
     }
 
     case 'set_billetera': {
       const r = await setBilletera(session, String(body.operadorId ?? ''), Number(body.saldo));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json(r);
     }
 
     case 'reset_billetera': {
       const r = await setBilletera(session, String(body.operadorId ?? ''), 0);
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json(r);
     }
 
     case 'borrar_movimiento': {
       const r = await borrarMovimiento(session, String(body.movimientoId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json(r);
     }
 
@@ -233,6 +240,7 @@ export async function POST(request: Request) {
         monto:     Number(body.monto),
       });
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json({ ok: true, saldo_origen: r.saldoOrigen, saldo_destino: r.saldoDestino });
     }
 
@@ -242,6 +250,7 @@ export async function POST(request: Request) {
     case 'verificar_descarga': {
       const r = await verificarDescarga(session, String(body.comprobanteId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json({ ok: true, saldo_operador: r.saldoOperador, saldo_agente: r.saldoAgente });
     }
 
@@ -250,6 +259,7 @@ export async function POST(request: Request) {
     case 'rechazar_descarga': {
       const r = await rechazarDescarga(session, String(body.comprobanteId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json({ ok: true });
     }
 
@@ -258,6 +268,7 @@ export async function POST(request: Request) {
     case 'verificar_traspaso': {
       const r = await verificarTraspaso(session, String(body.comprobanteId ?? ''));
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json({ ok: true, resumen: r.resumen });
     }
 
@@ -269,6 +280,7 @@ export async function POST(request: Request) {
       }
       const r = await resetTotal(session, body.borrar_comprobantes === true);
       if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+      await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
       return NextResponse.json(r);
     }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSessionAgent } from '@/lib/current-agent';
 import { verificarTraspaso, rechazarTraspaso } from '@/lib/caja';
+import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verificación / rechazo de un CIERRE DE TURNO (traspaso) por el RECEPTOR.
@@ -30,12 +31,14 @@ export async function POST(request: Request) {
   if (accion === 'verificar') {
     const r = await verificarTraspaso(session, comprobanteId);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
     return NextResponse.json({ ok: true, resumen: r.resumen });
   }
 
   if (accion === 'rechazar') {
     const r = await rechazarTraspaso(session, comprobanteId);
     if (!r.ok) return new NextResponse(r.error, { status: r.degraded ? 409 : 400 });
+    await broadcastMovimientoChange(session.tenant_id).catch(() => {}); // Fase 2
     return NextResponse.json({ ok: true });
   }
 

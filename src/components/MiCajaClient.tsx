@@ -664,11 +664,14 @@ export default function MiCajaClient() {
   useEffect(() => {
     load();
     fetchCasinoBalance();
-    const t = setInterval(() => { load(); fetchCasinoBalance(); }, 15_000);
+    // Poll de respaldo relajado a 30 s: la inmediatez la da el Broadcast de Fase 2.
+    const t = setInterval(() => { load(); fetchCasinoBalance(); }, 30_000);
 
-    // Realtime: cualquier movimiento de caja escribe en `movimientos` y
-    // refresca mi billetera / pozo / movs (y el saldo casino) al instante. El
-    // poll queda de respaldo.
+    // Fase 2: señal de movimiento (via AdminShell) → refresca billetera/pozo/movs al instante.
+    const onMov = () => { load(); fetchCasinoBalance(); };
+    window.addEventListener('iris:movimiento-broadcast', onMov);
+
+    // postgres_changes de respaldo (dead bajo RLS para la anon key, se mantiene por si acaso).
     const sb = getSupabaseBrowser();
     let ch: any = null;
     if (sb && tid) {
@@ -679,6 +682,7 @@ export default function MiCajaClient() {
 
     return () => {
       clearInterval(t);
+      window.removeEventListener('iris:movimiento-broadcast', onMov);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[mi-caja realtime] removeChannel falló:', err); } }
     };
   }, [load, fetchCasinoBalance, tid]);
