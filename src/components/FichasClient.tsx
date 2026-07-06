@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { useAuth } from '@/components/AuthProvider';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pantalla de Caja de fichas (solo admin/agent). Parte 2: stock del pozo,
@@ -85,6 +86,9 @@ const sectionBadge: React.CSSProperties = {
 
 export default function FichasClient() {
   const [data, setData]       = useState<Resumen | null>(null);
+  // tenant del usuario: filtra el postgres_changes de movimientos por tenant.
+  const { agent } = useAuth();
+  const tid = agent?.tenant_id ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
@@ -174,9 +178,9 @@ export default function FichasClient() {
 
     const sb = getSupabaseBrowser();
     let ch: any = null;
-    if (sb) {
+    if (sb && tid) {
       ch = sb.channel('realtime-fichas')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, refreshAll)
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos', filter: `tenant_id=eq.${tid}` }, refreshAll)
         .subscribe();
     }
 
@@ -185,7 +189,7 @@ export default function FichasClient() {
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[fichas realtime] removeChannel falló:', err); } }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tid]);
 
   // Abrir "Pendientes de verificar" automáticamente solo la PRIMERA vez que
   // llegan datos y hay pendientes. Después respetamos lo que toque el usuario

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { useAuth } from '@/components/AuthProvider';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del operador (Etapa 4b) — SOLO LECTURA.
@@ -520,6 +521,9 @@ function CerrarTurnoModal({ resumen, operadores, busy, error, done, onConfirm, o
 // ── Componente principal ───────────────────────────────────────────────────────
 export default function MiCajaClient() {
   const [data, setData]   = useState<Resumen | null>(null);
+  // tenant del usuario: filtra el postgres_changes de movimientos por tenant.
+  const { agent } = useAuth();
+  const tid = agent?.tenant_id ?? null;
   const [vista, setVista] = useState<Vista>('resumen');
   const [compId, setCompId] = useState<string | null>(null);
 
@@ -667,9 +671,9 @@ export default function MiCajaClient() {
     // poll queda de respaldo.
     const sb = getSupabaseBrowser();
     let ch: any = null;
-    if (sb) {
+    if (sb && tid) {
       ch = sb.channel('realtime-mi-caja')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => { load(); fetchCasinoBalance(); })
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos', filter: `tenant_id=eq.${tid}` }, () => { load(); fetchCasinoBalance(); })
         .subscribe();
     }
 
@@ -677,7 +681,7 @@ export default function MiCajaClient() {
       clearInterval(t);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[mi-caja realtime] removeChannel falló:', err); } }
     };
-  }, [load, fetchCasinoBalance]);
+  }, [load, fetchCasinoBalance, tid]);
 
   if (!data) return <Vacio texto="Cargando tu caja…" />;
 

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, Fragment } from 'react';
 import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { useAuth } from '@/components/AuthProvider';
 import { DonutChart, BarChart, ArgentinaMap, type ChartsData } from './DashboardCharts';
 import DashboardCustomizer from './DashboardCustomizer';
 import { DEFAULT_LAYOUT, widgetGroup, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
@@ -118,6 +119,9 @@ function ChartSkeleton() {
 export default function DashboardClient() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [charts, setCharts] = useState<ChartsData | null>(null);
+  // tenant del usuario: filtra los postgres_changes por tenant (llega async → va en deps).
+  const { agent } = useAuth();
+  const tid = agent?.tenant_id ?? null;
   const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
   const [customValues, setCustomValues] = useState<Record<string, number>>({});
   const [customizing, setCustomizing] = useState(false);
@@ -213,15 +217,17 @@ export default function DashboardClient() {
     const interval = setInterval(() => { fetchStats(); fetchCharts(); fetchCustomMetrics(layoutRef.current); }, 15_000);
 
     const sb = getSupabaseBrowser();
-    if (sb) {
+    if (sb && tid) {
       supabaseRef.current = sb;
+      const f = `tenant_id=eq.${tid}`;
+      // Nota: se quitó la suscripción a `leads` — tabla muerta (0 filas, sin readers/
+      // writers; /api/leads calcula Top Clientes desde comprobantes). Nunca disparaba.
       const channel = sb
         .channel('realtime-dashboard')
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' },     () => { fetchStats(); fetchCharts(); })
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes' }, () => { fetchStats(); fetchCharts(); })
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'leads' },        fetchStats)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' },     fetchStats)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' },     fetchStats)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts',     filter: f }, () => { fetchStats(); fetchCharts(); })
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'comprobantes', filter: f }, () => { fetchStats(); fetchCharts(); })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages',     filter: f }, fetchStats)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages',     filter: f }, fetchStats)
         .subscribe();
       channelRef.current = channel;
     }
@@ -230,7 +236,8 @@ export default function DashboardClient() {
       clearInterval(interval);
       try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[dashboard realtime] removeChannel falló:', err); }
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tid]);
 
   async function saveLayout(next: WidgetConfig[]) {
     setLayout(next); // optimista

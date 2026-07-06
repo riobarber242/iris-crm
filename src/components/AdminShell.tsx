@@ -34,6 +34,8 @@ const BANNER_H = 80;
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { agent, loading, refresh, logout } = useAuth();
+  // tenant del usuario: filtra los postgres_changes por tenant (llega async → va en deps).
+  const tid = agent?.tenant_id ?? null;
   // El rol está confirmado en cuanto conocemos el agente (del backend o del
   // último rol recordado en AuthProvider). NO lo atamos a `loading`: así un
   // /api/auth/me lento o que falla una vez no deja al operador con el sidebar
@@ -151,14 +153,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
     window.addEventListener('refresh-unread', handleRefreshEvent);
 
     const sb = getSupabaseBrowser();
-    if (sb) {
+    if (sb && tid) {
       unreadSupabaseRef.current = sb;
+      const f = `tenant_id=eq.${tid}`;
       const ch = sb.channel('unread-badge')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages' }, fetchUnread)
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'messages', filter: f }, fetchUnread)
         // Cargas/pagos: el badge de comprobantes aparece/baja al instante igual
         // que el de conversaciones. '*' para reaccionar al alta (a verificar) y a
         // la resolución (verificado/rechazado → el conteo baja).
-        .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'comprobantes' }, fetchUnread)
+        .on('postgres_changes' as any, { event: '*', schema: 'public', table: 'comprobantes', filter: f }, fetchUnread)
         .subscribe();
       unreadChannelRef.current = ch;
     }
@@ -168,7 +171,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       window.removeEventListener('refresh-unread', handleRefreshEvent);
       try { if (unreadChannelRef.current) unreadSupabaseRef.current?.removeChannel(unreadChannelRef.current); } catch (err) { console.warn('[unread realtime] removeChannel falló:', err); }
     };
-  }, []);
+  }, [tid]);
 
   // Fase 2 — Realtime Broadcast por tenant (señal). AdminShell está montado siempre
   // en el shell, así que es el ÚNICO suscriptor del canal `messages:tenant:${tid}`:
@@ -218,9 +221,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
     window.addEventListener('refresh-internal-unread', fetchInternalUnread);
 
     const sb = getSupabaseBrowser();
-    if (sb) {
+    if (sb && tid) {
       const ch = sb.channel('internal-unread-badge')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'internal_messages' }, fetchInternalUnread)
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'internal_messages', filter: `tenant_id=eq.${tid}` }, fetchInternalUnread)
         .subscribe();
       internalChannelRef.current = ch;
     }
@@ -231,7 +234,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       window.removeEventListener('refresh-internal-unread', fetchInternalUnread);
       try { if (sb && internalChannelRef.current) sb.removeChannel(internalChannelRef.current); } catch (err) { console.warn('[internal unread realtime] removeChannel falló:', err); }
     };
-  }, [isInternalMember]);
+  }, [isInternalMember, tid]);
 
   // Refresh unread badge immediately on every route change
   // (when operator opens/closes a conversation, last_read_at updates → count drops)

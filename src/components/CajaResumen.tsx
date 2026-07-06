@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { useAuth } from '@/components/AuthProvider';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Banda de caja en el dashboard (solo admin/agent — el dashboard ya es staff).
@@ -37,6 +38,9 @@ function Card({ label, value, sub, dark }: { label: string; value: string; sub?:
 
 export default function CajaResumen() {
   const [data, setData] = useState<Resumen | null>(null);
+  // tenant del usuario: filtra el postgres_changes de movimientos por tenant.
+  const { agent } = useAuth();
+  const tid = agent?.tenant_id ?? null;
 
   // Saldo de fichas del agente en el casino (admin.celuapuestas.bond). Solo se
   // muestra en tenants con casino_deposit_enabled=true (lo decide el backend).
@@ -72,9 +76,9 @@ export default function CajaResumen() {
     // El poll de arriba queda como respaldo si el canal no está disponible.
     const sb = getSupabaseBrowser();
     let ch: any = null;
-    if (sb) {
+    if (sb && tid) {
       ch = sb.channel('realtime-caja-resumen')
-        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos' }, () => refreshAll())
+        .on('postgres_changes' as any, { event: 'INSERT', schema: 'public', table: 'movimientos', filter: `tenant_id=eq.${tid}` }, () => refreshAll())
         .subscribe();
     }
 
@@ -83,7 +87,8 @@ export default function CajaResumen() {
       clearInterval(t);
       if (sb && ch) { try { sb.removeChannel(ch); } catch (err) { console.warn('[caja-resumen realtime] removeChannel falló:', err); } }
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tid]);
 
   // No mostramos nada hasta tener datos, ni si la caja no está en uso.
   if (!data || data.degraded) return null;

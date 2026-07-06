@@ -26,6 +26,9 @@ export default function ConversationsClient() {
   // Eliminar conversación (borra el contacto completo): SOLO rol agente.
   const { agent } = useAuth();
   const canDelete = agent?.role === 'agent';
+  // tenant del usuario: filtra los postgres_changes para no recibir (ni re-fetchear
+  // por) eventos de OTROS tenants. Llega async, por eso va en las deps del effect.
+  const tid = agent?.tenant_id ?? null;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting,        setDeleting]        = useState<string | null>(null);
 
@@ -91,13 +94,14 @@ export default function ConversationsClient() {
     const timer = setInterval(() => fetchRef.current(), 60_000);
 
     const sb = getSupabaseBrowser();
-    if (sb) {
+    if (sb && tid) {
       sbRef.current = sb;
       const trigger = () => fetchRef.current();
+      const f = `tenant_id=eq.${tid}`;
       const ch = sb.channel('realtime-conversations')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, trigger)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, trigger)
-        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts' }, trigger)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages',  filter: f }, trigger)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages',  filter: f }, trigger)
+        .on('postgres_changes', { event: '*',      schema: 'public', table: 'contacts',  filter: f }, trigger)
         .subscribe();
       channelRef.current = ch;
     }
@@ -107,7 +111,7 @@ export default function ConversationsClient() {
       try { if (channelRef.current) sbRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[conversations realtime] removeChannel falló:', err); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tid]);
 
   // Fase 2 — la señal de Realtime Broadcast la centraliza AdminShell (único
   // suscriptor del canal por tenant, por el dedup de canales de la librería) y la

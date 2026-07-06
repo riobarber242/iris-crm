@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
+import { useAuth } from '@/components/AuthProvider';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { thumbUrl } from '@/lib/thumb';
 import PdfPreview from '@/components/PdfPreview';
@@ -64,6 +65,9 @@ export default function ComprobantesClient(
   { tipo, canManualPago = false, canDelete = false }: { tipo?: 'carga' | 'pago'; canManualPago?: boolean; canDelete?: boolean } = {},
 ) {
   const [comprobantes, setComprobantes]       = useState<ComprobanteItem[]>([]);
+  // tenant del usuario: filtra el postgres_changes por tenant (llega async → va en deps).
+  const { agent } = useAuth();
+  const tid = agent?.tenant_id ?? null;
   const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
   const [query,        setQuery]              = useState('');
   const [loading, setLoading]                 = useState(true);
@@ -284,11 +288,11 @@ export default function ComprobantesClient(
     const interval = setInterval(fetchSilent, 10_000);
 
     const sb = getSupabaseBrowser();
-    if (sb) {
+    if (sb && tid) {
       supabaseRef.current = sb;
       const ch = sb
         .channel('realtime-comprobantes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes' }, fetchSilent)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'comprobantes', filter: `tenant_id=eq.${tid}` }, fetchSilent)
         .subscribe();
       channelRef.current = ch;
     }
@@ -297,7 +301,8 @@ export default function ComprobantesClient(
       clearInterval(interval);
       try { if (channelRef.current) supabaseRef.current?.removeChannel(channelRef.current); } catch (err) { console.warn('[comprobantes realtime] removeChannel falló:', err); }
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tid]);
 
   // Botón + modal de carga manual de pago (solo Pagos · admin/agent). Se definen
   // acá para reusarlos en la vista vacía y en la vista con datos.
