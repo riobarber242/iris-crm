@@ -15,33 +15,25 @@ export async function GET(request: Request) {
     return new NextResponse('No autenticado', { status: 401 });
   }
 
-  let query = supabaseAdmin
-    .from('contacts')
-    .select('*, messages!inner(*)')
-    .eq('tenant_id', session.tenant_id)
-    .order('created_at', { ascending: false })
-    .order('created_at', { foreignTable: 'messages', ascending: false });
-  if (status) {
-    query = query.eq('status', status);
-  }
-  if (search) {
-    query = query.ilike('name', `%${search}%`).or(`phone.ilike.%${search}%`);
-  }
-
-  const { data, error } = await query;
+  // Fix de EGRESS #1: en vez de traer el historial COMPLETO de mensajes de cada
+  // contacto (`select('*, messages!inner(*)')`), la RPC devuelve por contacto solo
+  // el ÚLTIMO mensaje (en `messages` como array de 1, para no romper el frontend) y
+  // `pending_count` (entrantes sin leer, para el badge). Ver supabase-conversations-list-rpc.sql.
+  // Un solo viaje, ya ordenado por fecha del último mensaje DESC.
+  const { data, error } = await supabaseAdmin.rpc('fn_conversations_list', {
+    p_tenant_id: session.tenant_id,
+    p_status:    status || null,
+    p_search:    search || null,
+  });
   if (error) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  // Sort contacts by their most recent message DESC.
-  // messages[0] is already the latest per contact (ordered by foreignTable above).
-  const sorted = (data ?? []).sort((a: any, b: any) => {
-    const aTs = a.messages?.[0]?.created_at ?? a.created_at;
-    const bTs = b.messages?.[0]?.created_at ?? b.created_at;
-    return new Date(bTs).getTime() - new Date(aTs).getTime();
-  });
+  // La función devuelve una fila por contacto con una única columna `row` (el JSON
+  // ya armado: contacto + messages:[último] + pending_count).
+  const conversations = (data ?? []).map((r: any) => r.row);
 
-  return NextResponse.json(sorted);
+  return NextResponse.json(conversations);
 }
 
 export async function PATCH(request: Request) {

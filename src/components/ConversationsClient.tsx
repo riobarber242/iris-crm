@@ -72,7 +72,7 @@ export default function ConversationsClient() {
     }
   }
 
-  // Realtime (mensajes + contactos) con polling de respaldo cada 5 s.
+  // Realtime (mensajes + contactos) con polling de respaldo cada 60 s.
   useEffect(() => {
     fetchRef.current = fetchConversations;
     // Primer intento de restaurar el scroll al volver de una conversación. NO
@@ -85,7 +85,10 @@ export default function ConversationsClient() {
       requestAnimationFrame(() => window.scrollTo({ top: y, behavior: 'instant' }));
     }
     fetchConversations();
-    const timer = setInterval(() => fetchRef.current(), 5_000);
+    // Poll de respaldo espaciado (60 s): la actualización inmediata la dan el
+    // Broadcast de Fase 2 (iris:message-broadcast) y el postgres_changes de abajo.
+    // Este intervalo es solo red de seguridad por si se cae el canal Realtime.
+    const timer = setInterval(() => fetchRef.current(), 60_000);
 
     const sb = getSupabaseBrowser();
     if (sb) {
@@ -334,13 +337,10 @@ export default function ConversationsClient() {
           humanTaken:        contact.human_taken,
         });
 
-        // Cantidad de mensajes del cliente sin leer (para el número del badge).
-        const lastReadAt = contact.last_read_at ? new Date(contact.last_read_at) : null;
-        let pendingCount = 0;
-        for (const msg of messages) {
-          if (lastReadAt && new Date(msg.created_at) <= lastReadAt) break; // resto ya leído
-          if (msg.role !== 'human') pendingCount++; // todo entrante (cliente o bot) que genera la alerta
-        }
+        // Cantidad de entrantes sin leer (para el número del badge). Lo calcula la
+        // RPC server-side (pending_count) para no tener que traer el historial completo:
+        // COUNT de mensajes role<>'human' con created_at > last_read_at. Ver route.ts.
+        const pendingCount = contact.pending_count ?? 0;
 
         const borderColor = badgeType === 'red' ? '#E53935'
                           : badgeType === 'orange' ? '#FF8C00'
