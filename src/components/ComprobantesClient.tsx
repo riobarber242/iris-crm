@@ -95,6 +95,7 @@ export default function ComprobantesClient(
   const [hasMore, setHasMore]                 = useState(false);
   const [loadingMore, setLoadingMore]         = useState(false);
   const loadedCountRef                        = useRef(0);
+  const searchMountRef                        = useRef(true);
   const PAGE_SIZE = 50;
 
   // Sustantivo de la bandeja para los textos (vacío/errores), según el tipo.
@@ -114,6 +115,9 @@ export default function ComprobantesClient(
       params.set('before',   opts.before.created_at);
       params.set('beforeId', opts.before.id);
     }
+    // Búsqueda server-side por usuario/teléfono. loadMore y fetchSilent la heredan
+    // (leen `query` acá), así "Cargar más" pagina dentro del filtro y el poll lo respeta.
+    if (query.trim()) params.set('q', query.trim());
     return `/api/comprobantes?${params.toString()}`;
   }
 
@@ -321,6 +325,15 @@ export default function ComprobantesClient(
   // la ventana ya cargada sin depender de un closure viejo.
   useEffect(() => { loadedCountRef.current = comprobantes.length; }, [comprobantes]);
 
+  // Búsqueda server-side con debounce: al tipear, reseteamos a la 1ª página con `q`.
+  // Saltamos el primer render (el fetch inicial lo hace el effect de montaje de abajo).
+  useEffect(() => {
+    if (searchMountRef.current) { searchMountRef.current = false; return; }
+    const h = setTimeout(() => fetchComprobantes(estadoFilter), 300);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   useEffect(() => {
     fetchComprobantes();
 
@@ -422,7 +435,9 @@ export default function ComprobantesClient(
       {error}
     </div>
   );
-  if (comprobantes.length === 0) {
+  // Empty-state dedicado SOLO sin búsqueda activa (esa rama no tiene el input). Con
+  // búsqueda que no matchea, caemos al render principal (con el buscador) + msg inline.
+  if (comprobantes.length === 0 && !query.trim()) {
     const estadoAdj = estadoFilter === 'pendiente'
       ? 'pendientes'
       : estadoFilter === 'verificado'
@@ -536,13 +551,13 @@ export default function ComprobantesClient(
 
       {/* ── Card list ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {comprobantes.filter((item) => {
-          if (!query.trim()) return true;
-          const q    = query.toLowerCase();
-          const name = (item.contacts?.casino_username ?? '').toLowerCase();
-          const ph   = (item.contacts?.phone ?? '').toLowerCase();
-          return name.includes(q) || ph.includes(q);
-        }).map((item) => {
+        {/* La búsqueda ahora es server-side (param `q`), no client-side sobre lo cargado. */}
+        {comprobantes.length === 0 && query.trim() && (
+          <div style={{ padding: '32px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
+            Sin resultados para “{query.trim()}”.
+          </div>
+        )}
+        {comprobantes.map((item) => {
           const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
           const displayName = item.pago_agente
             ? '💸 Pago del agente'

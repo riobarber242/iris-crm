@@ -45,18 +45,28 @@ export async function GET(request: Request) {
   const limit        = Number.isInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
   const before       = url.searchParams.get('before');   // ISO created_at del último item previo
   const beforeId     = url.searchParams.get('beforeId'); // uuid, desempate del cursor
+  // Búsqueda server-side por usuario/teléfono del contacto. Se sanea sacando los
+  // chars estructurales del `.or()` (`,()`) y wildcards (`*%`); los `.` son seguros
+  // (el valor de un filtro PostgREST puede tenerlos). Vacío = sin búsqueda.
+  const search       = (url.searchParams.get('q') ?? '').replace(/[,()*%]/g, ' ').trim().slice(0, 60);
 
   // Builder compartido entre la query principal y el reintento sin `tipo`.
   function build(withTipo: boolean) {
+    // Con búsqueda usamos `contacts!inner`: el filtro sobre el embebido propaga al
+    // nivel superior (solo vuelven las comprobantes cuyo contacto matchea). Sin
+    // búsqueda dejamos el join normal para no excluir pagos-agente / sin contacto.
+    const embed = search ? 'contacts!inner(phone, name, casino_username)' : 'contacts(phone, name, casino_username)';
     let q = supabaseAdmin
       .from('comprobantes')
-      .select('*, contacts(phone, name, casino_username)')
+      .select(`*, ${embed}`)
       .eq('tenant_id', session!.tenant_id);
     if (estado && estado !== 'all') q = q.eq('estado', estado);
     if (contactId) q = q.eq('contact_id', contactId);
     // Filtro por tipo (Cargas vs Pagos). Los históricos tienen tipo='carga' por el
     // default de la columna, así que /cargas los sigue viendo.
     if (withTipo && (tipo === 'carga' || tipo === 'pago')) q = q.eq('tipo', tipo);
+    // Búsqueda: OR sobre las dos columnas del contacto embebido (referencedTable).
+    if (search) q = q.or(`casino_username.ilike.*${search}*,phone.ilike.*${search}*`, { referencedTable: 'contacts' });
     q = q.order('created_at', { ascending: false }).order('id', { ascending: false });
     if (paginate) {
       if (before && beforeId) {
