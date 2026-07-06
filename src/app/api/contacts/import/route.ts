@@ -16,7 +16,35 @@ export async function POST(req: NextRequest) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   const tenantId = session.tenant_id;
 
-  const { contacts, mode, whatsapp_number_id }: { contacts: ContactInput[]; mode?: string; whatsapp_number_id?: string } = await req.json();
+  const body = await req.json();
+
+  // ── Cierre de una importación por lotes ────────────────────────────────────
+  // El cliente manda muchos lotes con `batch: true` (que NO loguean) y, al
+  // terminar, un único request `finalize` con los totales acumulados: así queda
+  // UNA sola entrada en activity_log por importación, no cientos.
+  if (body?.finalize) {
+    await logActivity({
+      session,
+      action:     ACTIVITY.CONTACT_IMPORTED,
+      objectType: 'contact',
+      objectId:   null,
+      details: {
+        mode:     body.mode === 'update' ? 'update' : 'insert',
+        imported: Number(body.imported) || 0,
+        updated:  Number(body.updated)  || 0,
+        skipped:  Number(body.skipped)  || 0,
+        total:    Number(body.total)    || 0,
+        batched:  true,
+      },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // `batch: true` → es un lote intermedio de una importación grande: hace el
+  // upsert de SOLO estas filas (nunca dependió del archivo completo) y NO loguea
+  // (el finalize de arriba registra el total). Sin `batch` → import de una sola
+  // tanda (compatibilidad): loguea como siempre.
+  const { contacts, mode, whatsapp_number_id, batch }: { contacts: ContactInput[]; mode?: string; whatsapp_number_id?: string; batch?: boolean } = body;
 
   if (!Array.isArray(contacts) || contacts.length === 0) {
     return NextResponse.json({ error: 'Array de contactos vacío' }, { status: 400 });
@@ -121,13 +149,15 @@ export async function POST(req: NextRequest) {
       updated += chunk.length;
     }
 
-    await logActivity({
-      session,
-      action:     ACTIVITY.CONTACT_IMPORTED,
-      objectType: 'contact',
-      objectId:   null,
-      details:    { mode: 'update', imported, updated, skipped, total: unique.length },
-    });
+    if (!batch) {
+      await logActivity({
+        session,
+        action:     ACTIVITY.CONTACT_IMPORTED,
+        objectType: 'contact',
+        objectId:   null,
+        details:    { mode: 'update', imported, updated, skipped, total: unique.length },
+      });
+    }
 
     return NextResponse.json({ imported, updated, skipped });
   }
@@ -160,13 +190,15 @@ export async function POST(req: NextRequest) {
   const skipped  = rows.length - imported;
 
   // Registro de actividad: alta masiva de contactos por una persona.
-  await logActivity({
-    session,
-    action:     ACTIVITY.CONTACT_IMPORTED,
-    objectType: 'contact',
-    objectId:   null,
-    details:    { imported, skipped, total: rows.length },
-  });
+  if (!batch) {
+    await logActivity({
+      session,
+      action:     ACTIVITY.CONTACT_IMPORTED,
+      objectType: 'contact',
+      objectId:   null,
+      details:    { imported, skipped, total: rows.length },
+    });
+  }
 
   return NextResponse.json({ imported, skipped });
 }

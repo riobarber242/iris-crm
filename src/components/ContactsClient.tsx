@@ -58,13 +58,15 @@ function splitCSVLine(line: string): string[] {
   return cols;
 }
 
-function parseCSV(text: string): { phone: string; casino_username: string; name: string }[] {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(Boolean);
-  if (lines.length < 2) return [];
+type ParsedRow = { phone: string; casino_username: string; name: string };
+type HeaderMap = { phoneIdx: number; userIdx: number; nameIdx: number };
 
-  const headers = splitCSVLine(lines[0]).map((h) => h.toLowerCase());
+// Índices de columna del header (misma heurística de siempre: Google Contacts,
+// phone/telefono/celular, casino/usuario/first name, name/nombre). null si no
+// hay columna de teléfono.
+function buildHeaderMap(headerLine: string): HeaderMap | null {
+  const headers = splitCSVLine(headerLine).map((h) => h.toLowerCase());
   const idx = (terms: string[]) => headers.findIndex((h) => terms.some((t) => h.includes(t)));
-
   // Google Contacts: el teléfono viene en "Phone 1 - Value", pero "Phone 1 - Label"
   // aparece ANTES y también contiene "phone" — el header exacto tiene prioridad.
   const googlePhoneIdx = headers.indexOf('phone 1 - value');
@@ -75,24 +77,94 @@ function parseCSV(text: string): { phone: string; casino_username: string; name:
   // antes en el header, le robaba la columna al nombre.
   const nameExact = headers.findIndex((h) => h === 'name' || h === 'nombre');
   const nameIdx = nameExact !== -1 ? nameExact : idx(['name', 'nombre']);
-
-  if (phoneIdx === -1) return [];
-
-  return lines.slice(1).flatMap((line) => {
-    const cols = splitCSVLine(line);
-    // Google separa múltiples teléfonos con ":::" — usamos el primero. Y los
-    // exporta como "+54 9 ..." mientras la base guarda dígitos puros: sin
-    // normalizar acá, el modo actualizar nunca matchearía los existentes.
-    const phoneRaw = (cols[phoneIdx] ?? '').split(':::')[0];
-    const phone = phoneRaw.replace(/\D/g, '');
-    if (!phone) return [];
-    return [{
-      phone,
-      casino_username: userIdx !== -1 ? (cols[userIdx] ?? '') : '',
-      name:            nameIdx !== -1 ? (cols[nameIdx] ?? '') : '',
-    }];
-  });
+  if (phoneIdx === -1) return null;
+  return { phoneIdx, userIdx, nameIdx };
 }
+
+// Parsea UNA fila de datos. null si no tiene teléfono. Google separa múltiples
+// teléfonos con ":::" (usamos el primero) y los exporta como "+54 9 ..." mientras
+// la base guarda dígitos puros: sin normalizar, el modo actualizar no matchearía.
+function parseDataLine(line: string, map: HeaderMap): ParsedRow | null {
+  const cols = splitCSVLine(line);
+  const phoneRaw = (cols[map.phoneIdx] ?? '').split(':::')[0];
+  const phone = phoneRaw.replace(/\D/g, '');
+  if (!phone) return null;
+  return {
+    phone,
+    casino_username: map.userIdx !== -1 ? (cols[map.userIdx] ?? '') : '',
+    name:            map.nameIdx !== -1 ? (cols[map.nameIdx] ?? '') : '',
+  };
+}
+
+// Lee el CSV por STREAMING y llama onLine por cada línea (normaliza CRLF/CR a LF),
+// sin cargar el archivo entero en memoria. `await onLine` da backpressure natural
+// (el envío por lotes es secuencial). Cae a file.text() si el navegador no
+// soporta Blob.stream(). Corta apenas cancel.aborted se pone en true.
+async function streamCsvLines(
+  file: File,
+  cancel: { aborted: boolean },
+  onLine: (line: string) => void | Promise<void>,
+): Promise<void> {
+  if (typeof (file as any).stream !== 'function') {
+    const text = (await file.text()).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    for (const line of text.split('\n')) { if (cancel.aborted) return; if (line) await onLine(line); }
+    return;
+  }
+  const reader = (file.stream() as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  try {
+    for (;;) {
+      if (cancel.aborted) return;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 1);
+        if (line) await onLine(line);
+        if (cancel.aborted) return;
+      }
+    }
+    buffer += decoder.decode();
+    buffer = buffer.replace(/\r/g, '\n');
+    for (const line of buffer.split('\n')) { if (cancel.aborted) return; if (line) await onLine(line); }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// Cuenta filas VÁLIDAS (con teléfono) para el total de la barra "X de Y", sin
+// construir objetos. 0 si el header no tiene columna de teléfono.
+async function countValidRows(file: File, cancel: { aborted: boolean }): Promise<number> {
+  let map: HeaderMap | null = null;
+  let first = true;
+  let count = 0;
+  await streamCsvLines(file, cancel, (line) => {
+    if (first) { first = false; map = buildHeaderMap(line); return; }
+    if (map && parseDataLine(line, map)) count++;
+  });
+  return count;
+}
+
+// Importación por lotes: tamaño de lote (≈40-90 KB/request, bien bajo el límite
+// de body de Vercel) y clave de progreso reanudable en localStorage.
+const IMPORT_BATCH_SIZE = 1000;
+const IMPORT_PROGRESS_KEY = 'iris_contacts_import_progress';
+
+type ImportProgress = {
+  fileKey: string; mode: ImportMode; line: string;
+  total: number; sent: number; imported: number; updated: number; skipped: number;
+};
+
+function loadImportProgress(): ImportProgress | null {
+  try { const r = localStorage.getItem(IMPORT_PROGRESS_KEY); return r ? (JSON.parse(r) as ImportProgress) : null; }
+  catch { return null; }
+}
+function saveImportProgress(p: ImportProgress) { try { localStorage.setItem(IMPORT_PROGRESS_KEY, JSON.stringify(p)); } catch {} }
+function clearImportProgress() { try { localStorage.removeItem(IMPORT_PROGRESS_KEY); } catch {} }
 
 export default function ContactsClient() {
   const [contacts,     setContacts]     = useState<ContactRow[]>([]);
@@ -101,6 +173,11 @@ export default function ContactsClient() {
   const [importing,    setImporting]    = useState(false);
   const [importMode,   setImportMode]   = useState<ImportMode>('insert');
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // Importación por lotes: fase, progreso "X de Y", error/pausa, y flag de corte.
+  const [importPhase,  setImportPhase]  = useState<null | 'analyzing' | 'importing' | 'paused'>(null);
+  const [importProg,   setImportProg]   = useState<{ sent: number; total: number; imported: number; updated: number; skipped: number } | null>(null);
+  const [importError,  setImportError]  = useState<string | null>(null);
+  const cancelRef = useRef<{ aborted: boolean }>({ aborted: false });
   const [lines,        setLines]        = useState<WaLine[]>([]);
   const [lineLabels,   setLineLabels]   = useState<Record<string, string>>({});
   const [importLine,   setImportLine]   = useState('');
@@ -171,35 +248,136 @@ export default function ContactsClient() {
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [openMenuId]);
 
+  // Importa un CSV por STREAMING + lotes secuenciales. Soporta archivos enormes
+  // (millones de filas) sin colgar el browser ni pegarle al límite de body de
+  // Vercel, muestra progreso "X de Y", y es reanudable: guarda el avance en
+  // localStorage tras cada lote, así si se corta (cierre de pestaña, red) se
+  // retoma reseleccionando el MISMO archivo. Archivos chicos: igual que siempre
+  // (un lote + finalize), transparente para el usuario.
   async function handleCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
+
+    const fileKey = `${file.name}::${file.size}::${file.lastModified}`;
+    const mode = importMode;
+    const line = importLine || '';
+
+    // ── ¿Retomar una importación incompleta del mismo archivo/modo/línea? ──────
+    let resumeFrom = 0;
+    const sums = { imported: 0, updated: 0, skipped: 0 };
+    const saved = loadImportProgress();
+    if (saved) {
+      const sameJob = saved.fileKey === fileKey && saved.mode === mode && saved.line === line;
+      if (sameJob && saved.sent > 0 && saved.sent < saved.total) {
+        const cont = window.confirm(
+          `Se encontró una importación incompleta de este archivo:\n` +
+          `${saved.sent.toLocaleString('es-AR')} de ${saved.total.toLocaleString('es-AR')} contactos ya procesados.\n\n` +
+          `Aceptar = continuar desde donde quedó.\nCancelar = empezar de nuevo.`,
+        );
+        if (cont) {
+          resumeFrom = saved.sent;
+          sums.imported = saved.imported; sums.updated = saved.updated; sums.skipped = saved.skipped;
+        } else {
+          clearImportProgress();
+        }
+      } else if (!sameJob) {
+        clearImportProgress(); // progreso de otro archivo → descartar
+      }
+    }
+
+    const cancel = { aborted: false };
+    cancelRef.current = cancel;
     setImporting(true);
+    setImportError(null);
     setImportResult(null);
+    setImportProg(null);
+
     try {
-      const text = await file.text();
-      const contacts = parseCSV(text);
-      if (contacts.length === 0) {
+      // 1) Pre-pase: contar filas válidas para el total real de la barra.
+      setImportPhase('analyzing');
+      const total = await countValidRows(file, cancel);
+      if (cancel.aborted) { setImportPhase(null); return; }
+      if (total === 0) {
         alert('El CSV no tiene datos válidos. Verificá que tenga una columna "phone" en el encabezado.');
-        setImporting(false);
+        setImportPhase(null);
         return;
       }
-      const res = await fetch('/api/contacts/import', {
+
+      // 2) Streaming + envío por lotes SECUENCIAL.
+      setImportPhase('importing');
+      setImportProg({ sent: resumeFrom, total, ...sums });
+
+      let map: HeaderMap | null = null;
+      let first = true;
+      let validSeen = 0;          // filas válidas vistas (para el cursor de resume)
+      let batch: ParsedRow[] = [];
+
+      const flush = async () => {
+        const res = await fetch('/api/contacts/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contacts: batch, mode, whatsapp_number_id: line || undefined, batch: true }),
+        });
+        if (!res.ok) throw new Error((await res.text().catch(() => '')) || `El servidor rechazó un lote (HTTP ${res.status}).`);
+        const r = await res.json();
+        sums.imported += r.imported ?? 0;
+        sums.updated  += r.updated  ?? 0;
+        sums.skipped  += r.skipped  ?? 0;
+        batch = [];
+        // Persistimos DESPUÉS de confirmar el lote → si se corta, el resume no
+        // cuenta un lote no confirmado (y re-enviarlo es inocuo: el upsert
+        // ignora duplicados por (phone, tenant_id)).
+        saveImportProgress({ fileKey, mode, line, total, sent: validSeen, imported: sums.imported, updated: sums.updated, skipped: sums.skipped });
+        setImportProg({ sent: validSeen, total, imported: sums.imported, updated: sums.updated, skipped: sums.skipped });
+      };
+
+      await streamCsvLines(file, cancel, async (rawLine) => {
+        if (first) {
+          first = false;
+          map = buildHeaderMap(rawLine);
+          if (!map) throw new Error('El CSV no tiene una columna de teléfono en el encabezado.');
+          return;
+        }
+        const row = parseDataLine(rawLine, map!);
+        if (!row) return;
+        validSeen++;
+        if (validSeen <= resumeFrom) return; // ya enviado en una corrida previa
+        batch.push(row);
+        if (batch.length >= IMPORT_BATCH_SIZE) await flush();
+      });
+
+      if (cancel.aborted) {
+        // Pausado: el progreso quedó guardado; se retoma reseleccionando el archivo.
+        if (batch.length > 0) await flush(); // guarda lo ya parseado antes de cortar
+        setImportPhase('paused');
+        return;
+      }
+
+      if (batch.length > 0) await flush();
+
+      // 3) Cierre: UNA sola entrada de actividad con los totales, y limpiar progreso.
+      await fetch('/api/contacts/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts, mode: importMode, whatsapp_number_id: importLine || undefined }),
-      });
-      if (res.ok) {
-        const result = await res.json();
-        setImportResult({ ...result, mode: importMode });
-        setShowImportPanel(false);
-        fetchContacts();
-      }
-    } catch {
-      alert('Error al importar el CSV.');
+        body: JSON.stringify({ finalize: true, mode, imported: sums.imported, updated: sums.updated, skipped: sums.skipped, total }),
+      }).catch(() => {});
+      clearImportProgress();
+
+      setImportResult({ imported: sums.imported, updated: sums.updated, skipped: sums.skipped, mode });
+      setImportPhase(null);
+      setShowImportPanel(false);
+      fetchContacts();
+    } catch (err: any) {
+      // El progreso quedó guardado en el último flush → se puede retomar.
+      setImportError(
+        (err?.message ? `${err.message} ` : 'Error al importar el CSV. ') +
+        'El progreso quedó guardado: volvé a seleccionar el MISMO archivo para retomar desde donde quedó.',
+      );
+      setImportPhase('paused');
+    } finally {
+      setImporting(false);
     }
-    setImporting(false);
   }
 
   async function handleDelete(c: ContactRow) {
@@ -687,8 +865,9 @@ export default function ContactsClient() {
                 <select
                   value={importLine}
                   onChange={(e) => setImportLine(e.target.value)}
+                  disabled={importing}
                   title="Los contactos nuevos quedan en esta línea; en modo actualizar, también los existentes sin línea."
-                  style={{ width: '100%', background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '11px 12px', cursor: 'pointer' }}
+                  style={{ width: '100%', background: '#1a1a1a', color: '#C8FF00', fontWeight: 700, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '11px 12px', cursor: importing ? 'not-allowed' : 'pointer', opacity: importing ? 0.6 : 1 }}
                 >
                   {lines.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -709,7 +888,8 @@ export default function ContactsClient() {
                 ] as { value: ImportMode; label: string }[]).map((m) => (
                   <button
                     key={m.value}
-                    onClick={() => setImportMode(m.value)}
+                    onClick={() => !importing && setImportMode(m.value)}
+                    disabled={importing}
                     title={m.value === 'insert'
                       ? 'Solo agrega teléfonos que no existen; los repetidos se saltean.'
                       : 'Completa name, casino_username y provincia vacíos de contactos existentes; los teléfonos nuevos se insertan igual.'}
@@ -718,7 +898,7 @@ export default function ContactsClient() {
                       background: importMode === m.value ? '#1a1a1a' : 'transparent',
                       color: importMode === m.value ? '#C8FF00' : '#888',
                       fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '10px',
-                      padding: '9px 14px', cursor: 'pointer', whiteSpace: 'nowrap',
+                      padding: '9px 14px', cursor: importing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
                     }}
                   >
                     {m.label}
@@ -727,18 +907,62 @@ export default function ContactsClient() {
               </div>
             </div>
 
-            <button
-              onClick={() => csvInputRef.current?.click()}
-              disabled={importing}
-              style={{
-                background: importing ? '#e0e0e0' : '#1a1a1a',
-                color: importing ? '#888' : '#C8FF00',
-                fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '10px',
-                padding: '12px', cursor: importing ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {importing ? 'Importando…' : '⬆ Seleccionar archivo CSV'}
-            </button>
+            {importPhase === 'analyzing' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', padding: '14px', color: '#666', fontSize: '13px', fontWeight: 700 }}>
+                ⏳ Analizando archivo…
+              </div>
+            ) : importPhase === 'importing' && importProg ? (
+              (() => {
+                const pct = Math.min(100, Math.round((importProg.sent / Math.max(1, importProg.total)) * 100));
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ height: '10px', background: '#eee', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: '#C8FF00', borderRadius: '999px', transition: 'width 0.2s ease' }} />
+                    </div>
+                    <p style={{ margin: 0, fontSize: '13px', fontWeight: 800, color: '#000' }}>
+                      {importProg.sent.toLocaleString('es-AR')} de {importProg.total.toLocaleString('es-AR')} contactos ({pct}%)
+                    </p>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#666' }}>
+                      Importados: {importProg.imported.toLocaleString('es-AR')}
+                      {importMode === 'update' ? ` · Actualizados: ${importProg.updated.toLocaleString('es-AR')}` : ''}
+                      {' '}· Omitidos: {importProg.skipped.toLocaleString('es-AR')}
+                    </p>
+                    <button
+                      onClick={() => { cancelRef.current.aborted = true; }}
+                      style={{ background: '#F5F5F5', color: '#333', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '10px', cursor: 'pointer' }}
+                    >
+                      Pausar
+                    </button>
+                    <p style={{ margin: 0, fontSize: '11px', color: '#999', lineHeight: 1.4 }}>
+                      No cierres esta pestaña. Si se corta, retomás desde acá reseleccionando el mismo archivo.
+                    </p>
+                  </div>
+                );
+              })()
+            ) : (
+              <>
+                {importPhase === 'paused' && importProg && (
+                  <div style={{ background: '#FFF8E1', border: '1px solid #FFE082', borderRadius: '10px', padding: '10px 12px', fontSize: '12px', color: '#8a6d00', lineHeight: 1.5 }}>
+                    ⏸ Pausado en {importProg.sent.toLocaleString('es-AR')} de {importProg.total.toLocaleString('es-AR')}. Reseleccioná el <strong>mismo archivo</strong> para retomar.
+                  </div>
+                )}
+                {importError && (
+                  <div style={{ background: '#FDECEA', border: '1px solid #F5C6C2', borderRadius: '10px', padding: '10px 12px', fontSize: '12px', color: '#B71C1C', lineHeight: 1.5 }}>
+                    {importError}
+                  </div>
+                )}
+                <button
+                  onClick={() => csvInputRef.current?.click()}
+                  style={{
+                    background: '#1a1a1a', color: '#C8FF00',
+                    fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '10px',
+                    padding: '12px', cursor: 'pointer',
+                  }}
+                >
+                  {importPhase === 'paused' ? '⬆ Reseleccionar archivo para retomar' : '⬆ Seleccionar archivo CSV'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
