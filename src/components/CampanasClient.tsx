@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 
 type Campaign = {
   id: string;
@@ -30,6 +30,11 @@ type IrisTemplate = { id: string; name: string; language: string; body: string; 
 
 // Contacto seleccionable en el modo "elegir contactos" (agendados con usuario).
 type PickContact = { id: string; name: string | null; phone: string; casino_username: string | null };
+
+// Paginación del picker individual: filas por página del endpoint paginado
+// (mismo patrón que la pantalla de Contactos). Acota egress/memoria en tenants
+// grandes; para los chicos, 1 página los cubre casi entera y "Cargar más" ni aparece.
+const PICKER_PAGE_SIZE = 100;
 
 // Cuenta cuántos placeholders {{1}}, {{2}}... distintos tiene el body.
 function countTemplateVars(body: string): number {
@@ -122,9 +127,14 @@ export default function CampanasClient() {
   const [targetMode,      setTargetMode]      = useState<'category' | 'individual'>('category');
   const [contactsList,    setContactsList]    = useState<PickContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
-  const [contactsLoaded,  setContactsLoaded]  = useState(false);
   const [selectedIds,     setSelectedIds]     = useState<string[]>([]);
   const [contactSearch,   setContactSearch]   = useState('');
+  // Paginación del picker (mismo patrón que Contactos). La selección (selectedIds)
+  // es un array aparte, así que "Cargar más" NO pierde lo ya tildado.
+  const [pickerHasMore,     setPickerHasMore]     = useState(false);
+  const [pickerLoadingMore, setPickerLoadingMore] = useState(false);
+  const pickerOffsetRef      = useRef(0);     // filas ya cargadas = próximo offset
+  const pickerLoadingMoreRef = useRef(false); // guard doble click
 
   const [sendLimit,    setSendLimit]    = useState('');
   const [intervalMin,  setIntervalMin]  = useState('1');
@@ -215,24 +225,60 @@ export default function CampanasClient() {
     setCountLoading(false);
   }
 
-  // Carga la lista de agendados (con usuario) para el picker individual. Una vez.
-  async function fetchContactsList() {
-    setContactsLoading(true);
+  // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango),
+  // el mismo endpoint que la pantalla de Contactos (?limit=). Reemplaza la ruta
+  // legacy que traía TODOS los agendados sin límite.
+  const fetchContactsPage = useCallback(async (q: string, offset: number): Promise<PickContact[] | null> => {
+    const params = new URLSearchParams({ limit: String(PICKER_PAGE_SIZE), offset: String(offset), sort: 'az' });
+    const term = q.trim();
+    if (term) params.set('q', term);
     try {
-      const res  = await fetch('/api/contacts');
-      const data = res.ok ? await res.json() : [];
-      setContactsList(Array.isArray(data) ? data : []);
-    } catch {
-      setContactsList([]);
-    } finally {
-      setContactsLoading(false); setContactsLoaded(true);
+      const res = await fetch(`/api/contacts?${params.toString()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch { return null; }
+  }, []);
+
+  // Primera página (reset) con la búsqueda actual.
+  const loadPickerFirst = useCallback(async (q: string) => {
+    setContactsLoading(true);
+    const rows = await fetchContactsPage(q, 0);
+    setContactsList(rows ?? []);
+    setPickerHasMore((rows?.length ?? 0) === PICKER_PAGE_SIZE);
+    pickerOffsetRef.current = rows?.length ?? 0;
+    setContactsLoading(false);
+  }, [fetchContactsPage]);
+
+  // "Cargar más": siguiente página; appendea (dedup por id). La selección persiste
+  // (selectedIds es aparte), así que no se pierde nada de lo ya tildado.
+  async function loadPickerMore() {
+    if (pickerLoadingMoreRef.current || !pickerHasMore) return;
+    pickerLoadingMoreRef.current = true; setPickerLoadingMore(true);
+    const rows = await fetchContactsPage(contactSearch, pickerOffsetRef.current);
+    if (rows) {
+      pickerOffsetRef.current += rows.length;
+      setContactsList((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...rows.filter((r) => !seen.has(r.id))];
+      });
+      setPickerHasMore(rows.length === PICKER_PAGE_SIZE);
     }
+    pickerLoadingMoreRef.current = false; setPickerLoadingMore(false);
   }
+
+  // Al entrar a "individual" y ante cambios de búsqueda, recarga la primera página
+  // (búsqueda server-side, debounced 300 ms; vacío/entrada = inmediato). En
+  // "category" no hace nada.
+  useEffect(() => {
+    if (targetMode !== 'individual') return;
+    const t = setTimeout(() => { loadPickerFirst(contactSearch); }, contactSearch ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [targetMode, contactSearch, loadPickerFirst]);
 
   function handleTargetModeChange(mode: 'category' | 'individual') {
     setTargetMode(mode);
     setError('');
-    if (mode === 'individual' && !contactsLoaded && !contactsLoading) fetchContactsList();
   }
 
   function toggleContact(id: string) {
@@ -573,15 +619,11 @@ export default function CampanasClient() {
 
               {/* ── Modo individual: buscador + lista con checkboxes ── */}
               {targetMode === 'individual' && (() => {
-                const q = contactSearch.trim().toLowerCase();
-                const visible = q
-                  ? contactsList.filter((c) =>
-                      (c.casino_username ?? '').toLowerCase().includes(q) ||
-                      (c.name ?? '').toLowerCase().includes(q) ||
-                      (c.phone ?? '').toLowerCase().includes(q))
-                  : contactsList;
+                // El server ya filtró (búsqueda), ordenó y paginó: `visible` = lo cargado.
+                const visible = contactsList;
                 const visibleIds = visible.map((c) => c.id);
                 const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+                const searching = contactSearch.trim().length > 0;
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <input
@@ -615,27 +657,39 @@ export default function CampanasClient() {
 
                     {contactsLoading ? (
                       <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>Cargando contactos…</p>
-                    ) : contactsList.length === 0 ? (
-                      <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No hay contactos agendados (con usuario) para elegir.</p>
+                    ) : visible.length === 0 ? (
+                      <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>
+                        {searching ? `Sin resultados para “${contactSearch}”.` : 'No hay contactos agendados (con usuario) para elegir.'}
+                      </p>
                     ) : (
-                      <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #eee', borderRadius: '10px', padding: '6px' }}>
-                        {visible.length === 0 ? (
-                          <p style={{ fontSize: '13px', color: '#aaa', margin: 0, padding: '8px' }}>Sin resultados para “{contactSearch}”.</p>
-                        ) : visible.map((c) => {
-                          const checked = selectedIds.includes(c.id);
-                          return (
-                            <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', background: checked ? '#f0fff4' : 'transparent' }}>
-                              <input type="checkbox" checked={checked} onChange={() => toggleContact(c.id)} />
-                              <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {c.casino_username || c.name || c.phone}
+                      <>
+                        <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #eee', borderRadius: '10px', padding: '6px' }}>
+                          {visible.map((c) => {
+                            const checked = selectedIds.includes(c.id);
+                            return (
+                              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', background: checked ? '#f0fff4' : 'transparent' }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleContact(c.id)} />
+                                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {c.casino_username || c.name || c.phone}
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: '#999' }}>{c.phone}</span>
                                 </span>
-                                <span style={{ fontSize: '11px', color: '#999' }}>{c.phone}</span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {pickerHasMore && (
+                          <button
+                            type="button"
+                            onClick={loadPickerMore}
+                            disabled={pickerLoadingMore}
+                            style={{ background: '#fff', color: '#1a1a1a', fontWeight: 700, fontSize: '13px', border: '1px solid #ddd', borderRadius: '10px', padding: '9px', cursor: pickerLoadingMore ? 'default' : 'pointer', opacity: pickerLoadingMore ? 0.6 : 1 }}
+                          >
+                            {pickerLoadingMore ? 'Cargando…' : 'Cargar más'}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 );
