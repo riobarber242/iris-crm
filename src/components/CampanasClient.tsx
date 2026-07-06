@@ -135,6 +135,7 @@ export default function CampanasClient() {
   const [excludeCampaignIds, setExcludeCampaignIds] = useState<string[]>([]);
 
   const [launching,   setLaunching]   = useState(false);
+  const [launchProgress, setLaunchProgress] = useState('');
   const [error,       setError]       = useState('');
   const [launchResult, setLaunchResult] = useState<{ sent: number; total: number } | null>(null);
   const [deletingNo,  setDeletingNo]  = useState<string | null>(null);
@@ -286,7 +287,7 @@ export default function CampanasClient() {
   function back() { setError(''); setStep((s) => Math.max(1, s - 1)); }
 
   async function launch() {
-    setLaunching(true); setError('');
+    setLaunching(true); setError(''); setLaunchProgress('');
     try {
       const isIndividual = targetMode === 'individual';
       const createBody = {
@@ -313,19 +314,31 @@ export default function CampanasClient() {
       if (!res.ok) throw new Error(await res.text());
       const campaign = await res.json();
 
-      const sendRes = await fetch('/api/campaigns/send', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId: campaign.id }),
-      });
-      const data = await sendRes.json();
-      if (!sendRes.ok) throw new Error(data?.error ?? 'Error al enviar la campaña.');
+      // Auto-resume: /send corta por presupuesto de tiempo en campañas grandes y
+      // devuelve done:false; lo re-llamamos hasta done:true (saltea a los ya
+      // intentados server-side). El guard es un backstop ante un bucle inesperado.
+      let done = false, guard = 0, sentTotal = 0, total = 0;
+      while (!done) {
+        if (++guard > 300) throw new Error('El envío no terminó tras muchos reintentos; revisá el estado de la campaña.');
+        const sendRes = await fetch('/api/campaigns/send', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId: campaign.id }),
+        });
+        const data = await sendRes.json();
+        if (!sendRes.ok) throw new Error(data?.error ?? 'Error al enviar la campaña.');
+        done      = data.done !== false;                          // sin done → compat: tratamos como terminado
+        sentTotal = data.sentTotal ?? data.sent ?? sentTotal;
+        total     = data.total ?? total;
+        if (!done) setLaunchProgress(`Enviando ${data.attemptedTotal ?? sentTotal} / ${total}…`);
+      }
 
-      setLaunchResult({ sent: data.sent ?? 0, total: data.total ?? 0 });
+      setLaunchResult({ sent: sentTotal, total });
       closeWizard();
       fetchCampaigns();
     } catch (e: any) {
       setError(e.message ?? 'Error al lanzar la campaña.');
     }
     setLaunching(false);
+    setLaunchProgress('');
   }
 
   async function handleDelete(campaign: Campaign) {
@@ -736,7 +749,7 @@ export default function CampanasClient() {
               </button>
             ) : (
               <button type="button" onClick={launch} disabled={launching} style={{ background: launching ? '#e0e0e0' : '#C8FF00', color: '#000', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '10px', padding: '10px 22px', cursor: launching ? 'not-allowed' : 'pointer', opacity: launching ? 0.6 : 1 }}>
-                {launching ? 'Lanzando…' : '🚀 Lanzar campaña'}
+                {launching ? (launchProgress || 'Lanzando…') : '🚀 Lanzar campaña'}
               </button>
             )}
           </div>

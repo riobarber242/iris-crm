@@ -12,6 +12,21 @@ export const maxDuration = 300;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Chunk para los `.in([...])`: supabase-js los manda como query string; con >~180
+// UUIDs se excede el largo de URL (Cloudflare/PostgREST → 414) y la query fallaría
+// EN SILENCIO. Lotes de 200 mantienen la URL chica.
+const IN_CHUNK = 200;
+
+// Presupuesto de tiempo del loop: cortamos antes de maxDuration (300s) para
+// terminar limpio, dejar la campaña 'enviando' y que el cliente reanude (auto-resume).
+const TIME_BUDGET_MS = 270_000;
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 async function resolveContacts(filter: string, tenantId: string, targetNumberId: string | null) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
@@ -77,15 +92,25 @@ export async function POST(request: Request) {
   const explicitIds: string[] = Array.isArray(campaign.recipient_ids)
     ? campaign.recipient_ids.filter((x: unknown) => typeof x === 'string')
     : [];
-  let contacts;
+  let contacts: any[];
   if (explicitIds.length > 0) {
-    const { data } = await supabaseAdmin
-      .from('contacts')
-      .select('id, phone, name, whatsapp_number_id')
-      .eq('tenant_id', session.tenant_id)
-      .in('id', explicitIds)
-      .neq('blocked', true);
-    contacts = data ?? [];
+    // Chunkeamos el `.in('id')` (URL-safety) y NO tragamos el error: antes
+    // `const { data } = ...` devolvía [] ante un 414 → "0 enviados" en silencio.
+    contacts = [];
+    for (const slice of chunk(explicitIds, IN_CHUNK)) {
+      const { data, error } = await supabaseAdmin
+        .from('contacts')
+        .select('id, phone, name, whatsapp_number_id')
+        .eq('tenant_id', session.tenant_id)
+        .in('id', slice)
+        .neq('blocked', true);
+      if (error) {
+        // Revertimos a 'borrador' para poder reintentar y devolvemos el error real.
+        await supabaseAdmin.from('campaigns').update({ status: 'borrador' }).eq('id', campaignId).eq('tenant_id', session.tenant_id);
+        return new NextResponse(`Error resolviendo destinatarios: ${error.message}`, { status: 500 });
+      }
+      contacts.push(...(data ?? []));
+    }
   } else {
     contacts = await resolveContacts(campaign.target_filter ?? 'todos', session.tenant_id, campaign.target_number_id ?? null);
   }
@@ -109,7 +134,31 @@ export async function POST(request: Request) {
     }
   }
 
-  if (campaign.send_limit) contacts = contacts.slice(0, Number(campaign.send_limit));
+  // Orden estable (por id) para que el slice de send_limit y la reanudación sean
+  // deterministas entre llamadas: el `.in()` y los joins no garantizan orden.
+  contacts.sort((a: any, b: any) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  // send_limit acota el universo TOTAL de la campaña (estable entre llamadas de resume).
+  const sendLimit = campaign.send_limit ? Number(campaign.send_limit) : null;
+  if (sendLimit) contacts = contacts.slice(0, sendLimit);
+  const totalTarget = contacts.length;
+
+  // ── Reanudación: saltear a quienes YA se intentó en ESTA campaña ──────────────
+  // campaign_recipients registra cada intento (éxito o fallo, ver más abajo). Tras un
+  // corte por presupuesto de tiempo, filtramos esos: no reenviamos y el avance es
+  // monótono (garantiza que el loop termine aunque un contacto falle siempre). Si la
+  // tabla no existe, simplemente no reanuda.
+  let attemptedBefore = 0;
+  try {
+    const { data: prevDone } = await supabaseAdmin
+      .from('campaign_recipients').select('contact_id').eq('campaign_id', campaignId);
+    const attempted = new Set((prevDone ?? []).map((r: any) => r.contact_id));
+    attemptedBefore = attempted.size;
+    contacts = contacts.filter((c: any) => !attempted.has(c.id));
+  } catch (err) {
+    console.warn('[campaign send] No se pudo leer el progreso previo (¿tabla campaign_recipients?):', err);
+  }
+
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
 
@@ -131,10 +180,15 @@ export async function POST(request: Request) {
   const pauseEvery  = Math.max(0, Number(campaign.pause_every ?? 0) || 0);
   const pauseSecs   = Math.max(0, Number(campaign.pause_seconds ?? 0) || 0);
 
-  let sent = 0;
-  const sentContactIds: string[] = [];
+  // El intervalo lo fija el usuario, así que el tope real del lote es por TIEMPO,
+  // no por cantidad. Cortamos antes de maxDuration y el cliente reanuda.
+  const startedAt = Date.now();
+  let sent = 0;                        // éxitos de ESTA tanda
+  const attemptedIds: string[] = [];   // intentados (éxito o fallo) de ESTA tanda
+  let timedOut = false;
 
   for (const contact of contacts) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) { timedOut = true; break; }
     try {
       const resolvedVars = vars.map((v: string) =>
         v.trim().toLowerCase() === '{{nombre}}' ? (contact.name ?? contact.phone) : v
@@ -182,10 +236,13 @@ export async function POST(request: Request) {
       }
 
       sent++;
-      sentContactIds.push(contact.id);
     } catch {
       console.error(`[campaign send] Falló envío a ${contact.phone}`);
     }
+
+    // Registramos el intento (éxito o fallo) para reanudar sin reenviar y garantizar
+    // que el progreso avance aunque un contacto falle siempre.
+    attemptedIds.push(contact.id);
 
     // Pausa automática cada N mensajes; si no, intervalo aleatorio entre min y max.
     if (pauseEvery > 0 && pauseSecs > 0 && sent > 0 && sent % pauseEvery === 0) {
@@ -196,19 +253,31 @@ export async function POST(request: Request) {
     }
   }
 
-  // Registrar destinatarios para que futuras campañas puedan excluirlos. Si la
-  // tabla campaign_recipients no existe todavía, no rompe el envío.
-  if (sentContactIds.length > 0) {
+  // Registrar los intentos de ESTA tanda: sirve para reanudar (arriba) y para que
+  // futuras campañas puedan excluir a los ya contactados. Si la tabla no existe, no rompe.
+  if (attemptedIds.length > 0) {
     const { error: recErr } = await supabaseAdmin
       .from('campaign_recipients')
-      .insert(sentContactIds.map((cid) => ({ campaign_id: campaignId, contact_id: cid })));
+      .insert(attemptedIds.map((cid) => ({ campaign_id: campaignId, contact_id: cid })));
     if (recErr) console.warn('[campaign send] No se registraron destinatarios (¿tabla campaign_recipients?):', recErr.message);
   }
 
+  const attemptedTotal = attemptedBefore + attemptedIds.length;   // intentos acumulados
+  const sentTotal = (Number(campaign.sent_count) || 0) + sent;    // éxitos acumulados
+  const done = !timedOut;   // false = cortamos por tiempo, hay que reanudar
+
   await supabaseAdmin
     .from('campaigns')
-    .update({ status: 'completada', sent_count: sent })
+    .update({ status: done ? 'completada' : 'enviando', sent_count: sentTotal })
     .eq('id', campaignId).eq('tenant_id', session.tenant_id);
 
-  return NextResponse.json({ ok: true, sent, total: contacts.length });
+  return NextResponse.json({
+    ok: true,
+    done,
+    sent,                                              // éxitos de esta tanda
+    sentTotal,                                         // éxitos acumulados
+    attemptedTotal,                                    // intentos acumulados (para el progreso)
+    total: totalTarget,                                // universo objetivo (estable entre llamadas)
+    remaining: Math.max(0, totalTarget - attemptedTotal),
+  });
 }
