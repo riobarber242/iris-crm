@@ -186,7 +186,29 @@ export default function ComprobantesClient(
     return Number.isInteger(n) && n > 0 ? n : null;
   }
 
+  // Aplica un cambio local al item (optimista). Si el nuevo estado sale del filtro
+  // activo, lo saca de la vista (como la cola de Pendientes al verificar); si no,
+  // lo actualiza en el lugar preservando `contacts` y demás campos no tocados.
+  function patchComprobanteLocal(id: string, patch: Partial<ComprobanteItem>) {
+    const leaves = estadoFilter !== 'all' && !!patch.estado && estadoFilter !== patch.estado;
+    setComprobantes((prev) =>
+      leaves ? prev.filter((c) => c.id !== id)
+             : prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }
+
   async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number, bono?: number | null) {
+    const item = comprobantes.find((c) => c.id === id);
+    // Optimista: mostramos el resultado al instante (mismo patrón que el borrado).
+    // El que resuelve siempre puede editar → can_edit: true.
+    const nuevoEstado: ComprobanteItem['estado'] = action === 'verificar' ? 'verificado' : 'rechazado';
+    patchComprobanteLocal(id, {
+      estado:           nuevoEstado,
+      monto:            action === 'verificar' ? (monto ?? item?.monto ?? null) : (item?.monto ?? null),
+      bono:             action === 'verificar' ? (bono ?? item?.bono ?? null)   : (item?.bono ?? null),
+      resolved_by_name: agent?.name ?? null,
+      resolved_at:      new Date().toISOString(),
+      can_edit:         true,
+    });
     try {
       const body: Record<string, any> = { comprobanteId: id, action };
       if (monto !== undefined) body.monto = monto;
@@ -197,12 +219,13 @@ export default function ComprobantesClient(
         body:    JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-      await fetchSilent();
+      // Éxito: el cambio ya está en pantalla, sin refetch (ese es el win de fluidez).
     } catch (e: any) {
       // Mostramos el motivo real del backend (ej. "Saldo insuficiente en
       // billetera" / "No hay fichas suficientes"); genérico solo si vino vacío.
       const msg = String(e?.message ?? '').trim();
       setError(msg || `No se pudo actualizar ${NOUN.artS} ${NOUN.sing}.`);
+      await fetchSilent(); // rollback: resincroniza con la verdad del server
     }
   }
 
@@ -239,6 +262,13 @@ export default function ComprobantesClient(
   }
 
   async function editComprobante(id: string, monto: number, bono: number | null) {
+    // Optimista: el estado NO cambia (se edita un verificado), solo monto/bono.
+    patchComprobanteLocal(id, {
+      monto,
+      bono,
+      edited_by_name: agent?.name ?? null,
+      edited_at:      new Date().toISOString(),
+    });
     try {
       const res = await fetch('/api/comprobantes', {
         method:  'PATCH',
@@ -246,11 +276,12 @@ export default function ComprobantesClient(
         body:    JSON.stringify({ comprobanteId: id, action: 'editar', monto, bono }),
       });
       if (!res.ok) throw new Error(await res.text());
-      await fetchSilent();
+      // Éxito: sin refetch.
     } catch (e: any) {
       // Motivo real del backend (ej. guard de saldo/fichas al reaplicar).
       const msg = String(e?.message ?? '').trim();
       setError(msg || `No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
+      await fetchSilent(); // rollback
     }
   }
 

@@ -17,5 +17,8 @@ export function thumbUrl(url: string | null | undefined, width: number, quality 
   if (!url.includes(marker)) return url; // no es Storage público → sin cambio
   const rendered = url.replace(marker, '/storage/v1/render/image/public/');
   const sep = rendered.includes('?') ? '&' : '?';
-  return `${rendered}${sep}width=${width}&quality=${quality}`;
+  // resize=contain: escala proporcional sin recortar. Sin esto, el default de
+  // Supabase (cover) RECORTA (ej. un comprobante 821x1280 pedido a width=480 volvía
+  // 480x1280 con la izquierda cortada → texto ilegible en la burbuja del chat).
+  return `${rendered}${sep}width=${width}&quality=${quality}&resize=contain`;
 }
