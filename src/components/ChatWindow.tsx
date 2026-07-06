@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
+import { thumbUrl } from '@/lib/thumb';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
@@ -911,8 +912,10 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               ) : media?._type === 'image' ? (
                 <div>
                   <img
-                    src={media.url}
+                    // Thumbnail redimensionado; el full-res se ve al hacer click (lightbox).
+                    src={thumbUrl(media.url, 480) ?? media.url}
                     alt={media.caption || 'imagen'}
+                    loading="lazy"
                     style={{
                       maxWidth: '280px', maxHeight: '320px', width: '100%',
                       objectFit: 'contain', borderRadius: '10px',
@@ -955,8 +958,10 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   const url = b.url;
                   return (
                     <img
-                      src={url}
+                      // Thumbnail redimensionado; el full-res se ve al hacer click (lightbox).
+                      src={thumbUrl(url, 480) ?? url}
                       alt="imagen"
+                      loading="lazy"
                       style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
                       onLoad={handleMediaLoad}
                       onClick={() => setLightboxUrl(url)}

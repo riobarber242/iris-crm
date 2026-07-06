@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { thumbUrl } from '@/lib/thumb';
 import PdfPreview from '@/components/PdfPreview';
 
 // Detecta si el comprobante es un PDF (preview con pdf.js en vez de <img>).
@@ -533,8 +534,11 @@ export default function ComprobantesClient(
                     <PdfPreview url={item.image_url} maxWidth={88} showLabel={false} />
                   ) : (
                   <img
-                    src={item.image_url}
+                    // Thumbnail redimensionado (~11 KB) en vez de la foto full-res;
+                    // la imagen completa se ve on-demand en el lightbox (onClick → setLightbox).
+                    src={thumbUrl(item.image_url, 200) ?? item.image_url}
                     alt="Comprobante"
+                    loading="lazy"
                     style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                     onError={(e) => {
                       (e.target as HTMLImageElement).style.display = 'none';
