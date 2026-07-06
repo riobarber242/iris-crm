@@ -260,24 +260,29 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
         // que este refetch (Broadcast o poll de 8s) trae la fila guardada mientras
         // el temp sigue en vuelo → sin esto se ve la burbuja DUPLICADA hasta que el
         // POST reconcilia (~2s). Espejo del dedup de onInsert (postgres_changes).
-        // Match por (rol, contenido) contra filas RECIENTES del server (ventana de
-        // recencia para no confundir con un mensaje viejo de idéntico texto del
-        // historial) y consumo 1-a-1 (mandar el mismo texto dos veces conserva las
-        // dos burbujas). Los que aún no están en el server se conservan (enviando /
-        // fallidos): el polling nunca borra una burbuja en vuelo.
-        const RECENT_MS = 60_000;
-        const now = Date.now();
-        const recent = new Map<string, number>();
-        for (const s of server) {
-          if (!s.created_at || now - new Date(s.created_at).getTime() > RECENT_MS) continue;
-          const k = `${s.role} ${s.content}`;
-          recent.set(k, (recent.get(k) ?? 0) + 1);
-        }
+        // Los que aún no están en el server se conservan (enviando/fallidos): el
+        // polling nunca borra una burbuja en vuelo.
+        //
+        // Match por (rol, contenido) SIN reloj: el server es insert-first (guarda
+        // la fila antes de mandar a WhatsApp, incluso si el envío falla), así que
+        // la fila del mensaje enviado SIEMPRE termina en el server; si su contenido
+        // ya está, el optimista aterrizó y hay que descartarlo. (La versión anterior
+        // filtraba por una ventana de recencia sobre created_at vs Date.now():
+        // dependía del reloj del dispositivo y si estaba adelantado descartaba de
+        // menos y seguía duplicando.) Consumimos la fila MAS NUEVA que matchea (el
+        // server viene oldest-first: recorremos desde el final) para no confundir
+        // con un mensaje viejo de idéntico texto del historial, y 1-a-1 para que
+        // mandar el mismo texto dos veces conserve las dos burbujas.
+        const claimed = new Set<number>();
         const stillPending = optimistic.filter((o) => {
-          const k = `${o.role} ${o.content}`;
-          const n = recent.get(k) ?? 0;
-          if (n > 0) { recent.set(k, n - 1); return false; } // ya está guardado → descartar
-          return true;                                       // aún en vuelo → conservar
+          for (let i = server.length - 1; i >= 0; i--) {
+            if (claimed.has(i)) continue;
+            if (server[i].role === o.role && server[i].content === o.content) {
+              claimed.add(i);
+              return false; // ya hay fila guardada en el server: descartar el optimista
+            }
+          }
+          return true;      // aun sin guardar: conservar la burbuja en vuelo
         });
         return [...server, ...stillPending];
       });
