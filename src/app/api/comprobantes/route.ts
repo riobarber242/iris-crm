@@ -36,35 +36,44 @@ export async function GET(request: Request) {
   const tipo      = url.searchParams.get('tipo');      // 'carga' | 'pago' | null (todos)
   const contactId = url.searchParams.get('contactId'); // filtrar por contacto (chat)
 
-  let query = supabaseAdmin
-    .from('comprobantes')
-    .select('*, contacts(phone, name, casino_username)')
-    .eq('tenant_id', session.tenant_id);
-  if (estado && estado !== 'all') {
-    query = query.eq('estado', estado);
-  }
-  if (contactId) {
-    query = query.eq('contact_id', contactId);
-  }
-  // Filtro por tipo (Cargas vs Pagos). Los comprobantes históricos tienen
-  // tipo='carga' por el default de la columna, así que /cargas los sigue viendo.
-  if (tipo === 'carga' || tipo === 'pago') {
-    query = query.eq('tipo', tipo);
-  }
+  // Paginación keyset por (created_at, id) DESC — estable ante inserts concurrentes
+  // (a diferencia del offset). El caso `contactId` (comprobantes de un contacto en el
+  // chat) NO pagina: es una lista chica. La bandeja sí, para no traer las ~1000 filas
+  // enteras en cada poll (antes: ~100 KB gzip cada 10s → ahora ~una página).
+  const paginate     = !contactId;
+  const limitParam   = parseInt(url.searchParams.get('limit') ?? '', 10);
+  const limit        = Number.isInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+  const before       = url.searchParams.get('before');   // ISO created_at del último item previo
+  const beforeId     = url.searchParams.get('beforeId'); // uuid, desempate del cursor
 
-  let { data, error } = await query.order('created_at', { ascending: false });
-
-  // Degradación elegante: si la columna `tipo` aún no existe (migración sin
-  // correr) y se pidió filtrar por tipo, reintentamos sin el filtro para no
-  // romper la bandeja.
-  if (error && tipo && /tipo|column|schema cache/i.test(error.message)) {
-    let retry = supabaseAdmin
+  // Builder compartido entre la query principal y el reintento sin `tipo`.
+  function build(withTipo: boolean) {
+    let q = supabaseAdmin
       .from('comprobantes')
       .select('*, contacts(phone, name, casino_username)')
-      .eq('tenant_id', session.tenant_id);
-    if (estado && estado !== 'all') retry = retry.eq('estado', estado);
-    if (contactId) retry = retry.eq('contact_id', contactId);
-    ({ data, error } = await retry.order('created_at', { ascending: false }));
+      .eq('tenant_id', session!.tenant_id);
+    if (estado && estado !== 'all') q = q.eq('estado', estado);
+    if (contactId) q = q.eq('contact_id', contactId);
+    // Filtro por tipo (Cargas vs Pagos). Los históricos tienen tipo='carga' por el
+    // default de la columna, así que /cargas los sigue viendo.
+    if (withTipo && (tipo === 'carga' || tipo === 'pago')) q = q.eq('tipo', tipo);
+    q = q.order('created_at', { ascending: false }).order('id', { ascending: false });
+    if (paginate) {
+      if (before && beforeId) {
+        // (created_at, id) < (before, beforeId), en orden DESC.
+        q = q.or(`created_at.lt.${before},and(created_at.eq.${before},id.lt.${beforeId})`);
+      }
+      q = q.limit(limit);
+    }
+    return q;
+  }
+
+  let { data, error } = await build(true);
+
+  // Degradación elegante: si la columna `tipo` aún no existe (migración sin correr)
+  // y se pidió filtrar por tipo, reintentamos sin el filtro para no romper la bandeja.
+  if (error && tipo && /tipo|column|schema cache/i.test(error.message)) {
+    ({ data, error } = await build(false));
   }
 
   if (error) {

@@ -90,6 +90,12 @@ export default function ComprobantesClient(
   const [deletingComprobanteId, setDeletingComprobanteId] = useState<string | null>(null);
   const supabaseRef                           = useRef<SupabaseClient | null>(null);
   const channelRef                            = useRef<any>(null);
+  // Paginación keyset "cargar más". loadedCountRef evita el closure viejo en el
+  // poll/realtime (fetchSilent refresca la ventana ya cargada, no solo la 1ª página).
+  const [hasMore, setHasMore]                 = useState(false);
+  const [loadingMore, setLoadingMore]         = useState(false);
+  const loadedCountRef                        = useRef(0);
+  const PAGE_SIZE = 50;
 
   // Sustantivo de la bandeja para los textos (vacío/errores), según el tipo.
   // `artS` = artículo singular, `fem` = concuerda en femenino (cargas).
@@ -99,22 +105,28 @@ export default function ComprobantesClient(
       ? { sing: 'carga', plur: 'cargas', artS: 'la', fem: true }
       : { sing: 'comprobante', plur: 'comprobantes', artS: 'el', fem: false };
 
-  function estadoUrl(f: EstadoFilter) {
+  function estadoUrl(f: EstadoFilter, opts?: { limit?: number; before?: ComprobanteItem }) {
     const params = new URLSearchParams();
     if (f !== 'all') params.set('estado', f);
     if (tipo) params.set('tipo', tipo);
-    const qs = params.toString();
-    return qs ? `/api/comprobantes?${qs}` : '/api/comprobantes';
+    params.set('limit', String(opts?.limit ?? PAGE_SIZE));
+    if (opts?.before) {
+      params.set('before',   opts.before.created_at);
+      params.set('beforeId', opts.before.id);
+    }
+    return `/api/comprobantes?${params.toString()}`;
   }
 
-  // Full fetch — shows spinner (initial load only)
+  // Full fetch — shows spinner (initial load only). Trae la 1ª página.
   async function fetchComprobantes(f: EstadoFilter = estadoFilter) {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(estadoUrl(f));
       if (!res.ok) throw new Error(res.statusText);
-      setComprobantes(await res.json());
+      const items: ComprobanteItem[] = await res.json();
+      setComprobantes(items);
+      setHasMore(items.length === PAGE_SIZE);
     } catch {
       setError('No se pudo cargar la bandeja.');
     } finally {
@@ -122,13 +134,37 @@ export default function ComprobantesClient(
     }
   }
 
-  // Silent refresh — no spinner, no flicker (used by polling & Realtime)
+  // Silent refresh — no spinner (polling & Realtime). Refresca la VENTANA ya cargada
+  // (limit = lo cargado) para no perder las páginas abiertas ni traer todo el histórico.
   async function fetchSilent() {
     try {
-      const res = await fetch(estadoUrl(estadoFilter));
+      const count = Math.max(PAGE_SIZE, loadedCountRef.current);
+      const res = await fetch(estadoUrl(estadoFilter, { limit: count }));
       if (!res.ok) return;
-      setComprobantes(await res.json());
+      const items: ComprobanteItem[] = await res.json();
+      setComprobantes(items);
+      setHasMore(items.length === count);
     } catch {}
+  }
+
+  // "Cargar más": siguiente página con cursor keyset del último item. Appendea (dedup defensivo).
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const last = comprobantes[comprobantes.length - 1];
+    if (!last) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(estadoUrl(estadoFilter, { before: last }));
+      if (!res.ok) return;
+      const more: ComprobanteItem[] = await res.json();
+      setComprobantes((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...more.filter((c) => !seen.has(c.id))];
+      });
+      setHasMore(more.length === PAGE_SIZE);
+    } catch {} finally {
+      setLoadingMore(false);
+    }
   }
 
   function handleFilterChange(f: EstadoFilter) {
@@ -280,6 +316,10 @@ export default function ComprobantesClient(
     }
     setAiLoading(false);
   }
+
+  // Mantiene loadedCountRef al día para que fetchSilent (poll/realtime) refresque
+  // la ventana ya cargada sin depender de un closure viejo.
+  useEffect(() => { loadedCountRef.current = comprobantes.length; }, [comprobantes]);
 
   useEffect(() => {
     fetchComprobantes();
@@ -765,6 +805,23 @@ export default function ComprobantesClient(
             </div>
           );
         })}
+
+        {/* Paginación "cargar más": la bandeja ya no trae las ~1000 filas de una.
+            La búsqueda es client-side sobre lo cargado; este botón trae más histórico. */}
+        {hasMore && (
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            style={{
+              alignSelf: 'center', marginTop: '4px',
+              background: '#F0F0F0', color: '#555', fontWeight: 700, fontSize: '13px',
+              border: '1px solid #e0e0e0', borderRadius: '10px', padding: '9px 20px',
+              cursor: loadingMore ? 'default' : 'pointer', opacity: loadingMore ? 0.6 : 1,
+            }}
+          >
+            {loadingMore ? 'Cargando…' : 'Cargar más'}
+          </button>
+        )}
       </div>
     </>
   );
