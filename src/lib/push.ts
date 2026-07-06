@@ -28,7 +28,20 @@ export type PushPayload = { title: string; body: string; url?: string; kind?: 'c
 // Envía a una suscripción concreta. Si la suscripción expiró (404/410) la borra.
 async function sendToSubscription(row: { id: string; subscription: any }, payload: PushPayload) {
   try {
-    await webpush.sendNotification(row.subscription, JSON.stringify(payload));
+    // Urgencia del web push (header Urgency → prioridad FCM en Android):
+    //  - conversación → 'high': le pide a FCM que DESPIERTE el dispositivo aunque
+    //    esté en Doze (pantalla apagada). Sin esto, urgency='normal' (default) hace
+    //    que FCM postergue/agrupe el mensaje hasta que se prende la pantalla → la
+    //    notificación aparece al desbloquear pero no suena/vibra en el momento.
+    //  - comprobante → default (solo badge, silenciosa por diseño): no la apuramos.
+    // OJO: esto ayuda a la ENTREGA a tiempo, pero el sonido/vibración sobre pantalla
+    // bloqueada también depende de la importancia del NotificationChannel que crea
+    // Chrome/la PWA por sitio (fija al crearse, el código no la puede cambiar) y de
+    // la optimización de batería del SO (Samsung suspende apps agresivamente).
+    const options = (payload.kind ?? 'conversation') === 'comprobante'
+      ? undefined
+      : { urgency: 'high' as const };
+    await webpush.sendNotification(row.subscription, JSON.stringify(payload), options);
     return true;
   } catch (err: any) {
     const status = err?.statusCode;
