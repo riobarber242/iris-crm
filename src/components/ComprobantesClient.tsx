@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
@@ -58,6 +58,195 @@ const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
   { key: 'rechazado', label: 'Rechazado' },
 ];
 
+// ── Card de comprobante (memoizada) ──────────────────────────────────────────
+// Solo re-renderiza si cambian sus props: el item, sus flags (isConfirming/
+// isDeleting) o los callbacks (que el padre pasa estables con useCallback). El
+// estado del form (monto/bono) es LOCAL a la card → tipear en el form re-renderiza
+// SOLO esta card, no las ~50 de la lista. Los cálculos por fila (fecha) corren solo
+// cuando esta card realmente re-renderiza.
+type ComprobanteCardProps = {
+  item:        ComprobanteItem;
+  tipo?:       'carga' | 'pago';
+  canDelete:   boolean;
+  isConfirming: boolean;
+  isDeleting:  boolean;
+  onLightbox:  (url: string) => void;
+  onOpenForm:  (item: ComprobanteItem) => void;
+  onCloseForm: () => void;
+  onConfirm:   (item: ComprobanteItem, monto: number, bono: number | null) => void;
+  onReject:    (item: ComprobanteItem) => void;
+  onDelete:    (id: string) => void;
+};
+
+const ComprobanteCard = React.memo(function ComprobanteCard({
+  item, tipo, canDelete, isConfirming, isDeleting,
+  onLightbox, onOpenForm, onCloseForm, onConfirm, onReject, onDelete,
+}: ComprobanteCardProps) {
+  const [montoInput, setMontoInput] = useState('');
+  const [bonoInput,  setBonoInput]  = useState('');
+  const [montoError, setMontoError] = useState('');
+  const [aiLoading,  setAiLoading]  = useState(false);
+
+  // Al abrir el form, precargar monto/bono del item (verificar: detectado si lo
+  // hubiera; editar: el guardado).
+  useEffect(() => {
+    if (isConfirming) {
+      setMontoInput(item.monto && item.monto > 0 ? String(item.monto) : '');
+      setBonoInput(item.bono && item.bono > 0 ? String(item.bono) : '');
+      setMontoError('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConfirming]);
+
+  async function detectMonto() {
+    setAiLoading(true);
+    try {
+      const res = await fetch(`/api/comprobantes/analyze?id=${item.id}`);
+      const data = await res.json();
+      if (res.ok && data.monto > 0) { setMontoInput(String(data.monto)); setMontoError(''); }
+      else setMontoError('No se pudo detectar el monto. Ingresalo manualmente.');
+    } catch { setMontoError('Error al analizar la imagen.'); }
+    setAiLoading(false);
+  }
+
+  function handleOk() {
+    const monto = parseFloat(montoInput.replace(',', '.'));
+    if (!monto || monto <= 0) { setMontoError('Ingresá el monto antes de confirmar'); return; }
+    const raw = bonoInput.trim();
+    const n = parseInt(raw, 10);
+    const bono = raw === '' ? null : (Number.isInteger(n) && n > 0 ? n : null);
+    onConfirm(item, monto, bono);
+  }
+
+  const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
+  const displayName = item.pago_agente
+    ? '💸 Pago del agente'
+    : (item.contacts?.casino_username || item.contacts?.phone || '—');
+  const phone = item.contacts?.phone;
+
+  return (
+    <div style={{ background: '#fff', borderRadius: '16px', padding: '14px 16px', boxShadow: '0 2px 10px rgba(0,0,0,0.07)', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+      {/* ── Thumbnail ── */}
+      <div
+        style={{ width: '88px', height: '88px', flexShrink: 0, borderRadius: '12px', overflow: 'hidden', background: '#f0f0f0', cursor: item.image_url ? 'zoom-in' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onClick={() => { if (!item.image_url) return; if (isPdfUrl(item.image_url)) window.open(item.image_url, '_blank', 'noopener,noreferrer'); else onLightbox(item.image_url); }}
+        title={!item.image_url ? 'Sin archivo' : isPdfUrl(item.image_url) ? 'Abrir PDF' : 'Ver imagen completa'}
+      >
+        {item.image_url ? (
+          isPdfUrl(item.image_url) ? (
+            <PdfPreview url={item.image_url} maxWidth={88} showLabel={false} />
+          ) : (
+            <img
+              src={thumbUrl(item.image_url, 200) ?? item.image_url}
+              alt="Comprobante"
+              loading="lazy"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+                (e.target as HTMLImageElement).parentElement!.innerHTML =
+                  '<span style="font-size:11px;color:#aaa;padding:4px;text-align:center;word-break:break-all;">Sin imagen</span>';
+              }}
+            />
+          )
+        ) : (
+          <span style={{ fontSize: '11px', color: '#bbb', textAlign: 'center', padding: '4px' }}>Sin imagen</span>
+        )}
+      </div>
+
+      {/* ── Info + actions ── */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {/* Row 1: name + badge */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#111', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</p>
+            {phone && displayName !== phone && (<p style={{ margin: 0, fontSize: '12px', color: '#888' }}>{phone}</p>)}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ ...estadoStyle, fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap' }}>{item.estado}</span>
+            {item.contact_id && (
+              <Link href={`/conversaciones/${item.contact_id}`} title="Ver chat" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', background: '#1a1a1a', textDecoration: 'none', fontSize: '14px', flexShrink: 0 }}>💬</Link>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => onDelete(item.id)}
+                disabled={isDeleting}
+                title="Eliminar comprobante"
+                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px', border: 'none', background: '#FFE9E9', cursor: isDeleting ? 'not-allowed' : 'pointer', fontSize: '14px', flexShrink: 0, opacity: isDeleting ? 0.5 : 1 }}
+              >🗑️</button>
+            )}
+          </div>
+        </div>
+
+        {/* Row 2: fecha + monto + bono */}
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '12px', color: '#888' }} title={new Date(item.created_at).toLocaleString('es-AR')}>{formatRelativeTime(item.created_at)}</span>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ fontSize: '15px', fontWeight: 900, color: (!item.monto || item.monto === 0) ? '#E53935' : '#111' }}>${item.monto ?? 0}</span>
+            {!!item.bono && item.bono > 0 && (
+              <span title="Bono en fichas" style={{ fontSize: '12px', fontWeight: 800, color: '#7a5a00', background: '#fff3cd', border: '1px solid #ffe08a', borderRadius: '8px', padding: '2px 8px' }}>🎁 {item.bono}</span>
+            )}
+          </div>
+        </div>
+
+        {(item.estado === 'verificado' || item.estado === 'rechazado') && item.resolved_by_name && (
+          <p style={{ margin: 0, fontSize: '11px', color: '#999' }}>
+            {item.estado === 'verificado' ? 'Verificado' : 'Rechazado'} por {item.resolved_by_name}
+            {item.resolved_at ? ` · ${formatResolvedAt(item.resolved_at)}` : ''}
+          </p>
+        )}
+        {item.edited_at && item.edited_by_name && (
+          <p style={{ margin: 0, fontSize: '11px', color: '#b58900' }}>Editado por {item.edited_by_name} · {formatResolvedAt(item.edited_at)}</p>
+        )}
+
+        {/* Row 3: form inline (verificar/editar) o botones */}
+        {isConfirming ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="number" min="0.01" step="0.01"
+                value={montoInput}
+                onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleOk(); if (e.key === 'Escape') onCloseForm(); }}
+                placeholder="Monto $" autoFocus
+                style={{ width: '120px', padding: '5px 10px', border: `2px solid ${montoError ? '#E53935' : '#C8FF00'}`, borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0' }}
+              />
+              {tipo !== 'pago' && (
+                <input
+                  type="number" min="0" step="1"
+                  value={bonoInput}
+                  onChange={(e) => setBonoInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleOk(); if (e.key === 'Escape') onCloseForm(); }}
+                  placeholder="Bono (fichas)"
+                  style={{ width: '120px', padding: '5px 10px', border: '2px solid #ffe08a', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#fffaf0' }}
+                />
+              )}
+              {item.image_url && !isPdfUrl(item.image_url) && (
+                <button
+                  type="button" onClick={detectMonto} disabled={aiLoading}
+                  title="Detectar monto con IA (no afecta el bono)"
+                  style={{ background: aiLoading ? '#e0e0e0' : '#1a1a1a', color: aiLoading ? '#888' : '#C8FF00', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 10px', cursor: aiLoading ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+                >{aiLoading ? '...' : '✨ IA'}</button>
+              )}
+              <button onClick={handleOk} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>✓ OK</button>
+              <button onClick={onCloseForm} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '12px', border: '1px solid #ddd', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>Cancelar</button>
+            </div>
+            {montoError && (<p style={{ margin: 0, fontSize: '11px', color: '#E53935', fontWeight: 600 }}>{montoError}</p>)}
+          </div>
+        ) : item.estado === 'pendiente' ? (
+          <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+            <button onClick={() => onOpenForm(item)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 14px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>✓ Verificar</button>
+            <button onClick={() => onReject(item)} style={{ background: '#1a1a1a', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 14px', cursor: 'pointer', boxShadow: '0 2px 0 #000' }}>✕ Rechazar</button>
+          </div>
+        ) : item.estado === 'verificado' && item.can_edit ? (
+          <div style={{ display: 'flex', gap: '8px', marginTop: '2px', justifyContent: 'flex-end' }}>
+            <button onClick={() => onOpenForm(item)} style={{ background: '#fff3cd', color: '#856404', fontWeight: 700, fontSize: '12px', border: '1px solid #ffc107', borderRadius: '8px', padding: '5px 14px', cursor: 'pointer' }}>✏ Editar</button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+});
+
 // `tipo` decide qué bandeja es: 'carga' (Cargas) o 'pago' (Pagos). Filtra el
 // fetch al backend; si se omite, trae todo (compat). `canManualPago` (solo en
 // Pagos, para admin/agent) habilita el botón "Cargar pago manual".
@@ -73,14 +262,9 @@ export default function ComprobantesClient(
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [lightbox, setLightbox]               = useState<string | null>(null);
-  // Form inline único: sirve para verificar un pendiente y para editar un
-  // verificado (monto + bono). `confirmingId` = id del comprobante con el form
-  // abierto; la acción real se decide por el estado del item.
+  // `confirmingId` = id del comprobante con el form abierto (verificar/editar). El
+  // estado del form (monto/bono) ahora vive LOCAL en la ComprobanteCard.
   const [confirmingId, setConfirmingId]       = useState<string | null>(null);
-  const [montoInput, setMontoInput]           = useState('');
-  const [bonoInput, setBonoInput]             = useState('');
-  const [montoError, setMontoError]           = useState('');
-  const [aiLoading,      setAiLoading]        = useState(false);
   // Modal "Cargar pago manual" (solo Pagos · admin/agent).
   const [manualOpen,   setManualOpen]         = useState(false);
   const [manualMonto,  setManualMonto]        = useState('');
@@ -179,114 +363,81 @@ export default function ComprobantesClient(
 
   // Bono del input → number|null. Vacío = sin bono; el backend revalida (0 e
   // inválidos quedan en null).
-  function parseBono(): number | null {
-    const raw = bonoInput.trim();
-    if (raw === '') return null;
-    const n = parseInt(raw, 10);
-    return Number.isInteger(n) && n > 0 ? n : null;
-  }
+  // Sustantivo de la bandeja para el mensaje de error (estable por `tipo`).
+  const nounSing = tipo === 'pago' ? 'el pago' : tipo === 'carga' ? 'la carga' : 'el comprobante';
 
-  // Aplica un cambio local al item (optimista). Si el nuevo estado sale del filtro
-  // activo, lo saca de la vista (como la cola de Pendientes al verificar); si no,
-  // lo actualiza en el lugar preservando `contacts` y demás campos no tocados.
-  function patchComprobanteLocal(id: string, patch: Partial<ComprobanteItem>) {
+  // Todos los handlers que recibe la ComprobanteCard van con useCallback: sus deps
+  // (estadoFilter/agent/tipo) NO cambian al tipear ni al hacer hover, así los props
+  // de las cards quedan estables y React.memo saltea el re-render de la lista entera.
+
+  // Optimista: si el nuevo estado sale del filtro activo, saca el item de la vista
+  // (cola de Pendientes al verificar); si no, lo actualiza en el lugar preservando
+  // `contacts` y demás.
+  const patchComprobanteLocal = useCallback((id: string, patch: Partial<ComprobanteItem>) => {
     const leaves = estadoFilter !== 'all' && !!patch.estado && estadoFilter !== patch.estado;
     setComprobantes((prev) =>
       leaves ? prev.filter((c) => c.id !== id)
              : prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-  }
+  }, [estadoFilter]);
 
-  async function updateComprobante(id: string, action: 'verificar' | 'rechazar', monto?: number, bono?: number | null) {
-    const item = comprobantes.find((c) => c.id === id);
-    // Optimista: mostramos el resultado al instante (mismo patrón que el borrado).
-    // El que resuelve siempre puede editar → can_edit: true.
+  const updateComprobante = useCallback(async (item: ComprobanteItem, action: 'verificar' | 'rechazar', monto?: number, bono?: number | null) => {
+    // Optimista (mismo patrón que el borrado). El que resuelve siempre puede editar → can_edit: true.
     const nuevoEstado: ComprobanteItem['estado'] = action === 'verificar' ? 'verificado' : 'rechazado';
-    patchComprobanteLocal(id, {
+    patchComprobanteLocal(item.id, {
       estado:           nuevoEstado,
-      monto:            action === 'verificar' ? (monto ?? item?.monto ?? null) : (item?.monto ?? null),
-      bono:             action === 'verificar' ? (bono ?? item?.bono ?? null)   : (item?.bono ?? null),
+      monto:            action === 'verificar' ? (monto ?? item.monto ?? null) : (item.monto ?? null),
+      bono:             action === 'verificar' ? (bono ?? item.bono ?? null)   : (item.bono ?? null),
       resolved_by_name: agent?.name ?? null,
       resolved_at:      new Date().toISOString(),
       can_edit:         true,
     });
     try {
-      const body: Record<string, any> = { comprobanteId: id, action };
+      const body: Record<string, any> = { comprobanteId: item.id, action };
       if (monto !== undefined) body.monto = monto;
       if (bono  !== undefined) body.bono  = bono;
       const res = await fetch('/api/comprobantes', {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
-      // Éxito: el cambio ya está en pantalla, sin refetch (ese es el win de fluidez).
+      // Éxito: el cambio ya está en pantalla, sin refetch (win de fluidez).
     } catch (e: any) {
-      // Mostramos el motivo real del backend (ej. "Saldo insuficiente en
-      // billetera" / "No hay fichas suficientes"); genérico solo si vino vacío.
       const msg = String(e?.message ?? '').trim();
-      setError(msg || `No se pudo actualizar ${NOUN.artS} ${NOUN.sing}.`);
-      await fetchSilent(); // rollback: resincroniza con la verdad del server
+      setError(msg || `No se pudo actualizar ${nounSing}.`);
+      fetchSilentRef.current(); // rollback: resincroniza con la verdad del server
     }
-  }
+  }, [patchComprobanteLocal, agent, nounSing]);
 
-  // Abre el form inline. Para pendiente precarga el monto detectado si lo hubiera;
-  // para verificado (editar) precarga monto y bono guardados.
-  function openForm(item: ComprobanteItem) {
-    setConfirmingId(item.id);
-    setMontoInput(item.monto && item.monto > 0 ? String(item.monto) : '');
-    setBonoInput(item.bono && item.bono > 0 ? String(item.bono) : '');
-    setMontoError('');
-  }
-
-  function closeForm() {
-    setConfirmingId(null);
-    setMontoInput('');
-    setBonoInput('');
-    setMontoError('');
-  }
-
-  // ✓ OK del form: verifica (si estaba pendiente) o edita (si ya estaba resuelto).
-  async function confirmForm(item: ComprobanteItem) {
-    const monto = parseFloat(montoInput.replace(',', '.'));
-    if (!monto || monto <= 0) {
-      setMontoError('Ingresá el monto antes de confirmar');
-      return;
-    }
-    const bono = parseBono();
-    closeForm();
-    if (item.estado === 'pendiente') {
-      await updateComprobante(item.id, 'verificar', monto, bono);
-    } else {
-      await editComprobante(item.id, monto, bono);
-    }
-  }
-
-  async function editComprobante(id: string, monto: number, bono: number | null) {
+  const editComprobante = useCallback(async (id: string, monto: number, bono: number | null) => {
     // Optimista: el estado NO cambia (se edita un verificado), solo monto/bono.
-    patchComprobanteLocal(id, {
-      monto,
-      bono,
-      edited_by_name: agent?.name ?? null,
-      edited_at:      new Date().toISOString(),
-    });
+    patchComprobanteLocal(id, { monto, bono, edited_by_name: agent?.name ?? null, edited_at: new Date().toISOString() });
     try {
       const res = await fetch('/api/comprobantes', {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ comprobanteId: id, action: 'editar', monto, bono }),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comprobanteId: id, action: 'editar', monto, bono }),
       });
       if (!res.ok) throw new Error(await res.text());
-      // Éxito: sin refetch.
     } catch (e: any) {
-      // Motivo real del backend (ej. guard de saldo/fichas al reaplicar).
       const msg = String(e?.message ?? '').trim();
-      setError(msg || `No se pudo editar ${NOUN.artS} ${NOUN.sing}.`);
-      await fetchSilent(); // rollback
+      setError(msg || `No se pudo editar ${nounSing}.`);
+      fetchSilentRef.current(); // rollback
     }
-  }
+  }, [patchComprobanteLocal, agent, nounSing]);
+
+  const openForm  = useCallback((item: ComprobanteItem) => setConfirmingId(item.id), []);
+  const closeForm = useCallback(() => setConfirmingId(null), []);
+
+  // ✓ OK del form (la validación monto/bono la hace la card): verifica un pendiente
+  // o edita un verificado.
+  const onConfirm = useCallback((item: ComprobanteItem, monto: number, bono: number | null) => {
+    closeForm();
+    if (item.estado === 'pendiente') updateComprobante(item, 'verificar', monto, bono);
+    else                             editComprobante(item.id, monto, bono);
+  }, [closeForm, updateComprobante, editComprobante]);
+
+  const onReject = useCallback((item: ComprobanteItem) => updateComprobante(item, 'rechazar'), [updateComprobante]);
 
   // Borra un comprobante (tachito). Pide confirmación; quita el item al instante.
-  async function handleDeleteComprobante(id: string) {
+  const handleDeleteComprobante = useCallback(async (id: string) => {
     if (!confirm('¿Eliminar este comprobante? Esta acción no se puede deshacer.')) return;
     setDeletingComprobanteId(id);
     try {
@@ -302,7 +453,7 @@ export default function ComprobantesClient(
     } finally {
       setDeletingComprobanteId(null);
     }
-  }
+  }, []);
 
   function closeManual() {
     setManualOpen(false);
@@ -334,23 +485,6 @@ export default function ComprobantesClient(
     } finally {
       setManualSaving(false);
     }
-  }
-
-  async function detectMonto(id: string) {
-    setAiLoading(true);
-    try {
-      const res = await fetch(`/api/comprobantes/analyze?id=${id}`);
-      const data = await res.json();
-      if (res.ok && data.monto > 0) {
-        setMontoInput(String(data.monto));
-        setMontoError('');
-      } else {
-        setMontoError('No se pudo detectar el monto. Ingresalo manualmente.');
-      }
-    } catch {
-      setMontoError('Error al analizar la imagen.');
-    }
-    setAiLoading(false);
   }
 
   // Mantiene loadedCountRef al día para que fetchSilent (poll/realtime) refresque
@@ -601,269 +735,22 @@ export default function ComprobantesClient(
             Sin resultados para “{query.trim()}”.
           </div>
         )}
-        {comprobantes.map((item) => {
-          const estadoStyle = ESTADO_STYLE[item.estado] ?? ESTADO_STYLE.pendiente;
-          const displayName = item.pago_agente
-            ? '💸 Pago del agente'
-            : (item.contacts?.casino_username || item.contacts?.phone || '—');
-          const phone       = item.contacts?.phone;
-
-          return (
-            <div
-              key={item.id}
-              style={{
-                background: '#fff',
-                borderRadius: '16px',
-                padding: '14px 16px',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.07)',
-                display: 'flex',
-                gap: '14px',
-                alignItems: 'flex-start',
-              }}
-            >
-              {/* ── Thumbnail ── */}
-              <div
-                style={{
-                  width: '88px', height: '88px', flexShrink: 0,
-                  borderRadius: '12px', overflow: 'hidden',
-                  background: '#f0f0f0',
-                  cursor: item.image_url ? 'zoom-in' : 'default',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-                onClick={() => { if (!item.image_url) return; if (isPdfUrl(item.image_url)) window.open(item.image_url, '_blank', 'noopener,noreferrer'); else setLightbox(item.image_url); }}
-                title={!item.image_url ? 'Sin archivo' : isPdfUrl(item.image_url) ? 'Abrir PDF' : 'Ver imagen completa'}
-              >
-                {item.image_url ? (
-                  isPdfUrl(item.image_url) ? (
-                    <PdfPreview url={item.image_url} maxWidth={88} showLabel={false} />
-                  ) : (
-                  <img
-                    // Thumbnail redimensionado (~11 KB) en vez de la foto full-res;
-                    // la imagen completa se ve on-demand en el lightbox (onClick → setLightbox).
-                    src={thumbUrl(item.image_url, 200) ?? item.image_url}
-                    alt="Comprobante"
-                    loading="lazy"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                      (e.target as HTMLImageElement).parentElement!.innerHTML =
-                        '<span style="font-size:11px;color:#aaa;padding:4px;text-align:center;word-break:break-all;">Sin imagen</span>';
-                    }}
-                  />
-                  )
-                ) : (
-                  <span style={{ fontSize: '11px', color: '#bbb', textAlign: 'center', padding: '4px' }}>
-                    Sin imagen
-                  </span>
-                )}
-              </div>
-
-              {/* ── Info + actions ── */}
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-
-                {/* Row 1: name + badge */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#111', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {displayName}
-                    </p>
-                    {phone && displayName !== phone && (
-                      <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>{phone}</p>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      ...estadoStyle,
-                      fontSize: '11px', fontWeight: 800,
-                      letterSpacing: '0.06em', textTransform: 'uppercase',
-                      padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap',
-                    }}>
-                      {item.estado}
-                    </span>
-                    {item.contact_id && (
-                      <Link
-                        href={`/conversaciones/${item.contact_id}`}
-                        title="Ver chat"
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          width: '28px', height: '28px', borderRadius: '8px',
-                          background: '#1a1a1a', textDecoration: 'none', fontSize: '14px',
-                          flexShrink: 0,
-                        }}
-                      >
-                        💬
-                      </Link>
-                    )}
-                    {canDelete && (
-                      <button
-                        onClick={() => handleDeleteComprobante(item.id)}
-                        disabled={deletingComprobanteId === item.id}
-                        title="Eliminar comprobante"
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          width: '28px', height: '28px', borderRadius: '8px', border: 'none',
-                          background: '#FFE9E9', cursor: deletingComprobanteId === item.id ? 'not-allowed' : 'pointer',
-                          fontSize: '14px', flexShrink: 0, opacity: deletingComprobanteId === item.id ? 0.5 : 1,
-                        }}
-                      >
-                        🗑️
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Row 2: fecha + monto + bono */}
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12px', color: '#888' }} title={new Date(item.created_at).toLocaleString('es-AR')}>
-                    {formatRelativeTime(item.created_at)}
-                  </span>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '15px', fontWeight: 900, color: (!item.monto || item.monto === 0) ? '#E53935' : '#111' }}>
-                      ${item.monto ?? 0}
-                    </span>
-                    {!!item.bono && item.bono > 0 && (
-                      <span
-                        title="Bono en fichas"
-                        style={{ fontSize: '12px', fontWeight: 800, color: '#7a5a00', background: '#fff3cd', border: '1px solid #ffe08a', borderRadius: '8px', padding: '2px 8px' }}
-                      >
-                        🎁 {item.bono}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Quién resolvió el comprobante (solo si el dato existe). */}
-                {(item.estado === 'verificado' || item.estado === 'rechazado') && item.resolved_by_name && (
-                  <p style={{ margin: 0, fontSize: '11px', color: '#999' }}>
-                    {item.estado === 'verificado' ? 'Verificado' : 'Rechazado'} por {item.resolved_by_name}
-                    {item.resolved_at ? ` · ${formatResolvedAt(item.resolved_at)}` : ''}
-                  </p>
-                )}
-
-                {/* Última edición (monto/bono), si la hubo. */}
-                {item.edited_at && item.edited_by_name && (
-                  <p style={{ margin: 0, fontSize: '11px', color: '#b58900' }}>
-                    Editado por {item.edited_by_name} · {formatResolvedAt(item.edited_at)}
-                  </p>
-                )}
-
-                {/* Row 3: form inline (verificar pendiente / editar verificado) o botones */}
-                {confirmingId === item.id ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={montoInput}
-                        onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
-                        placeholder="Monto $"
-                        autoFocus
-                        style={{
-                          width: '120px', padding: '5px 10px',
-                          border: `2px solid ${montoError ? '#E53935' : '#C8FF00'}`,
-                          borderRadius: '8px', fontSize: '13px', fontWeight: 700,
-                          outline: 'none', background: montoError ? '#fff5f5' : '#f9ffe0',
-                        }}
-                      />
-                      {/* Bono en fichas: opcional, solo enteros positivos. La IA
-                          no lo toca. Los pagos no llevan bono → se oculta. */}
-                      {tipo !== 'pago' && (
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={bonoInput}
-                          onChange={(e) => setBonoInput(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') confirmForm(item); if (e.key === 'Escape') closeForm(); }}
-                          placeholder="Bono (fichas)"
-                          style={{
-                            width: '120px', padding: '5px 10px',
-                            border: '2px solid #ffe08a',
-                            borderRadius: '8px', fontSize: '13px', fontWeight: 700,
-                            outline: 'none', background: '#fffaf0',
-                          }}
-                        />
-                      )}
-                      {item.image_url && !isPdfUrl(item.image_url) && (
-                        <button
-                          type="button"
-                          onClick={() => detectMonto(item.id)}
-                          disabled={aiLoading}
-                          title="Detectar monto con IA (no afecta el bono)"
-                          style={{
-                            background: aiLoading ? '#e0e0e0' : '#1a1a1a',
-                            color: aiLoading ? '#888' : '#C8FF00',
-                            fontWeight: 700, fontSize: '12px',
-                            border: 'none', borderRadius: '8px',
-                            padding: '5px 10px', cursor: aiLoading ? 'not-allowed' : 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {aiLoading ? '...' : '✨ IA'}
-                        </button>
-                      )}
-                      <button onClick={() => confirmForm(item)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>
-                        ✓ OK
-                      </button>
-                      <button onClick={closeForm} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '12px', border: '1px solid #ddd', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>
-                        Cancelar
-                      </button>
-                    </div>
-                    {montoError && (
-                      <p style={{ margin: 0, fontSize: '11px', color: '#E53935', fontWeight: 600 }}>
-                        {montoError}
-                      </p>
-                    )}
-                  </div>
-                ) : item.estado === 'pendiente' ? (
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
-                    <button
-                      onClick={() => openForm(item)}
-                      style={{
-                        background: '#C8FF00', color: '#000',
-                        fontWeight: 700, fontSize: '12px',
-                        border: 'none', borderRadius: '8px',
-                        padding: '5px 14px', cursor: 'pointer',
-                        boxShadow: '0 2px 0 #8ab000',
-                      }}
-                    >
-                      ✓ Verificar
-                    </button>
-                    <button
-                      onClick={() => updateComprobante(item.id, 'rechazar')}
-                      style={{
-                        background: '#1a1a1a', color: '#fff',
-                        fontWeight: 700, fontSize: '12px',
-                        border: 'none', borderRadius: '8px',
-                        padding: '5px 14px', cursor: 'pointer',
-                        boxShadow: '0 2px 0 #000',
-                      }}
-                    >
-                      ✕ Rechazar
-                    </button>
-                  </div>
-                ) : item.estado === 'verificado' && item.can_edit ? (
-                  // Alineado a la derecha, en línea con el badge de estado.
-                  <div style={{ display: 'flex', gap: '8px', marginTop: '2px', justifyContent: 'flex-end' }}>
-                    <button
-                      onClick={() => openForm(item)}
-                      style={{
-                        background: '#fff3cd', color: '#856404',
-                        fontWeight: 700, fontSize: '12px',
-                        border: '1px solid #ffc107', borderRadius: '8px',
-                        padding: '5px 14px', cursor: 'pointer',
-                      }}
-                    >
-                      ✏ Editar
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
+        {comprobantes.map((item) => (
+          <ComprobanteCard
+            key={item.id}
+            item={item}
+            tipo={tipo}
+            canDelete={canDelete}
+            isConfirming={confirmingId === item.id}
+            isDeleting={deletingComprobanteId === item.id}
+            onLightbox={setLightbox}
+            onOpenForm={openForm}
+            onCloseForm={closeForm}
+            onConfirm={onConfirm}
+            onReject={onReject}
+            onDelete={handleDeleteComprobante}
+          />
+        ))}
 
         {/* Paginación "cargar más": la bandeja ya no trae las ~1000 filas de una.
             La búsqueda es client-side sobre lo cargado; este botón trae más histórico. */}
