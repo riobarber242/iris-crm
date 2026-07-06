@@ -1,12 +1,68 @@
 # IRIS CRM — Análisis de capacidad y escalabilidad
 
-**Fecha:** 2026-07-04
-**Alcance:** solo investigación y medición sobre datos reales de producción (proyecto Supabase `sqovutbnotcwyygsacjx`). No se tocó código.
+**Fecha original:** 2026-07-04 · **Actualizado:** 2026-07-06 (ver sección de abajo)
+**Alcance:** investigación y medición sobre datos reales de producción (proyecto Supabase `sqovutbnotcwyygsacjx`).
 **Objetivo:** determinar si la estructura actual está lista para escalar con más tenants/clientes de volumen alto, y hasta qué punto antes de tener que invertir en infraestructura.
 
 ---
 
-## TL;DR (para Gonzalo)
+## 🔄 Actualización 2026-07-06 — Estado real de infra y respuesta de capacidad
+
+> Esta sección refleja la situación **a hoy**, después de implementar todo lo que el informe original (más abajo) marcaba como pendiente. **Lo de abajo queda como registro histórico del diagnóstico**; lo que vale para decidir hoy es esto.
+
+### Infra confirmada
+- **Supabase Pro** (confirmado en el dashboard — ya NO es Free). Cuotas relevantes: **egress 250 GB/mes**, DB 8 GB incluidos, Storage 100 GB, Realtime 500 conexiones concurrentes / 5 M mensajes-mes, sin pausa por inactividad.
+
+### Lo que se implementó y está en producción (corrige todo el diagnóstico original)
+- ✅ **Egress de Conversaciones** — RPC `fn_conversations_list` (trae el **último** mensaje por contacto + `pending_count` server-side, no el historial completo) + poll 5 s → 60 s. Medido: **540 → 13 KB/req** (~500× en ese endpoint, que era ~90% del problema).
+- ✅ **Fase 2 Realtime → Broadcast, completa** — mensajes, chat interno, comprobantes y movimientos emiten una **señal sin contenido** por Broadcast desde el server (recupera la inmediatez que RLS le cortó a la anon key; el cliente re-fetchea por su API autenticada). Los `postgres_changes` que quedaron están **filtrados por `tenant_id`** → se cortó el fan-out cruzado entre tenants (la degradación no-lineal del §5 original).
+- ✅ **Endpoints pesados agregados/paginados en SQL** — dashboard, `unread_counts`, top-clientes, comprobantes (keyset), leads. Se corrigió de paso el subconteo cap-1000 de PostgREST.
+- ✅ **Storage** — thumbnails redimensionados + `loading="lazy"`; el full-res solo on-demand.
+- ✅ **Contactos a escala de millones** — importador de CSV **por lotes** (streaming + resume, soporta archivos de millones de filas), pantalla de Contactos **paginada server-side** (búsqueda/orden/rango, no trae todo), e índice `(tenant_id, casino_username)`. Un tenant puede tener **millones de contactos** sin romper memoria/egress al abrir la pantalla.
+
+### Resultado medido
+- Egress por agente/mes: **52,8 GB → 1,13 GB (~47× menos)** — modelo con supuestos explícitos (ver §"Resultados — campaña de egress" más abajo). El cuello dejó de escalar con el histórico de mensajes/comprobantes.
+
+---
+
+### ❓ ¿Cuántos clientes de volumen alto (tipo Casino 17Star) aguanta HOY?
+
+**Respuesta corta: ~30–40 tenants de volumen alto con margen cómodo (hasta ~55 apurando la cuota de egress). Y a esa escala el primer muro YA NO es el egress: pasa a ser la CPU del compute de Postgres, que se resuelve subiendo un add-on pago (un slider), NO rehaciendo arquitectura.**
+
+#### El cálculo (egress — la cuota más ajustada)
+
+**Supuestos explícitos (de esto depende la cifra):**
+- "Tenant de volumen alto tipo Casino 17Star" = **~800 contactos activos, ~700 mensajes/día, 3–4 agentes**.
+- Egress medido/modelado por agente con el panel abierto **8 h × 22 días**, repartido **70 % Conversaciones / 15 % Dashboard / 15 % Comprobantes**, `unread_counts` siempre activo, 6 aperturas de Comprobantes/día: **~1,13 GB/mes/agente**.
+- Cuota Pro: **250 GB/mes de egress**.
+
+**Cuenta:**
+| Paso | Valor |
+|---|---:|
+| Egress por agente/mes | **1,13 GB** |
+| Agentes por tenant (Casino 17Star) | **× 4** |
+| **Egress por tenant/mes** | **≈ 4,5 GB** |
+| Cuota Pro ÷ egress por tenant → **techo crudo** | 250 ÷ 4,5 ≈ **~55 tenants** |
+| Con margen prudente (usar ~60 % de la cuota: deja 40 % para picos, media/Storage, webhooks, campañas y crecimiento) | 150 ÷ 4,5 ≈ **~33 tenants** |
+
+→ **Planificá para ~30–40 tenants de volumen alto.** La cifra **sube** si los agentes no pasan 8 h en las pantallas pesadas (el uso real suele ser bastante menor) y **baja** si suman más agentes por tenant o miran muchas imágenes/comprobantes (egress de Storage, que se suma aparte).
+
+#### El siguiente muro después del egress (a esta escala)
+- **CPU del compute de Postgres** (la instancia compartida del proyecto Pro). Con ~30–40 tenants × 3–4 agentes = **~120–160 agentes concurrentes** poleando + realtime, la CPU del compute *default* de Pro puede saturar antes que el egress. **Se resuelve subiendo el "Compute add-on" de Supabase (un slider pago: más vCPU/RAM), no reescribiendo nada.** El fan-out cruzado que antes multiplicaba este costo ya se cortó (Broadcast + `postgres_changes` filtrados por tenant), así que crece de forma más lineal que antes.
+
+#### Lo que NO es el cuello a esta escala
+- **Conexiones a la base:** todo el acceso es **REST/PostgREST** (sin conexiones directas a Postgres); la cantidad de agentes **no** agota `max_connections`. ✅
+- **Realtime:** ~120–160 websockets ≪ 500; el Broadcast son señales chicas solo en eventos → muy por debajo de 5 M mensajes/mes. ✅
+- **DB size (8 GB incluidos en Pro):** un tenant tipo Casino 17Star ocupa **MB, no GB**. ✅
+  - *Excepción — el tenant de "millones de contactos":* una lista de reactivación de ~8 M contactos pesa **~4–5 GB ella sola** (tabla + índices). 1–2 de esas llenan los 8 GB incluidos → se resuelve con el **disk add-on a $0,125/GB/mes** (centavos). El importador y la paginación ya lo soportan funcionalmente; el límite ahí es disco (barato), no arquitectura.
+- **Storage (100 GB incluidos):** la media (imágenes/comprobantes/audios) **acumula con el tiempo**; cuando se llene, add-on a ~$0,021/GB/mes. Es el consumidor de egress **secundario**, ya mitigado con thumbnails + lazy.
+
+#### Conclusión honesta
+Con lo que ya está en producción, la infra Pro **escala cómoda a ~30–40 clientes de volumen alto sin tocar nada**. El primer paso al pasarse de ahí **no es "arquitectura nueva": es subir el Compute add-on** de Supabase (minutos de trabajo, costo mensual). Recién **muy por encima** de ese rango —o si aparece un patrón nuevo, como muchos tenants de millones de contactos *activos* a la vez— se justifica invertir en arquitectura (read replicas, sharding, separar tenants en proyectos). En perspectiva: el trabajo de estos días corrió el muro de **~1–2 tenants** (Free, código viejo) a **decenas** (Pro, código actual), con el mismo hardware.
+
+---
+
+## TL;DR (para Gonzalo) — *registro histórico (2026-07-04, pre-implementación; ver Actualización arriba)*
 
 1. **La base es chica y sana** (~37 MB, 7% del límite Free). El tamaño de datos NO es el problema por mucho tiempo.
 2. **El primer muro NO es la base ni Realtime: es el EGRESS (ancho de banda de salida).** Y ya lo estás rozando **con un solo tenant activo**.
