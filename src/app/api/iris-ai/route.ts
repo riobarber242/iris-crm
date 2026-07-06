@@ -395,44 +395,22 @@ async function getMetrics(tid: string) {
 }
 
 async function listTopClients(tid: string, limit: number) {
-  const { data: comps } = await supabaseAdmin
-    .from('comprobantes')
-    .select('contact_id, monto')
-    .eq('tenant_id', tid)
-    .eq('estado', 'verificado');
+  // Ranking agregado en Postgres: GROUP BY contact_id + SUM(monto) + LIMIT, ya
+  // con los datos del contacto (LEFT JOIN). Antes se traían TODOS los comprobantes
+  // verificados sin paginar (cap-1000 de PostgREST → con >1000 el ranking salía
+  // MAL) y se agregaba en Node, más un `.in('id', ids)` con riesgo 414. Ver
+  // supabase-topclients-montos-rpcs.sql.
+  const { data, error } = await supabaseAdmin.rpc('fn_top_clients', { p_tenant_id: tid, p_limit: limit });
+  if (error) return { clientes: [] };
 
-  if (!comps || comps.length === 0) return { clientes: [] };
-
-  const agg = new Map<string, { total: number; monto: number }>();
-  for (const c of comps) {
-    const prev = agg.get(c.contact_id) ?? { total: 0, monto: 0 };
-    agg.set(c.contact_id, { total: prev.total + 1, monto: prev.monto + Number(c.monto ?? 0) });
-  }
-
-  const ids = Array.from(agg.keys());
-  const { data: contacts } = await supabaseAdmin
-    .from('contacts')
-    .select('id, phone, name, casino_username, status')
-    .eq('tenant_id', tid)
-    .in('id', ids);
-
-  const byId = new Map((contacts ?? []).map((c: any) => [c.id, c]));
-  const clientes = ids
-    .map((id) => {
-      const c = byId.get(id) as any;
-      const a = agg.get(id)!;
-      return {
-        nombre: c?.name ?? null,
-        casino_username: c?.casino_username ?? null,
-        telefono: c?.phone ?? null,
-        estado: c?.status ?? null,
-        recargas_verificadas: a.total,
-        monto_total: a.monto,
-      };
-    })
-    .sort((x, y) => y.monto_total - x.monto_total)
-    .slice(0, limit);
-
+  const clientes = (data ?? []).map((r: any) => ({
+    nombre:               r.nombre ?? null,
+    casino_username:      r.casino_username ?? null,
+    telefono:             r.telefono ?? null,
+    estado:               r.estado ?? null,
+    recargas_verificadas: Number(r.recargas_verificadas ?? 0),
+    monto_total:          Number(r.monto_total ?? 0),
+  }));
   return { clientes };
 }
 

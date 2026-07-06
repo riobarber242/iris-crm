@@ -3,10 +3,6 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
 
-function sumMonto(data: { monto: number | null }[]): number {
-  return data.reduce((s, r) => s + Number(r.monto ?? 0), 0);
-}
-
 // Argentina is always UTC-3 (no DST since 2009).
 // All period boundaries are expressed in UTC but aligned to Argentina midnight.
 // Midnight Argentina = 03:00 UTC.
@@ -59,7 +55,7 @@ export async function GET() {
     newToday, newWeek, newMonth, newPrevMonth,
     clienteActivoRes, inactivoRes, nuevoStatusRes, totalContactsRes,
     comprobantesPendingRes,
-    montoHoyRes, montoMesRes, montoPrevRes,
+    montosRes,
     convCountsRes, slaRes, chatsHoyRes, pendSnapRes,
   ] = await Promise.all([
     // Contactos nuevos — creados en el período
@@ -80,12 +76,16 @@ export async function GET() {
     // Comprobantes pendientes
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('estado', 'pendiente'),
 
-    // Montos verificados (se traen para sumar/contar en Node — comprobantes << messages)
-    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', todayStart.toISOString()),
-    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', monthStart.toISOString()),
-    supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado')
-      .gte('created_at', prevMonthStart.toISOString())
-      .lt('created_at',  prevMonthEnd.toISOString()),
+    // Montos verificados: conteos + sumas por período agregados en Postgres. Antes
+    // se traían las filas para sumar/contar en Node, con el mismo cap-1000 (un mes
+    // con >1000 verificados subcontaba recargas y monto). Ver supabase-topclients-montos-rpcs.sql.
+    supabaseAdmin.rpc('fn_dashboard_montos', {
+      p_tenant_id:   tid,
+      p_today_start: todayStart.toISOString(),
+      p_month_start: monthStart.toISOString(),
+      p_prev_start:  prevMonthStart.toISOString(),
+      p_prev_end:    prevMonthEnd.toISOString(),
+    }),
 
     // Conversaciones (contactos únicos con algún mensaje en el período) — 1 pasada agregada
     supabaseAdmin.rpc('fn_dashboard_conv_counts', {
@@ -115,15 +115,16 @@ export async function GET() {
   // ── SLA (de la RPC): numeric → number|null ──────────────────────────────────
   const avgFirstHumanResponseMin = slaRes.data == null ? null : Number(slaRes.data);
 
-  // ── Recargas (cantidad de comprobantes verificados) ─────────────────────────
-  const recargasHoy   = (montoHoyRes.data ?? []).length;
-  const recargasMes    = (montoMesRes.data ?? []).length;
-  const montoVerifMes  = sumMonto(montoMesRes.data ?? []);
+  // ── Recargas (cantidad de comprobantes verificados) — de la RPC ─────────────
+  const mv = (montosRes.data as any)?.[0] ?? { recargas_hoy: 0, recargas_mes: 0, monto_mes: 0, recargas_prev: 0, monto_prev: 0 };
+  const recargasHoy    = Number(mv.recargas_hoy ?? 0);
+  const recargasMes    = Number(mv.recargas_mes ?? 0);
+  const montoVerifMes  = Number(mv.monto_mes ?? 0);
   const ticketPromedio = recargasMes > 0 ? montoVerifMes / recargasMes : 0;
 
   // Mes anterior: cantidad y ticket promedio (solo comprobantes verificados).
-  const recargasMesAnterior        = (montoPrevRes.data ?? []).length;
-  const montoVerifMesAnterior      = sumMonto(montoPrevRes.data ?? []);
+  const recargasMesAnterior        = Number(mv.recargas_prev ?? 0);
+  const montoVerifMesAnterior      = Number(mv.monto_prev ?? 0);
   const ticketPromedioMesAnterior  = recargasMesAnterior > 0 ? montoVerifMesAnterior / recargasMesAnterior : 0;
 
   // ── Chats activos hoy (de la RPC) ───────────────────────────────────────────
