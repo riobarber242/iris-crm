@@ -3,10 +3,6 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
 
-function countUnique(data: { contact_id: string }[]): number {
-  return new Set(data.map((r) => r.contact_id)).size;
-}
-
 function sumMonto(data: { monto: number | null }[]): number {
   return data.reduce((s, r) => s + Number(r.monto ?? 0), 0);
 }
@@ -53,24 +49,20 @@ export async function GET() {
   // Rolling 30-day window for the operator first-response SLA
   const slaWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-  // ── Phase 1: all independent metrics + op contact IDs ─────────────────────
+  // ── Todo en paralelo ──────────────────────────────────────────────────────
+  // counts (head:true, baratos) + sumas de montos (comprobantes, chico) + las
+  // RPCs que AGREGAN en Postgres (conteos por período, SLA, chats activos,
+  // snapshot de pendientes). Antes esto traía la tabla `messages` entera (full
+  // scan para el último-msg-por-contacto) y filas sueltas para contar únicos /
+  // promediar en Node. Ya no viaja messages: solo números / 1 fila por contacto.
   const [
-    convTodayRes, convWeekRes, convMonthRes, convPrevMonthRes,
     newToday, newWeek, newMonth, newPrevMonth,
     clienteActivoRes, inactivoRes, nuevoStatusRes, totalContactsRes,
-    comprobantesPending,
+    comprobantesPendingRes,
     montoHoyRes, montoMesRes, montoPrevRes,
-    opContactsRes, slaMsgsRes,
+    convCountsRes, slaRes, chatsHoyRes, pendSnapRes,
   ] = await Promise.all([
-    // Conversaciones — unique contact_ids with any message in period
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', todayStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', weekStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', monthStart.toISOString()),
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid)
-      .gte('created_at', prevMonthStart.toISOString())
-      .lt('created_at',  prevMonthEnd.toISOString()),
-
-    // Contactos nuevos — contacts created in period
+    // Contactos nuevos — creados en el período
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', todayStart.toISOString()),
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', weekStart.toISOString()),
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', monthStart.toISOString()),
@@ -88,21 +80,28 @@ export async function GET() {
     // Comprobantes pendientes
     supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('estado', 'pendiente'),
 
-    // Montos verificados (HOY se usa solo para contar recargas; el monto de hoy ya no se muestra)
+    // Montos verificados (se traen para sumar/contar en Node — comprobantes << messages)
     supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', todayStart.toISOString()),
     supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado').gte('created_at', monthStart.toISOString()),
     supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado')
       .gte('created_at', prevMonthStart.toISOString())
       .lt('created_at',  prevMonthEnd.toISOString()),
 
-    // IDs de contactos en gestión manual (para "Sin responder" y "Chats activos hoy")
-    supabaseAdmin.from('contacts').select('id').eq('tenant_id', tid)
-      .or('conversation_state.eq.done,conversation_state.eq.en_proceso,status.eq.en_proceso'),
-
-    // Mensajes de los últimos 30 días para el SLA de 1ra respuesta del operador
-    supabaseAdmin.from('messages').select('contact_id, role, created_at').eq('tenant_id', tid)
-      .gte('created_at', slaWindowStart.toISOString())
-      .order('created_at', { ascending: true }),
+    // Conversaciones (contactos únicos con algún mensaje en el período) — 1 pasada agregada
+    supabaseAdmin.rpc('fn_dashboard_conv_counts', {
+      p_tenant_id:   tid,
+      p_today_start: todayStart.toISOString(),
+      p_week_start:  weekStart.toISOString(),
+      p_month_start: monthStart.toISOString(),
+      p_prev_start:  prevMonthStart.toISOString(),
+      p_prev_end:    prevMonthEnd.toISOString(),
+    }),
+    // SLA de 1ra respuesta humana (30 días) — promedio calculado en Postgres
+    supabaseAdmin.rpc('fn_dashboard_sla_first_human', { p_tenant_id: tid, p_window_start: slaWindowStart.toISOString() }),
+    // Chats activos hoy en gestión manual — join en Postgres (sin el .in(opIds))
+    supabaseAdmin.rpc('fn_dashboard_chats_activos_hoy', { p_tenant_id: tid, p_today_start: todayStart.toISOString() }),
+    // Snapshot por contacto (contacto + su último mensaje) para clasificar pendientes
+    supabaseAdmin.rpc('fn_contacts_pending_snapshot', { p_tenant_id: tid }),
   ]);
 
   // ── Tasa de conversión: clientes activos / total de contactos ───────────────
@@ -110,28 +109,11 @@ export async function GET() {
   const clienteActivo  = clienteActivoRes.count ?? 0;
   const conversionRate = totalContacts > 0 ? (clienteActivo / totalContacts) * 100 : 0;
 
-  // ── SLA: tiempo prom. desde que el contacto escribe hasta que un HUMANO responde ─
-  // El bot (role=assistant) NO cuenta como atendido. Promedio sobre los últimos 30 días.
-  const msgsByContact = new Map<string, { role: string; ts: number }[]>();
-  for (const m of (slaMsgsRes.data ?? [])) {
-    const arr = msgsByContact.get(m.contact_id) ?? [];
-    arr.push({ role: m.role, ts: new Date(m.created_at).getTime() });
-    msgsByContact.set(m.contact_id, arr);
-  }
-  let slaTotalMs = 0;
-  let slaCount   = 0;
-  for (const msgs of msgsByContact.values()) {
-    let pendingUserTs: number | null = null;
-    for (const { role, ts } of msgs) {
-      if (role === 'user') {
-        if (pendingUserTs === null) pendingUserTs = ts; // arranca el cronómetro
-      } else if (role === 'human') {
-        if (pendingUserTs !== null) { slaTotalMs += ts - pendingUserTs; slaCount++; pendingUserTs = null; }
-      }
-      // role === 'assistant' (bot): no frena el cronómetro del SLA humano
-    }
-  }
-  const avgFirstHumanResponseMin = slaCount > 0 ? (slaTotalMs / slaCount) / 60000 : null;
+  // ── Conversaciones por período (de la RPC: 1 fila con los 4 conteos) ────────
+  const cc = (convCountsRes.data as any)?.[0] ?? { conv_today: 0, conv_week: 0, conv_month: 0, conv_prev_month: 0 };
+
+  // ── SLA (de la RPC): numeric → number|null ──────────────────────────────────
+  const avgFirstHumanResponseMin = slaRes.data == null ? null : Number(slaRes.data);
 
   // ── Recargas (cantidad de comprobantes verificados) ─────────────────────────
   const recargasHoy   = (montoHoyRes.data ?? []).length;
@@ -144,36 +126,18 @@ export async function GET() {
   const montoVerifMesAnterior      = sumMonto(montoPrevRes.data ?? []);
   const ticketPromedioMesAnterior  = recargasMesAnterior > 0 ? montoVerifMesAnterior / recargasMesAnterior : 0;
 
-  // ── Phase 2: "Chats activos hoy" sobre contactos en gestión ───────────────────
-  const opIds = (opContactsRes.data ?? []).map((c: any) => c.id as string);
+  // ── Chats activos hoy (de la RPC) ───────────────────────────────────────────
+  const chatsActivosHoy = Number(chatsHoyRes.data ?? 0);
 
-  let chatsActivosHoy = 0;
-  if (opIds.length > 0) {
-    const { data: activosHoy } = await supabaseAdmin.from('messages').select('contact_id')
-      .eq('tenant_id', tid).in('contact_id', opIds).gte('created_at', todayStart.toISOString());
-    chatsActivosHoy = new Set((activosHoy ?? []).map((m: any) => m.contact_id as string)).size;
-  }
-
-  // ── Pendientes (misma regla que el sidebar/lista, ver lib/pending.ts) ─────────
-  // Sin filtro de fecha. 🟠 naranja = bot terminó / entrante sin flujo de bot;
-  // 🔴 rojo = ya la agarró un humano (human_taken) o cliente reconocido. Solo la lectura humana limpia.
-  const [pendContactsRes, pendMsgsRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('id, conversation_state, last_read_at, human_taken').eq('tenant_id', tid),
-    supabaseAdmin.from('messages').select('contact_id, role, created_at').eq('tenant_id', tid).order('created_at', { ascending: false }),
-  ]);
-
-  const lastMsgByContact = new Map<string, { role: string; created_at: string }>();
-  for (const m of (pendMsgsRes.data ?? [])) {
-    if (!lastMsgByContact.has(m.contact_id)) lastMsgByContact.set(m.contact_id, { role: m.role, created_at: m.created_at });
-  }
-
+  // ── Pendientes: classifyPending (JS, única fuente de verdad) sobre el snapshot ─
+  // 🟠 naranja = bot terminó / entrante sin flujo de bot; 🔴 rojo = ya la agarró
+  // un humano (human_taken) o cliente reconocido. Solo la lectura humana limpia.
   let pendingOrange = 0;
   let pendingRed    = 0;
-  for (const c of (pendContactsRes.data ?? [])) {
-    const lm = lastMsgByContact.get(c.id as string);
+  for (const c of ((pendSnapRes.data as any[]) ?? [])) {
     const level = classifyPending({
-      lastRole:          lm?.role,
-      lastMsgAt:         lm?.created_at,
+      lastRole:          c.last_role,
+      lastMsgAt:         c.last_msg_at,
       lastReadAt:        c.last_read_at,
       conversationState: c.conversation_state,
       humanTaken:        c.human_taken,
@@ -184,10 +148,10 @@ export async function GET() {
   const sinResponder = pendingOrange + pendingRed;
 
   return NextResponse.json({
-    convToday:     countUnique(convTodayRes.data    ?? []),
-    convWeek:      countUnique(convWeekRes.data     ?? []),
-    convMonth:     countUnique(convMonthRes.data    ?? []),
-    convPrevMonth: countUnique(convPrevMonthRes.data ?? []),
+    convToday:     cc.conv_today,
+    convWeek:      cc.conv_week,
+    convMonth:     cc.conv_month,
+    convPrevMonth: cc.conv_prev_month,
 
     newToday:     newToday.count     ?? 0,
     newWeek:      newWeek.count      ?? 0,
@@ -207,7 +171,7 @@ export async function GET() {
     chatsActivosHoy,
 
     // Finanzas
-    comprobantesPending:   comprobantesPending.count ?? 0,
+    comprobantesPending:   comprobantesPendingRes.count ?? 0,
     montoVerifMes,
     montoVerifMesAnterior,
     ticketPromedio,

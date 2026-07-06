@@ -14,38 +14,21 @@ export async function GET() {
     const session = await getSessionAgent();
     if (!session) return new NextResponse('No autenticado', { status: 401 });
 
-    // 1. Contactos con su estado y last_read_at. TODOS los del tenant (agente y
-    //    admin ven lo mismo; ya no se filtra por assigned_agent_id).
-    const contactsQuery = supabaseAdmin
-      .from('contacts')
-      .select('id, conversation_state, last_read_at, human_taken')
-      .eq('tenant_id', session.tenant_id);
-    const { data: contacts, error: cErr } = await contactsQuery;
-    if (cErr) return new NextResponse(cErr.message, { status: 500 });
+    // Snapshot por contacto (contacto + su ÚLTIMO mensaje) agregado en Postgres.
+    // Antes esto eran DOS full-table selects (contacts + TODA la tabla messages,
+    // sin filtro de fecha) para derivar el último msg por contacto en Node: ~84 KB
+    // gzip por corrida, polleado cada 15 s. La RPC devuelve 1 fila por contacto.
+    // classifyPending sigue en JS (única fuente de verdad, ver lib/pending.ts).
+    const { data: snap, error: sErr } = await supabaseAdmin
+      .rpc('fn_contacts_pending_snapshot', { p_tenant_id: session.tenant_id });
+    if (sErr) return new NextResponse(sErr.message, { status: 500 });
 
-    const contactMap = new Map<string, any>((contacts ?? []).map((c: any) => [c.id, c]));
-
-    // 2. Último mensaje por contacto — TODOS los mensajes, sin filtro de fecha.
-    const { data: msgs, error: mErr } = await supabaseAdmin
-      .from('messages')
-      .select('contact_id, role, created_at')
-      .eq('tenant_id', session.tenant_id)
-      .order('created_at', { ascending: false });
-    if (mErr) return new NextResponse(mErr.message, { status: 500 });
-
-    const lastMsg = new Map<string, { role: string; created_at: string }>();
-    for (const m of (msgs ?? [])) {
-      if (!lastMsg.has(m.contact_id)) lastMsg.set(m.contact_id, { role: m.role, created_at: m.created_at });
-    }
-
-    // 3. Clasificar cada contacto.
     let newPending       = 0; // 🟠
     let recurringPending = 0; // 🔴
-    for (const [cId, c] of contactMap.entries()) {
-      const lm = lastMsg.get(cId);
+    for (const c of (snap ?? [])) {
       const level = classifyPending({
-        lastRole:          lm?.role,
-        lastMsgAt:         lm?.created_at,
+        lastRole:          c.last_role,
+        lastMsgAt:         c.last_msg_at,
         lastReadAt:        c.last_read_at,
         conversationState: c.conversation_state,
         humanTaken:        c.human_taken,
