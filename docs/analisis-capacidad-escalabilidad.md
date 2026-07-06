@@ -275,6 +275,74 @@ Con los fixes de código (§10), el egress por fetch de Conversaciones baja de *
 
 ---
 
+## Resultados — campaña de egress (IMPLEMENTADA, 2026-07-05/06)
+
+Todas las recomendaciones de egress de §10 se implementaron, verificaron 1:1 contra
+datos reales y están en producción. El criterio transversal fue **agregar/paginar en
+Postgres en vez de traer todo y procesar en Node**.
+
+### Los 8 commits
+
+| # | Fix | Commit |
+|---|---|---|
+| 1 | Conversaciones — solo el último mensaje por contacto (RPC `fn_conversations_list`) + poll 5s→60s | `a312c86` |
+| 2 | Campañas — `.in()` chunkeado (200) + auto-resume por presupuesto de tiempo (el flujo vivo era `campaigns/send`, no la pantalla vieja de reactivación) | `c998713` |
+| 3 | PWA — no registrar el Service Worker en dev (evita que el fallback sirva la landing en todas las rutas) | `63379ff` |
+| 4 | Dashboard + unread_counts — agregación en Postgres (4 RPCs) + fix del subconteo cap-1000 en conteos por período | `2e98720` |
+| 5 | Top-clientes (iris-ai) + montos del dashboard — agregación en Postgres + fix cap-1000 | `a733829` |
+| 6 | Storage — thumbnails redimensionados (`render/image`) + `loading="lazy"`; full-res solo on-demand | `fc46bd1` |
+| 7 | Realtime — `filter: tenant_id=eq.<tid>` en los `postgres_changes` + sub muerta de `leads` removida | `0588ddc` |
+| 8 | Leads (Top Clientes) → RPC `fn_leads_ranking` + `/api/comprobantes` paginado (keyset) | `b28dc4d` |
+
+RPCs desplegadas en Supabase (versionadas): `supabase-conversations-list-rpc.sql`,
+`supabase-dashboard-unread-rpcs.sql`, `supabase-topclients-montos-rpcs.sql`,
+`supabase-leads-ranking-rpc.sql`.
+
+### Egress Supabase→servidor por endpoint (gzip, medido — Casino 17Star)
+
+Por hora con esa pantalla abierta en continuo:
+
+| Endpoint | Antes/call | Después/call | Poll (a→d) | Antes/h | Después/h | Mejora |
+|---|---|---|---|---|---|---|
+| **Conversaciones** | 540,8 KB | 12,9 KB | 5s→60s | 380,3 MB | 0,8 MB | **501×** |
+| unread_counts (badge, siempre activo) | 84,9 KB | 20,8 KB | 15s | 19,9 MB | 4,9 MB | 4× |
+| dashboard_stats | 182,1 KB | 21,1 KB | 15s | 42,7 MB | 5,0 MB | 9× |
+| comprobantes (bandeja) | 108,7 KB | 5,6 KB | 10s | 38,2 MB | 2,0 MB | 19× |
+
+### Storage (browser→Storage, por apertura de Comprobantes)
+
+| Comprobantes en lista | Full-res (antes) | Thumbnails + lazy (después) |
+|---|---|---|
+| 50 | 3,0 MB | ~0,2 MB |
+| 200 | 12,1 MB | ~0,2 MB |
+
+(`loading="lazy"` hace que solo bajen los ~15 thumbnails visibles; por eso 50 y 200 convergen.)
+
+### Escenario agregado — 1 agente, 176 h-panel/mes
+
+**Supuestos (modelo, no medición):** panel abierto 8 h × 22 días; reparto 70% Conversaciones /
+15% Dashboard / 15% Comprobantes; `unread_counts` corre siempre; 6 aperturas de Comprobantes/día.
+
+| | Egress/mes/agente | vs Free 5 GB |
+|---|---|---|
+| **ANTES** | **52,8 GB** | reventaba con **<1 agente** (~12–16 h-agente, coincide con §6) |
+| **DESPUÉS** | **1,13 GB** | soporta **~4 agentes** en continuo |
+| | **47× menos** | |
+
+Los números por-endpoint son **medidos** (gzip real del payload contra prod); el escenario
+mensual es un **modelo** con los supuestos de arriba. El grueso del ahorro es Conversaciones
+(era ~90% del problema), y el cuello **dejó de escalar con el histórico** de mensajes/comprobantes.
+
+### Correcciones de correctitud encontradas de paso
+- **Subconteo cap-1000:** varios endpoints traían sin paginar y PostgREST cortaba en 1000 filas
+  en silencio → el dashboard subcontaba conversaciones (`convPrevMonth` mostraba 42 cuando el real
+  era 103), el ranking de Top Clientes agregaba sobre 1000 de 1065 comprobantes, y la lista de
+  comprobantes quedaba incompleta (1079 > 1000). Todos corregidos al mover la agregación/paginación a SQL.
+- **§7 corregida:** el `.in()` gigante "de reactivación" era código muerto (pantalla removida en `83fc01b`);
+  el bug real/alcanzable estaba en `campaigns/send` y ahí se arregló.
+
+---
+
 ## Anexo — Metodología
 
 - **Conteos y tamaños:** medidos en vivo contra `sqovutbnotcwyygsacjx.supabase.co` vía REST API (`Prefer: count=exact`, `Range: 0-0`) con la service_role key. Sin modificar datos.
