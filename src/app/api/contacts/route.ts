@@ -24,27 +24,67 @@ export async function GET(request: Request) {
   const all      = url.searchParams.get('all') === 'true';
   const numberId = url.searchParams.get('number'); // filtro por línea de WhatsApp
 
-  // ?all=true or ?status=X → count mode for campaign recipient estimation
+  // ?all=true o ?status=X → modo CONTEO (estimación de destinatarios de campaña).
+  // Agregado en SQL con head:true (cuenta sin traer filas). Antes devolvía TODOS
+  // los ids del tenant solo para hacer .length en el cliente → egress/memoria al
+  // escalar. Devuelve { count }.
   if (all || status) {
-    let query = supabaseAdmin.from('contacts').select('id')
+    let query = supabaseAdmin.from('contacts')
+      .select('id', { count: 'exact', head: true })
       .eq('tenant_id', session.tenant_id)
       .neq('blocked', true);
     if (status)   query = query.eq('status', status);
     if (numberId) query = query.eq('whatsapp_number_id', numberId);
-    const { data, error } = await query;
+    const { count, error } = await query;
+    if (error) return new NextResponse(error.message, { status: 500 });
+    return NextResponse.json({ count: count ?? 0 });
+  }
+
+  // ── Modo LISTADO (agendados: con casino_username) ──────────────────────────
+  // Paginación OPT-IN: si viene `limit`, se devuelve UNA página ordenada por
+  // casino_username con búsqueda server-side (para la pantalla Contactos, que no
+  // puede traer millones de filas). Sin `limit`, comportamiento LEGACY: lista
+  // completa por created_at (el picker individual del wizard de campañas la
+  // consume entera → hay que mantener compat).
+  const SELECT_COLS = 'id, name, phone, status, casino_username, whatsapp_number_id, created_at';
+  const limitParam  = parseInt(url.searchParams.get('limit') ?? '', 10);
+
+  if (!Number.isInteger(limitParam) || limitParam <= 0) {
+    const { data, error } = await supabaseAdmin
+      .from('contacts')
+      .select(SELECT_COLS)
+      .eq('tenant_id', session.tenant_id)
+      .not('casino_username', 'is', null)
+      .neq('casino_username', '')
+      .order('created_at', { ascending: false });
     if (error) return new NextResponse(error.message, { status: 500 });
     return NextResponse.json(data ?? []);
   }
 
-  // Default: agendados (with casino_username) for /contacts page
-  const { data, error } = await supabaseAdmin
+  const limit  = Math.min(limitParam, 200);
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10) || 0);
+  const asc    = url.searchParams.get('sort') !== 'za'; // 'az' (default) | 'za'
+  // Búsqueda: se sacan los chars estructurales del `.or()` (`,()`) y los wildcards
+  // (`*%`) para no romper el filtro PostgREST; el resto va como ilike. (Mismo saneo
+  // que la búsqueda de Comprobantes.) Vacío = sin búsqueda.
+  const search = (url.searchParams.get('q') ?? '').replace(/[,()*%]/g, ' ').trim().slice(0, 60);
+
+  let query = supabaseAdmin
     .from('contacts')
-    .select('id, name, phone, status, casino_username, whatsapp_number_id, created_at')
+    .select(SELECT_COLS)
     .eq('tenant_id', session.tenant_id)
     .not('casino_username', 'is', null)
-    .neq('casino_username', '')
-    .order('created_at', { ascending: false });
-
+    .neq('casino_username', '');
+  if (search) {
+    query = query.or(`casino_username.ilike.*${search}*,name.ilike.*${search}*,phone.ilike.*${search}*`);
+  }
+  // Orden alfabético por casino_username (lo que muestra la lista) + id como
+  // desempate estable, para que la paginación no repita ni saltee filas con igual
+  // usuario. `.range()` acota el egress a una página.
+  const { data, error } = await query
+    .order('casino_username', { ascending: asc })
+    .order('id', { ascending: asc })
+    .range(offset, offset + limit - 1);
   if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data ?? []);
 }

@@ -206,7 +206,11 @@ export default function CampanasClient() {
       const res = await fetch(`/api/contacts${param}${lineParam}`);
       if (!res.ok) return;
       const data = await res.json();
-      setRecipientCount(Array.isArray(data) ? data.length : null);
+      // El endpoint ahora devuelve { count } (conteo agregado en SQL). Fallback al
+      // array por compatibilidad si algún deploy viejo respondiera la lista.
+      setRecipientCount(
+        typeof data?.count === 'number' ? data.count : Array.isArray(data) ? data.length : null,
+      );
     } catch {}
     setCountLoading(false);
   }

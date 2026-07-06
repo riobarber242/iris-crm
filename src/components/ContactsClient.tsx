@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import NewContactModal from '@/components/NewContactModal';
 import EditContactModal, { type EditableContact } from '@/components/EditContactModal';
@@ -154,6 +154,11 @@ async function countValidRows(file: File, cancel: { aborted: boolean }): Promise
 const IMPORT_BATCH_SIZE = 1000;
 const IMPORT_PROGRESS_KEY = 'iris_contacts_import_progress';
 
+// Paginación del listado: filas por página (server-side, orden + búsqueda + rango).
+// Acota egress/memoria en tenants grandes; para los chicos, 1 página los cubre casi
+// entera y "Cargar más" ni aparece.
+const CONTACTS_PAGE_SIZE = 100;
+
 type ImportProgress = {
   fileKey: string; mode: ImportMode; line: string;
   total: number; sent: number; imported: number; updated: number; skipped: number;
@@ -195,18 +200,65 @@ export default function ContactsClient() {
   const actionsRef  = useRef<HTMLDivElement | null>(null);
   const menuRef     = useRef<HTMLDivElement | null>(null); // menú de acciones de la fila abierta
 
-  async function fetchContacts() {
+  const [hasMore,     setHasMore]     = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const offsetRef      = useRef(0);     // filas ya cargadas = próximo offset
+  const loadingMoreRef = useRef(false); // guard para el poll / doble click
+
+  // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango).
+  const fetchPage = useCallback(async (q: string, sort: SortDir, offset: number): Promise<ContactRow[] | null> => {
+    const params = new URLSearchParams({ limit: String(CONTACTS_PAGE_SIZE), offset: String(offset), sort });
+    const term = q.trim();
+    if (term) params.set('q', term);
     try {
-      const res = await fetch('/api/contacts');
-      if (!res.ok) return;
-      setContacts(await res.json());
-    } catch {}
-    finally { setLoading(false); }
+      const res = await fetch(`/api/contacts?${params.toString()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch { return null; }
+  }, []);
+
+  // Primera página (reset): reemplaza la lista. `silent` = sin spinner (poll).
+  const loadFirst = useCallback(async (q: string, sort: SortDir, silent = false) => {
+    if (!silent) setLoading(true);
+    const rows = await fetchPage(q, sort, 0);
+    if (rows) {
+      setContacts(rows);
+      setHasMore(rows.length === CONTACTS_PAGE_SIZE);
+      offsetRef.current = rows.length;
+    }
+    if (!silent) setLoading(false);
+  }, [fetchPage]);
+
+  // Reset a la primera página con la búsqueda/orden actuales. Lo usan los modales
+  // (alta/edición) y el import al terminar.
+  const fetchContacts = useCallback(() => { loadFirst(query, sortDir); }, [loadFirst, query, sortDir]);
+
+  // "Cargar más": siguiente página; appendea (dedup defensivo por id).
+  async function loadMore() {
+    if (loadingMoreRef.current || !hasMore) return;
+    loadingMoreRef.current = true; setLoadingMore(true);
+    const rows = await fetchPage(query, sortDir, offsetRef.current);
+    if (rows) {
+      offsetRef.current += rows.length;
+      setContacts((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        return [...prev, ...rows.filter((r) => !seen.has(r.id))];
+      });
+      setHasMore(rows.length === CONTACTS_PAGE_SIZE);
+    }
+    loadingMoreRef.current = false; setLoadingMore(false);
   }
 
+  // Recarga la primera página ante cambios de búsqueda/orden. La búsqueda va
+  // debounced (300 ms); vacío/orden = inmediato. También hace la carga inicial.
   useEffect(() => {
-    fetchContacts();
-    // Líneas activas del tenant para "Asignar a línea" (default: la línea default).
+    const t = setTimeout(() => { loadFirst(query, sortDir); }, query ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [query, sortDir, loadFirst]);
+
+  // Líneas activas del tenant para "Asignar a línea" (default: la línea default).
+  useEffect(() => {
     fetch('/api/whatsapp-numbers')
       .then((r) => (r.ok ? r.json() : []))
       .then((d: WaLine[]) => {
@@ -220,9 +272,17 @@ export default function ContactsClient() {
         if (def) setImportLine(def.id);
       })
       .catch(() => {});
-    const timer = setInterval(fetchContacts, 15_000);
-    return () => clearInterval(timer);
   }, []);
+
+  // Poll de respaldo (15s): refresca la PRIMERA página en silencio, solo si el
+  // usuario no paginó (para no romperle la vista cargada) ni está cargando más.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (loadingMoreRef.current || offsetRef.current > CONTACTS_PAGE_SIZE) return;
+      loadFirst(query, sortDir, true);
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [query, sortDir, loadFirst]);
 
   // Cerrar el dropdown "Acciones" al clickear afuera.
   useEffect(() => {
@@ -445,31 +505,16 @@ export default function ContactsClient() {
     }
   }
 
-  // Filtra por búsqueda y ORDENA alfabéticamente por usuario de casino (lo que se
-  // ve en la lista). A-Z por defecto, Z-A con el toggle. localeCompare con 'es'
-  // para que acentos/ñ ordenen como corresponde.
-  const filtered = useMemo(() => {
-    const q = query.toLowerCase().trim();
-    const base = !q ? contacts : contacts.filter(c =>
-      c.casino_username?.toLowerCase().includes(q) ||
-      c.name?.toLowerCase().includes(q) ||
-      c.phone?.includes(q),
-    );
-    const sorted = [...base].sort((a, b) =>
-      (a.casino_username || '').localeCompare(b.casino_username || '', 'es', { sensitivity: 'base' }),
-    );
-    return sortDir === 'az' ? sorted : sorted.reverse();
-  }, [contacts, query, sortDir]);
-
-  // "Seleccionar todos" opera sobre lo FILTRADO (lo que se ve).
-  const filteredIds  = filtered.map((c) => c.id);
-  const allSelected  = filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
-  const someSelected = filteredIds.some((id) => selectedIds.has(id));
+  // La lista ya viene filtrada, ordenada y paginada del server (búsqueda y orden
+  // son server-side). La selección "todos" opera sobre lo CARGADO (lo visible).
+  const loadedIds    = contacts.map((c) => c.id);
+  const allSelected  = loadedIds.length > 0 && loadedIds.every((id) => selectedIds.has(id));
+  const someSelected = loadedIds.some((id) => selectedIds.has(id));
   function toggleAll() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (allSelected) filteredIds.forEach((id) => next.delete(id));
-      else             filteredIds.forEach((id) => next.add(id));
+      if (allSelected) loadedIds.forEach((id) => next.delete(id));
+      else             loadedIds.forEach((id) => next.add(id));
       return next;
     });
   }
@@ -621,14 +666,14 @@ export default function ContactsClient() {
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando contactos...</p>
       )}
 
-      {!loading && filtered.length === 0 && (
+      {!loading && contacts.length === 0 && (
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>
           {query ? 'Sin resultados para esa búsqueda.' : 'No hay contactos agendados.'}
         </p>
       )}
 
       {/* Table header */}
-      {filtered.length > 0 && (
+      {contacts.length > 0 && (
         <div className={`contacts-table ${selectionMode ? 'selecting' : ''}`} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div className="contact-row contact-header">
             <span className="c-check" />
@@ -640,7 +685,7 @@ export default function ContactsClient() {
             <span />
           </div>
 
-          {filtered.map((c) => {
+          {contacts.map((c) => {
             const initial = (c.casino_username || c.phone).charAt(0).toUpperCase();
             const sc      = STATUS_COLOR[c.status] ?? STATUS_COLOR.nuevo;
             return (
@@ -776,8 +821,26 @@ export default function ContactsClient() {
         </div>
       )}
 
+      {/* "Cargar más": trae la siguiente página. Solo aparece si hay más para traer
+          (en tenants chicos la primera página ya los cubre → no se muestra). */}
+      {hasMore && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '4px' }}>
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            style={{
+              background: '#fff', color: '#1a1a1a', fontWeight: 700, fontSize: '14px',
+              border: '2px solid #e0e0e0', borderRadius: '12px', padding: '12px 24px',
+              cursor: loadingMore ? 'default' : 'pointer', opacity: loadingMore ? 0.6 : 1,
+            }}
+          >
+            {loadingMore ? 'Cargando…' : 'Cargar más'}
+          </button>
+        </div>
+      )}
+
       {/* Barra flotante de selección múltiple (solo en modo selección) */}
-      {selectionMode && filtered.length > 0 && (
+      {selectionMode && contacts.length > 0 && (
         <div style={{
           position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
           background: '#1a1a1a', color: '#fff', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
