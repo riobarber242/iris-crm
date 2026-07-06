@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
@@ -812,6 +812,26 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
 
   const canSend = !loading && !cooldown && !isRecording && (!!input.trim() || !!imageFile || !!audioBlob);
 
+  // Precómputo por mensaje (memoizado por `messages`): el trabajo pesado por fila
+  // —JSON.parse (parseMedia), regex (classifyBody), formateo de fecha y linkify—
+  // corre UNA vez cuando cambian los mensajes, NO en cada tecla del composer (que
+  // cambia `input`, no `messages`). Antes esto se recalculaba por burbuja en cada
+  // render → tipear en una conversación larga era O(n) de parse/regex por tecla.
+  const rows = useMemo(() =>
+    messages
+      // Ocultar mensajes de reacción viejos guardados como texto. No son burbujas.
+      .filter((m) => m.content !== 'reaction' && (m as any).type !== 'reaction')
+      .map((m, i) => ({
+        m,
+        i,
+        media:    parseMedia(m.content),
+        body:     classifyBody(m.content),
+        rel:      m.created_at ? formatRelativeTime(m.created_at) : '',
+        fullDate: m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined,
+        text:     linkify(m.content),
+      })),
+    [messages]);
+
   return (
     <div style={{ background: '#FFFFFF', borderRadius: '20px', padding: '12px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
 
@@ -829,11 +849,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
             <button type="button" onClick={() => fetchMessages()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontWeight: 700, textDecoration: 'underline', fontSize: '13px', padding: 0 }}>Reintentar</button>
           </div>
         )}
-        {messages
-          // Ocultar mensajes de reacción guardados como texto "reaction" (viejos,
-          // de antes de manejar las reacciones como badge). No son burbujas.
-          .filter((m) => m.content !== 'reaction' && (m as any).type !== 'reaction')
-          .map((m, i) => {
+        {rows.map(({ m, i, media, body, rel, fullDate, text }) => {
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
           // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.
@@ -844,7 +860,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           const humanSignature = isHuman && m.agent_name
             ? `${m.agent_name}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
             : '';
-          const media = parseMedia(m.content);
+          // `media`, `body`, `rel`, `fullDate`, `text` vienen precomputados (useMemo).
           // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
           const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
           // "Enviar a verificar": solo en mensajes con imagen ya guardados (con id).
@@ -852,7 +868,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           //   saliente del staff (role 'human', operador/agente) → Pagos
           // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
           // un pago lo origina una imagen que mandó una persona del equipo.
-          const hasImage   = media?._type === 'image' || classifyBody(m.content).kind === 'image';
+          const hasImage   = media?._type === 'image' || body.kind === 'image';
           const isPdfDoc   = media?._type === 'document' && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
           const canVerify  = (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
           const verifSent  = !!m.id && verifSentIds.has(m.id);
@@ -953,7 +969,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
                 )
               ) : (() => {
-                const b = classifyBody(m.content);
+                const b = body;
                 if (b.kind === 'image' && b.url) {
                   const url = b.url;
                   return (
@@ -975,7 +991,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
                 if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
                 if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
-                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{linkify(m.content)}</p>;
+                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{text}</p>;
               })()}
 
               {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →
@@ -1014,8 +1030,8 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
 
               {/* Hora + ticks (ticks solo en salientes) */}
               <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-end' : 'flex-start' }}
-                 title={m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined}>
-                {m.created_at && <span>{formatRelativeTime(m.created_at)}</span>}
+                 title={fullDate}>
+                {m.created_at && <span>{rel}</span>}
                 {(isBot || isHuman) && <Ticks status={m.status} />}
                 {/* Acciones de mensaje fallido: reintentar texto libre o usar plantilla. */}
                 {isHuman && m.status === 'failed' && (
@@ -1040,7 +1056,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 )}
                 {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
                     texto plano (no media). Oculto mientras se edita esta burbuja. */}
-                {canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && classifyBody(m.content).kind === 'text' && (
+                {canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && body.kind === 'text' && (
                   <button
                     type="button"
                     onClick={() => startEdit(m)}
