@@ -169,6 +169,9 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   const ext      = contentType.includes('png')  ? 'png'
                  : contentType.includes('webp') ? 'webp'
                  : contentType.includes('gif')  ? 'gif'
+                 // Video entrante: ANTES que la rama de audio mp4/m4a, porque el mime
+                 // de video es 'video/mp4' y si no caería mal en 'm4a' (audio).
+                 : contentType.startsWith('video/') ? (contentType.includes('3gp') ? '3gp' : 'mp4')
                  // Audio entrante (notas de voz / audios): mapear los mime de Meta
                  // a una extensión real para que el <audio> del chat lo reproduzca.
                  : contentType.includes('ogg')  ? 'ogg'
@@ -212,7 +215,7 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
 // (ver POST /api/comprobantes). Acá solo persistimos la imagen.
 async function saveInboundImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
   const mediaId = message.image?.id ?? message.document?.id ?? message.sticker?.id
-                ?? message.audio?.id ?? message.voice?.id ?? null;
+                ?? message.audio?.id ?? message.voice?.id ?? message.video?.id ?? null;
   // El media solo puede descargarse con el token del número que lo recibió.
   let waToken: string | null = null;
   if (mediaId) {
@@ -228,6 +231,29 @@ async function saveInboundImage(message: any, contactId: string, tenantId: strin
   if (!supabaseImageUrl) console.warn('[image] Upload falló — la imagen no se pudo guardar');
 
   return supabaseImageUrl;
+}
+
+// Vista previa corta de un mensaje citado (reply-to), para mostrar arriba de la
+// burbuja "↩ Respondiendo a: …". Media → etiqueta con emoji; texto → recorte.
+function previewOf(content: string | null | undefined): string {
+  const c = (content ?? '').trim();
+  if (!c) return 'Mensaje';
+  try {
+    const p = JSON.parse(c);
+    if (p?._type === 'image')    return '📷 Imagen';
+    if (p?._type === 'sticker')  return '🌟 Sticker';
+    if (p?._type === 'audio')    return '🎤 Audio';
+    if (p?._type === 'video')    return '🎬 Video';
+    if (p?._type === 'document') return `📄 ${p.filename || 'Documento'}`;
+    if (p?._type === 'location') return '📍 Ubicación';
+    if (p?._type === 'contacts') return '👤 Contacto';
+  } catch { /* no es JSON: es texto plano o un placeholder viejo */ }
+  if (c === 'image')                 return '📷 Imagen';
+  if (c === 'document')              return '📄 Documento';
+  if (c === 'audio' || c === 'voice') return '🎤 Audio';
+  if (c === 'sticker')               return '🌟 Sticker';
+  if (c === 'video')                 return '🎬 Video';
+  return c.length > 80 ? `${c.slice(0, 80)}…` : c;
 }
 
 // ─── Webhook entry ────────────────────────────────────────────────────────────
@@ -459,20 +485,57 @@ async function processMessage(
   //    y se renderice como imagen en el chat del CRM. Etapa 4a: NO se crea
   //    comprobante automático; el operador lo manda a verificar con el botón.
   let inboundMediaUrl: string | null = null;
-  if (['image', 'document', 'sticker', 'audio', 'voice'].includes(type)) {
+  if (['image', 'document', 'sticker', 'audio', 'voice', 'video'].includes(type)) {
     inboundMediaUrl = await saveInboundImage(message, contact.id, tenantId, numberId);
   }
 
-  // Contenido del mensaje del usuario. Stickers se guardan como media de imagen
-  // (son webp) y los audios/notas de voz como media de audio, para que el chat
-  // del CRM los renderice (imagen / player) en vez de un placeholder.
+  // Ubicación y contactos compartidos no son "media" (no se descargan), pero los
+  // guardamos como JSON estructurado para que el chat los renderice lindo (mapa /
+  // ficha) en vez de mostrar el texto pelado "location"/"contacts".
+  const locationJson = type === 'location' && message.location
+    ? JSON.stringify({
+        _type: 'location',
+        lat: message.location.latitude, lng: message.location.longitude,
+        name: (message.location.name ?? '').trim() || null,
+        address: (message.location.address ?? '').trim() || null,
+      })
+    : null;
+  const contactsJson = type === 'contacts' && Array.isArray(message.contacts)
+    ? JSON.stringify({
+        _type: 'contacts',
+        contacts: message.contacts.map((c: any) => ({
+          name: (c?.name?.formatted_name ?? '').trim() || null,
+          phone: (c?.phones?.[0]?.phone ?? c?.phones?.[0]?.wa_id ?? '').trim() || null,
+        })),
+      })
+    : null;
+
+  // Contenido del mensaje del usuario. Media (imagen/sticker/audio/doc/video) se
+  // guarda como JSON para que el chat del CRM lo renderice en vez de un placeholder.
   const userContent =
     type === 'text'                            ? text
     : (type === 'image' && inboundMediaUrl)    ? JSON.stringify({ _type: 'image', url: inboundMediaUrl, caption: (message.image?.caption ?? '').trim() })
     : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'sticker', url: inboundMediaUrl })
     : (['audio', 'voice'].includes(type) && inboundMediaUrl) ? JSON.stringify({ _type: 'audio', url: inboundMediaUrl })
+    : (type === 'video' && inboundMediaUrl)    ? JSON.stringify({ _type: 'video', url: inboundMediaUrl, caption: (message.video?.caption ?? '').trim() })
     : (type === 'document' && inboundMediaUrl) ? JSON.stringify({ _type: 'document', url: inboundMediaUrl, filename: (message.document?.filename ?? '').trim() || null, mime: message.document?.mime_type ?? null, caption: (message.document?.caption ?? '').trim() })
-    : type;
+    : locationJson ?? contactsJson ?? type;
+
+  // ── Reply-to (respuesta citada) ─────────────────────────────────────────────
+  // El mensaje trae context.id = wamid del mensaje citado. Guardamos ese wamid y un
+  // preview corto (resuelto desde nuestra DB) para mostrar "↩ Respondiendo a: …".
+  // Nota: context.forwarded existe para reenviados pero no lo tratamos acá.
+  let replyToWamid: string | null = null;
+  let replyToPreview: string | null = null;
+  const quotedId = message.context?.id as string | undefined;
+  if (quotedId) {
+    replyToWamid = quotedId;
+    try {
+      const { data: quoted } = await supabaseAdmin
+        .from('messages').select('content').eq('whatsapp_message_id', quotedId).maybeSingle();
+      if (quoted) replyToPreview = previewOf(quoted.content);
+    } catch { /* si falla la lookup, queda solo el wamid */ }
+  }
 
   // ── Save user message ──────────────────────────────────────────────────────
   try {
@@ -482,6 +545,8 @@ async function processMessage(
       content:             userContent,
       whatsapp_message_id: messageId,
       type,
+      reply_to_wamid:      replyToWamid,
+      reply_to_preview:    replyToPreview,
       tenant_id:           tenantId,
     });
     if (error) {
@@ -508,6 +573,10 @@ async function processMessage(
       : type === 'image'             ? '📷 Imagen'
       : type === 'document'          ? '📄 Documento'
       : ['audio', 'voice'].includes(type) ? '🎤 Audio'
+      : type === 'video'             ? '🎬 Video'
+      : type === 'sticker'           ? '🌟 Sticker'
+      : type === 'location'          ? '📍 Ubicación'
+      : type === 'contacts'          ? '👤 Contacto'
       : type;
     await notifyContactAgents(contact.assigned_agent_id ?? null, tenantId, {
       title: 'IRIS',

@@ -35,6 +35,8 @@ type Message = {
   agent_avatar?: string | null;
   whatsapp_message_id?: string | null;
   reaction?: string | null;
+  reply_to_wamid?: string | null;
+  reply_to_preview?: string | null;
 };
 
 // Etiqueta de rol para la firma de mensajes manuales (ej: "jessica · operador").
@@ -100,13 +102,23 @@ function Ticks({ status }: { status?: string }) {
 }
 
 type QuickReply = { id: string; title: string; content: string };
-type MediaContent = { _type: 'image' | 'audio' | 'sticker' | 'document'; url: string; caption?: string; filename?: string | null; mime?: string | null };
-
+type SharedContact = { name: string | null; phone: string | null };
+type MediaContent = {
+  _type: 'image' | 'audio' | 'sticker' | 'document' | 'video' | 'location' | 'contacts';
+  url: string;                 // media (image/audio/sticker/document/video). location/contacts no lo usan.
+  caption?: string;
+  filename?: string | null;
+  mime?: string | null;
+  lat?: number; lng?: number; name?: string | null; address?: string | null; // location
+  contacts?: SharedContact[];  // contacts
+};
 
 function parseMedia(raw: string): MediaContent | null {
   try {
     const p = JSON.parse(raw);
-    if ((p?._type === 'image' || p?._type === 'audio' || p?._type === 'sticker' || p?._type === 'document') && typeof p.url === 'string') return p;
+    if (['image', 'audio', 'sticker', 'document', 'video'].includes(p?._type) && typeof p.url === 'string') return p;
+    if (p?._type === 'location' && typeof p.lat === 'number' && typeof p.lng === 'number') return p;
+    if (p?._type === 'contacts' && Array.isArray(p.contacts)) return p;
   } catch {}
   return null;
 }
@@ -937,6 +949,21 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 </p>
               )}
 
+              {/* Respuesta citada (reply-to): a qué mensaje está respondiendo el
+                  cliente. Solo aparece en entrantes (burbuja oscura), por eso el
+                  estilo claro-sobre-oscuro. */}
+              {(m.reply_to_preview || m.reply_to_wamid) && (
+                <div style={{
+                  borderLeft: '3px solid rgba(255,255,255,0.45)',
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: '6px', padding: '4px 8px', marginBottom: '6px',
+                  fontSize: '12px', maxWidth: '100%', overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  <span style={{ opacity: 0.7 }}>↩ Respondiendo a:</span> {m.reply_to_preview || 'un mensaje'}
+                </div>
+              )}
+
               {editingId === m.id ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '220px' }}>
                   <textarea
@@ -998,6 +1025,35 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 ) : (
                   <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
                 )
+              ) : media?._type === 'video' ? (
+                <div>
+                  <video
+                    controls
+                    src={media.url}
+                    style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', borderRadius: '10px', display: 'block', background: '#000' }}
+                    onLoadedData={handleMediaLoad}
+                  />
+                  {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+                </div>
+              ) : media?._type === 'location' ? (
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${media.lat},${media.lng}`}
+                  target="_blank" rel="noreferrer"
+                  style={{ display: 'flex', flexDirection: 'column', gap: '2px', textDecoration: 'none', color: 'inherit' }}
+                >
+                  <span style={{ fontSize: '14px', fontWeight: 700 }}>📍 {media.name || 'Ubicación compartida'}</span>
+                  {media.address && <span style={{ fontSize: '12px', opacity: 0.75 }}>{media.address}</span>}
+                  <span style={{ fontSize: '12px', textDecoration: 'underline', opacity: 0.9, marginTop: '2px' }}>Ver en Google Maps ↗</span>
+                </a>
+              ) : media?._type === 'contacts' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {(media.contacts ?? []).map((c, ci) => (
+                    <div key={ci} style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 700 }}>👤 {c.name || 'Contacto'}</span>
+                      {c.phone && <a href={`tel:${c.phone}`} style={{ fontSize: '13px', textDecoration: 'underline', color: 'inherit', opacity: 0.9 }}>{c.phone}</a>}
+                    </div>
+                  ))}
+                </div>
               ) : (() => {
                 const b = body;
                 if (b.kind === 'image' && b.url) {
