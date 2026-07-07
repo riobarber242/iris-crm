@@ -69,6 +69,59 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
   return { token: getToken(), phoneId: getPhoneNumberId() };
 }
 
+// ── Límite diario de mensajería (messaging limit tier) ───────────────────────
+// El límite de Meta es por PORTFOLIO de negocio, compartido por todas las líneas,
+// y se cuenta como destinatarios ÚNICOS en una ventana móvil de 24h. Leerlo desde
+// UNA línea cualquiera ya devuelve el techo compartido (no se suman líneas).
+//
+// Meta DEPRECÓ `messaging_limit_tier` a favor de `whatsapp_business_manager_messaging_limit`;
+// pedimos el nuevo y, si falla (deploys/versiones viejas), caemos al viejo.
+// Devuelve el string del tier (p.ej. "TIER_1K") y su equivalente numérico (o null
+// si es ilimitado o no se pudo leer).
+
+// Mapea el tier de Meta a su número de destinatarios/día. null = ilimitado.
+export function tierToNumber(tier: string | null | undefined): number | null {
+  if (!tier) return null;
+  const t = String(tier).toUpperCase();
+  if (t.includes('UNLIMITED')) return null;
+  const known: Record<string, number> = {
+    TIER_50: 50, TIER_250: 250, TIER_500: 500, TIER_1K: 1000,
+    TIER_2K: 2000, TIER_10K: 10000, TIER_100K: 100000,
+  };
+  if (known[t] != null) return known[t];
+  // Fallback: parsear TIER_<n>[K] para tiers que Meta agregue en el futuro.
+  const m = t.match(/TIER_(\d+)(K)?/);
+  if (m) return Number(m[1]) * (m[2] ? 1000 : 1);
+  return null;
+}
+
+export async function getMessagingLimit(
+  tenantId?: string,
+  numberId?: string | null,
+): Promise<{ tier: string | null; limit: number | null }> {
+  const { token, phoneId } = await resolveCreds(tenantId, numberId);
+  const headers = { Authorization: `Bearer ${token}` };
+
+  async function read(field: string): Promise<string | null> {
+    const { data } = await axios.get(`${BASE_URL}/${phoneId}?fields=${field}`, { headers });
+    return (data?.[field] as string | undefined) ?? null;
+  }
+
+  try {
+    const tier = await read('whatsapp_business_manager_messaging_limit');
+    return { tier, limit: tierToNumber(tier) };
+  } catch (errNew) {
+    // El campo nuevo puede no existir en cuentas/versiones viejas: probamos el viejo.
+    try {
+      const tier = await read('messaging_limit_tier');
+      return { tier, limit: tierToNumber(tier) };
+    } catch (errOld) {
+      logApiError('getMessagingLimit', errOld);
+      return { tier: null, limit: null };
+    }
+  }
+}
+
 function logApiError(context: string, err: any) {
   const status = err?.response?.status;
   const data   = err?.response?.data;

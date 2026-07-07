@@ -2,6 +2,14 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 
+// Valida y normaliza la ventana horaria (minutos AR). Solo mismo día: exige
+// 0 ≤ start < end ≤ 1440; si no, va null (sin restricción) para no bloquear envíos.
+function windowCols(start: unknown, end: unknown): { window_start_min: number | null; window_end_min: number | null } {
+  const s = Number(start), e = Number(end);
+  const ok = Number.isFinite(s) && Number.isFinite(e) && s >= 0 && e <= 1440 && s < e;
+  return ok ? { window_start_min: Math.round(s), window_end_min: Math.round(e) } : { window_start_min: null, window_end_min: null };
+}
+
 export async function GET() {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -21,7 +29,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -76,6 +84,11 @@ export async function POST(request: Request) {
     interval_max_sec: interval_max_sec != null ? Number(interval_max_sec) : 3,
     pause_every:      pause_every ? Number(pause_every) : null,
     pause_seconds:    pause_seconds ? Number(pause_seconds) : null,
+    // Techo diario de Meta elegido en el wizard (absoluto). null = sin tope.
+    daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
+    // Ventana horaria (minutos AR desde medianoche). Solo mismo día: si no es
+    // start < end válido en [0,1440), va null = sin restricción.
+    ...windowCols(window_start_min, window_end_min),
   };
 
   // Insert con columnas opcionales (exclude_campaign_ids + config); si alguna no
@@ -121,7 +134,7 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const { campaignId, status } = body;
 
-  if (!campaignId || !['borrador', 'enviando', 'completada'].includes(status)) {
+  if (!campaignId || !['borrador', 'enviando', 'completada', 'pausada'].includes(status)) {
     return new NextResponse('Falta campaignId o estado válido', { status: 400 });
   }
 

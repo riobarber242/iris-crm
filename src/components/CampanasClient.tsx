@@ -11,9 +11,13 @@ type Campaign = {
   template_variables: string[] | null;
   target_filter: string;
   target_number_id: string | null;
-  status: 'borrador' | 'enviando' | 'completada';
+  status: 'borrador' | 'enviando' | 'completada' | 'pausada';
   sent_count: number;
   created_at: string;
+  daily_cap: number | null;
+  paused_reason: string | null;
+  window_start_min: number | null;
+  window_end_min: number | null;
   recipient_ids: string[] | null;
   exclude_campaign_ids: string[] | null;
   delivered_count: number | null;
@@ -35,6 +39,18 @@ type PickContact = { id: string; name: string | null; phone: string; casino_user
 // (mismo patrón que la pantalla de Contactos). Acota egress/memoria en tenants
 // grandes; para los chicos, 1 página los cubre casi entera y "Cargar más" ni aparece.
 const PICKER_PAGE_SIZE = 100;
+
+// Ventana horaria: 'HH:MM' ⇄ minutos desde medianoche.
+function hhmmToMin(s: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
+  if (!m) return null;
+  const h = Number(m[1]), mm = Number(m[2]);
+  if (h > 23 || mm > 59) return null;
+  return h * 60 + mm;
+}
+function minToHHMM(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
 
 // Cuenta cuántos placeholders {{1}}, {{2}}... distintos tiene el body.
 function countTemplateVars(body: string): number {
@@ -150,6 +166,21 @@ export default function CampanasClient() {
   const [launchResult, setLaunchResult] = useState<{ sent: number; total: number } | null>(null);
   const [deletingNo,  setDeletingNo]  = useState<string | null>(null);
 
+  // ── Techo diario de Meta (envío escalonado) ──────────────────────────────────
+  // marginPct: % del límite real de Meta que se permite gastar (default 80). El
+  // techo absoluto (daily_cap) = floor(metaLimit × marginPct/100), se manda al crear.
+  // metaInfo: límite real leído de la Graph API + uso ya consumido en las últimas 24h.
+  const [marginPct,   setMarginPct]   = useState(80);
+  // Ventana horaria de envío (hora AR). Default 08:00–20:00. Fuera de ella la campaña
+  // se pausa ('fuera_de_horario') y retoma sola al volver a entrar.
+  const [windowFrom,  setWindowFrom]  = useState('08:00');
+  const [windowTo,    setWindowTo]    = useState('20:00');
+  const [metaInfo,    setMetaInfo]    = useState<{ tier: string | null; metaLimit: number | null; usedToday: number } | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  // Uso en vivo (destinatarios únicos del tenant en 24h) para el indicador "X/Y hoy"
+  // mientras hay un envío en curso. Se pollea junto con la lista de campañas.
+  const [usageToday,  setUsageToday]  = useState<number | null>(null);
+
   const [historyOpen,  setHistoryOpen]  = useState(true);
   const [historyRange, setHistoryRange] = useState('1m');
 
@@ -159,8 +190,29 @@ export default function CampanasClient() {
     try {
       const res = await fetch('/api/campaigns');
       if (!res.ok) return;
-      setCampaigns(await res.json());
+      const list = await res.json();
+      setCampaigns(Array.isArray(list) ? list : []);
+      // Solo polleamos el uso diario si hay un envío en curso con techo (para el
+      // indicador "X/Y hoy"); si no, no gastamos la query.
+      const anySending = Array.isArray(list) && list.some((c: Campaign) => c.status === 'enviando' && c.daily_cap != null);
+      if (anySending) {
+        try {
+          const u = await fetch('/api/campaigns/usage');
+          if (u.ok) { const d = await u.json(); setUsageToday(typeof d?.usedToday === 'number' ? d.usedToday : null); }
+        } catch {}
+      }
     } catch {}
+  }
+
+  // Lee el límite REAL de Meta para el tenant (1 llamada a la Graph API) + uso ya
+  // consumido en 24h. Se usa en el paso Confirmar para proponer el techo por defecto.
+  async function fetchMetaLimit() {
+    setMetaLoading(true);
+    try {
+      const r = await fetch('/api/campaigns/limit');
+      if (r.ok) setMetaInfo(await r.json());
+    } catch {}
+    setMetaLoading(false);
   }
 
   useEffect(() => {
@@ -306,12 +358,15 @@ export default function CampanasClient() {
     setTargetMode('category'); setSelectedIds([]); setContactSearch('');
     setSendLimit(''); setIntervalMin('1'); setIntervalMax('3'); setPauseEvery(''); setPauseSeconds('');
     setExcludePrevious(false); setExcludeCampaignIds([]);
+    setMarginPct(80);
+    setWindowFrom('08:00'); setWindowTo('20:00');
     setError('');
   }
 
   function openWizard() {
     resetWizard(); setShowWizard(true); setLaunchResult(null);
     fetchRecipientCount('todos', 'todas');
+    fetchMetaLimit();
   }
   function closeWizard() { resetWizard(); setShowWizard(false); }
 
@@ -340,6 +395,18 @@ export default function CampanasClient() {
     setLaunching(true); setError(''); setLaunchProgress('');
     try {
       const isIndividual = targetMode === 'individual';
+      // Techo diario absoluto = % elegido × límite real de Meta. Si no pudimos leer
+      // el límite (o es ilimitado), va null → sin tope (se envía como antes).
+      const metaLimit = metaInfo?.metaLimit ?? null;
+      const dailyCap = metaLimit != null ? Math.max(1, Math.floor((metaLimit * marginPct) / 100)) : null;
+      // Ventana horaria: validamos mismo día (desde < hasta) antes de crear.
+      const winFromMin = hhmmToMin(windowFrom);
+      const winToMin   = hhmmToMin(windowTo);
+      if (winFromMin == null || winToMin == null || winFromMin >= winToMin) {
+        setError('La ventana horaria no es válida: "Mandar desde" debe ser una hora menor que "Mandar hasta".');
+        setLaunching(false);
+        return;
+      }
       const createBody = {
         name: name.trim(),
         target_filter: isIndividual ? 'seleccion' : effectiveFilter(filter, inactiveDays),
@@ -357,6 +424,9 @@ export default function CampanasClient() {
         interval_max_sec: Number(intervalMax) || 0,
         pause_every:   pauseEvery ? Number(pauseEvery) : null,
         pause_seconds: pauseSeconds ? Number(pauseSeconds) : null,
+        daily_cap:     dailyCap,
+        window_start_min: winFromMin,
+        window_end_min:   winToMin,
       };
       const res = await fetch('/api/campaigns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody),
@@ -367,7 +437,7 @@ export default function CampanasClient() {
       // Auto-resume: /send corta por presupuesto de tiempo en campañas grandes y
       // devuelve done:false; lo re-llamamos hasta done:true (saltea a los ya
       // intentados server-side). El guard es un backstop ante un bucle inesperado.
-      let done = false, guard = 0, sentTotal = 0, total = 0;
+      let done = false, guard = 0, sentTotal = 0, total = 0, pausedByLimit = false;
       while (!done) {
         if (++guard > 300) throw new Error('El envío no terminó tras muchos reintentos; revisá el estado de la campaña.');
         const sendRes = await fetch('/api/campaigns/send', {
@@ -375,13 +445,16 @@ export default function CampanasClient() {
         });
         const data = await sendRes.json();
         if (!sendRes.ok) throw new Error(data?.error ?? 'Error al enviar la campaña.');
-        done      = data.done !== false;                          // sin done → compat: tratamos como terminado
         sentTotal = data.sentTotal ?? data.sent ?? sentTotal;
         total     = data.total ?? total;
+        // Pausada por el techo diario de Meta: NO reintentamos (el cron la retoma
+        // sola al liberarse cupo). Cortamos el loop; el banner de la pantalla avisa.
+        if (data.paused) { pausedByLimit = true; break; }
+        done = data.done !== false;                               // sin done → compat: tratamos como terminado
         if (!done) setLaunchProgress(`Enviando ${data.attemptedTotal ?? sentTotal} / ${total}…`);
       }
 
-      setLaunchResult({ sent: sentTotal, total });
+      setLaunchResult(pausedByLimit ? null : { sent: sentTotal, total });
       closeWizard();
       fetchCampaigns();
     } catch (e: any) {
@@ -440,6 +513,40 @@ export default function CampanasClient() {
           </p>
         </div>
       )}
+
+      {/* Banners de pausa (estado en la base → visibles tras el poll de 10s aunque se
+          haya cerrado la pestaña y reabierto). Uno por motivo. */}
+      {(() => {
+        const byLimit = activeCampaigns.filter((c) => c.status === 'pausada' && c.paused_reason === 'daily_limit');
+        const byHours = activeCampaigns.filter((c) => c.status === 'pausada' && c.paused_reason === 'fuera_de_horario');
+        if (byLimit.length === 0 && byHours.length === 0) return null;
+        const banner: React.CSSProperties = { background: '#fff8e6', border: '1px solid #f0c040', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px' };
+        const txt: React.CSSProperties = { fontSize: '13px', color: '#7a5c00', fontWeight: 700, margin: 0, lineHeight: 1.5 };
+        return (
+          <>
+            {byLimit.length > 0 && (
+              <div style={banner}>
+                <span style={{ fontSize: '18px', flexShrink: 0 }}>⏸️</span>
+                <p style={txt}>
+                  {byLimit.length === 1
+                    ? `Campaña pausada: se alcanzó el límite diario de Meta. Retoma automáticamente mañana cuando se libere cupo.`
+                    : `${byLimit.length} campañas pausadas: límite diario de Meta alcanzado. Retoman automáticamente al liberarse cupo.`}
+                </p>
+              </div>
+            )}
+            {byHours.length > 0 && (
+              <div style={banner}>
+                <span style={{ fontSize: '18px', flexShrink: 0 }}>🕒</span>
+                <p style={txt}>
+                  {byHours.length === 1
+                    ? `Campaña pausada: fuera del horario configurado${byHours[0].window_start_min != null ? ` — retoma a las ${minToHHMM(byHours[0].window_start_min)}` : ''}.`
+                    : `${byHours.length} campañas pausadas por horario. Retoman automáticamente al volver a su ventana de envío.`}
+                </p>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* Wizard */}
       {showWizard && (
@@ -778,9 +885,78 @@ export default function CampanasClient() {
                   : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
                 {targetMode === 'category' && lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
                 <div><strong>Ritmo:</strong> {intervalMin}–{intervalMax}s entre mensajes{pauseEvery && pauseSeconds ? ` · pausa de ${pauseSeconds}s cada ${pauseEvery}` : ''}</div>
+                <div><strong>Horario:</strong> {windowFrom}–{windowTo} (hora AR)</div>
                 {targetMode === 'category' && sendLimit && <div><strong>Límite:</strong> {sendLimit} contactos</div>}
                 {targetMode === 'category' && excludePrevious && excludeCampaignIds.length > 0 && <div><strong>Excluye:</strong> {excludeCampaignIds.length} campaña(s)</div>}
               </div>
+              {/* ── Techo diario de Meta (envío escalonado) ── */}
+              {(() => {
+                const metaLimit = metaInfo?.metaLimit ?? null;
+                const usedHoy   = metaInfo?.usedToday ?? 0;
+                const cap = metaLimit != null ? Math.max(1, Math.floor((metaLimit * marginPct) / 100)) : null;
+                return (
+                  <div style={{ background: '#F8F8F8', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <label style={labelStyle}>Techo diario de envío</label>
+                      <span style={{ fontSize: '11px', color: '#888' }}>
+                        {metaLoading ? 'Leyendo límite de Meta…'
+                          : metaLimit != null ? `Límite Meta: ${metaLimit.toLocaleString('es-AR')}/día${metaInfo?.tier ? ` · ${metaInfo.tier}` : ''}`
+                          : 'Límite de Meta no disponible'}
+                      </span>
+                    </div>
+
+                    {metaLimit != null ? (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <input
+                            type="range" min={10} max={100} step={5} value={marginPct}
+                            onChange={(e) => setMarginPct(Number(e.target.value))}
+                            style={{ flex: 1, accentColor: '#1a1a1a' }}
+                          />
+                          <span style={{ fontSize: '14px', fontWeight: 800, width: '46px', textAlign: 'right' }}>{marginPct}%</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '22px', fontWeight: 900, color: '#1a1a1a' }}>{cap!.toLocaleString('es-AR')}</span>
+                          <span style={{ fontSize: '12px', color: '#888' }}>mensajes/día · {marginPct}% del límite real de Meta</span>
+                        </div>
+                        <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>
+                          Ya enviados hoy (todas las líneas): <strong>{usedHoy.toLocaleString('es-AR')}</strong>.{' '}
+                          {usedHoy >= cap!
+                            ? 'Ya estás en el techo: la campaña arrancará pausada y retomará sola al liberarse cupo.'
+                            : `Quedan ~${(cap! - usedHoy).toLocaleString('es-AR')} para hoy; al llegar al techo se pausa y retoma sola mañana.`}
+                        </p>
+                      </>
+                    ) : (
+                      <p style={{ fontSize: '12px', color: '#7a5c00', margin: 0, lineHeight: 1.5 }}>
+                        {metaLoading ? 'Consultando el límite real de Meta…' : 'No se pudo leer el límite de Meta (o la cuenta es ilimitada). La campaña se enviará sin tope diario.'}
+                      </p>
+                    )}
+
+                    {/* ── Ventana horaria de envío (hora AR) ── */}
+                    <div style={{ borderTop: '1px solid #ececec', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label style={labelStyle}>Horario de envío (hora Argentina)</label>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>Mandar desde</span>
+                          <input type="time" value={windowFrom} onChange={(e) => setWindowFrom(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }} />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                          <span style={{ fontSize: '11px', color: '#888' }}>Mandar hasta</span>
+                          <input type="time" value={windowTo} onChange={(e) => setWindowTo(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }} />
+                        </div>
+                      </div>
+                      {(() => {
+                        const f = hhmmToMin(windowFrom), t = hhmmToMin(windowTo);
+                        if (f == null || t == null || f >= t) {
+                          return <p style={{ fontSize: '11px', color: '#c0392b', margin: 0, fontWeight: 600 }}>&quot;Mandar desde&quot; tiene que ser una hora menor que &quot;Mandar hasta&quot; (mismo día).</p>;
+                        }
+                        return <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>Solo se envía entre {windowFrom} y {windowTo}. Fuera de ese rango la campaña se pausa y retoma sola al volver al horario.</p>;
+                      })()}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ background: '#fffbe6', border: '1px solid #f0c040', borderRadius: '12px', padding: '10px 14px' }}>
                 <p style={{ fontSize: '12px', color: '#7a5c00', margin: 0, lineHeight: 1.5 }}>
                   ⚠️ Al lanzar, la campaña se envía inmediatamente. No se puede deshacer.
@@ -825,10 +1001,52 @@ export default function CampanasClient() {
                 {c.template_name && <> · <code>{c.template_name}</code></>}
               </p>
             </div>
-            <span style={{ background: c.status === 'enviando' ? '#fff8d6' : '#F0F0F0', color: c.status === 'enviando' ? '#b8860b' : '#888', fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
-              {c.status}
-            </span>
+            {(() => {
+              // 'auto_resume' es una continuación transitoria del cron: se muestra
+              // como "en cola" (no como una pausa por límite, que es 'daily_limit').
+              const isQueued = c.status === 'pausada' && c.paused_reason === 'auto_resume';
+              const pill = c.status === 'enviando' ? { bg: '#fff8d6', fg: '#b8860b', label: c.status }
+                : isQueued ? { bg: '#eef3ff', fg: '#3a5bb8', label: 'en cola' }
+                : c.status === 'pausada' ? { bg: '#ffe9c7', fg: '#c47a00', label: c.status }
+                : { bg: '#F0F0F0', fg: '#888', label: c.status };
+              return (
+                <span style={{ background: pill.bg, color: pill.fg, fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
+                  {pill.label}
+                </span>
+              );
+            })()}
           </div>
+
+          {/* Indicador de uso diario: solo con un envío EN CURSO (status enviando) y
+              techo definido. "X/Y hoy" contra el techo de Meta del tenant. */}
+          {c.status === 'enviando' && c.daily_cap != null && usageToday != null && (() => {
+            const cap = c.daily_cap!;
+            const pct = Math.min(100, Math.round((usageToday / cap) * 100));
+            const full = usageToday >= cap;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <div style={{ height: '10px', background: '#eee', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: full ? '#f0a020' : '#C8FF00', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                </div>
+                <p style={{ fontSize: '12px', color: '#666', margin: 0, fontWeight: 600 }}>
+                  {usageToday.toLocaleString('es-AR')}/{cap.toLocaleString('es-AR')} hoy
+                  <span style={{ color: '#aaa', fontWeight: 400 }}> · límite diario de Meta</span>
+                </p>
+              </div>
+            );
+          })()}
+
+          {c.status === 'pausada' && c.paused_reason === 'daily_limit' && (
+            <p style={{ fontSize: '12px', color: '#c47a00', margin: 0, fontWeight: 600 }}>
+              ⏸️ Pausada por el límite diario de Meta · retoma automáticamente al liberarse cupo.
+            </p>
+          )}
+          {c.status === 'pausada' && c.paused_reason === 'fuera_de_horario' && (
+            <p style={{ fontSize: '12px', color: '#c47a00', margin: 0, fontWeight: 600 }}>
+              🕒 Pausada fuera de horario{c.window_start_min != null ? ` · retoma a las ${minToHHMM(c.window_start_min)}` : ''}.
+            </p>
+          )}
+
           {c.status === 'borrador' && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
               Eliminar
