@@ -150,6 +150,42 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+// ── pushsubscriptionchange: re-suscribir cuando el navegador rota la suscripción ─
+// Chrome/FCM pueden invalidar o rotar la suscripción push (por idle largo, cambios
+// de red, updates del navegador). Sin este handler, la suscripción vieja queda
+// muerta y las notificaciones se cortan EN SILENCIO hasta que el usuario reabre la
+// PWA (que re-suscribe vía PWARegister). Acá re-suscribimos y avisamos al servidor.
+// El endpoint /api/push/subscribe toma el agente de la SESIÓN (cookie same-origin),
+// así que solo mandamos { subscription }. Best-effort: si falla (ej. sesión vencida),
+// la próxima apertura de la PWA lo recupera.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      // Algunos navegadores ya traen la nueva suscripción; si no, re-suscribimos con
+      // la MISMA applicationServerKey (VAPID) de la vieja para no cambiar de key.
+      let sub = event.newSubscription;
+      if (!sub) {
+        const appServerKey = event.oldSubscription && event.oldSubscription.options
+          ? event.oldSubscription.options.applicationServerKey
+          : undefined;
+        if (!appServerKey) return; // sin la key no podemos re-suscribir acá; lo hará la PWA al abrir
+        sub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: appServerKey,
+        });
+      }
+      if (!sub) return;
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: sub }),
+      });
+    } catch (err) {
+      // Best-effort: la re-suscripción de PWARegister (al abrir la app) es el respaldo.
+    }
+  })());
+});
+
 // ── Notificationclick: abrir / enfocar la URL ───────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
