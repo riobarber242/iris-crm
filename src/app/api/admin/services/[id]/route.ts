@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 
-const FIELDS = 'id, name, icon, expires_at, notes, created_at';
+const FIELDS = 'id, name, icon, expires_at, notes, monthly_cost_usd, created_at';
 
 // PATCH /api/admin/services/[id] — actualiza fecha de vencimiento y notas (solo admin).
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -29,6 +29,20 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   if (body.notes !== undefined) {
     updates.notes = body.notes == null ? null : (String(body.notes).trim() || null);
+  }
+
+  // Costo mensual en USD (carga manual). Vacío/null → sin costo cargado.
+  if (body.monthly_cost_usd !== undefined) {
+    const raw = body.monthly_cost_usd == null ? '' : String(body.monthly_cost_usd).trim().replace(',', '.');
+    if (!raw) {
+      updates.monthly_cost_usd = null;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: 'Costo inválido (número ≥ 0)' }, { status: 400 });
+      }
+      updates.monthly_cost_usd = Math.round(n * 100) / 100;
+    }
   }
 
   if (Object.keys(updates).length === 0) {

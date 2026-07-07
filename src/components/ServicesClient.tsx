@@ -8,6 +8,7 @@ type Service = {
   icon: string | null;
   expires_at: string | null; // 'YYYY-MM-DD'
   notes: string | null;
+  monthly_cost_usd: number | null; // costo mensual USD (carga manual)
   created_at: string;
 };
 
@@ -20,17 +21,11 @@ type Status = {
 
 type Balance = { available: boolean; balance?: number };
 
-// Info estática de planes gratuitos por servicio (badge ℹ️ + tooltip + link).
-const FREE_PLAN_INFO: Record<string, { detail: string; url: string }> = {
-  'Vercel': {
-    detail: 'Plan gratuito — límite 100GB bandwidth/mes, 100hs build/mes',
-    url: 'https://vercel.com/pricing',
-  },
-  'Supabase': {
-    detail: 'Plan gratuito — límite 500MB DB, 2GB bandwidth, pausa tras 1 semana inactivo',
-    url: 'https://supabase.com/pricing',
-  },
-};
+// Formatea un costo mensual USD para mostrar (sin decimales si es entero).
+function fmtCost(v: number | null): string {
+  if (v == null) return '—';
+  return `$${v.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
 
 // Estado derivado de expires_at vs hoy. Por vencer = menos de 30 días.
 // Texto siempre blanco; el color semántico va en el fondo del badge (sobre card celeste neón).
@@ -109,7 +104,7 @@ export default function ServicesClient() {
   const [balance,  setBalance]  = useState<Balance | null>(null);
 
   const [editId, setEditId] = useState<string | null>(null);
-  const [draft,  setDraft]  = useState<{ expires_at: string; notes: string }>({ expires_at: '', notes: '' });
+  const [draft,  setDraft]  = useState<{ expires_at: string; notes: string; monthly_cost: string }>({ expires_at: '', notes: '', monthly_cost: '' });
   const [saving, setSaving] = useState(false);
 
   async function fetchServices() {
@@ -133,7 +128,11 @@ export default function ServicesClient() {
   function startEdit(s: Service) {
     setError('');
     setEditId(s.id);
-    setDraft({ expires_at: s.expires_at ?? '', notes: s.notes ?? '' });
+    setDraft({
+      expires_at: s.expires_at ?? '',
+      notes: s.notes ?? '',
+      monthly_cost: s.monthly_cost_usd != null ? String(s.monthly_cost_usd) : '',
+    });
   }
 
   async function saveEdit(id: string) {
@@ -143,7 +142,7 @@ export default function ServicesClient() {
       const res = await fetch(`/api/admin/services/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expires_at: draft.expires_at || null, notes: draft.notes }),
+        body: JSON.stringify({ expires_at: draft.expires_at || null, notes: draft.notes, monthly_cost_usd: draft.monthly_cost.trim() || null }),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) { setEditId(null); fetchServices(); }
@@ -155,27 +154,44 @@ export default function ServicesClient() {
   if (loading) return <p style={{ textAlign: 'center', color: '#1A1A2E', opacity: 0.6, fontSize: '14px' }}>Cargando servicios…</p>;
 
   // Contador de alertas activas: vencimientos (vencido/por vencer) +
-  // saldo Anthropic bajo/crítico + advertencias de plan gratuito.
+  // saldo Anthropic bajo/crítico.
   const expiryAlerts = services.filter((s) => {
     const l = statusFor(s.expires_at).label;
     return l === 'Vencido' || l === 'Por vencer';
   }).length;
   const balAlert = anthropicAlert(balance);
   const anthropicAlerts = balAlert?.isAlert ? 1 : 0;
-  const freePlanAlerts = services.filter((s) => FREE_PLAN_INFO[s.name]).length;
-  const totalAlerts = expiryAlerts + anthropicAlerts + freePlanAlerts;
+  const totalAlerts = expiryAlerts + anthropicAlerts;
+
+  // Total de costo mensual (solo servicios con costo cargado; los demás son por uso).
+  const monthlyTotal = services.reduce((sum, s) => sum + (s.monthly_cost_usd ?? 0), 0);
+  const withCost = services.filter((s) => s.monthly_cost_usd != null).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {totalAlerts > 0 && (
-        <div style={{
-          background: '#F97316', color: '#FFFFFF',
-          borderRadius: '12px', padding: '10px 16px', fontSize: '14px', fontWeight: 800,
-          display: 'inline-flex', alignItems: 'center', gap: '8px', alignSelf: 'flex-start',
-        }}>
-          ⚠️ {totalAlerts} {totalAlerts === 1 ? 'alerta activa' : 'alertas activas'}
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {totalAlerts > 0 && (
+          <div style={{
+            background: '#F97316', color: '#FFFFFF',
+            borderRadius: '12px', padding: '10px 16px', fontSize: '14px', fontWeight: 800,
+            display: 'inline-flex', alignItems: 'center', gap: '8px',
+          }}>
+            ⚠️ {totalAlerts} {totalAlerts === 1 ? 'alerta activa' : 'alertas activas'}
+          </div>
+        )}
+        {withCost > 0 && (
+          <div style={{
+            background: '#1A1A1A', color: '#CBFF00',
+            borderRadius: '12px', padding: '10px 16px', fontSize: '14px', fontWeight: 800,
+            display: 'inline-flex', alignItems: 'center', gap: '8px',
+          }}>
+            💵 Costo mensual fijo: {fmtCost(monthlyTotal)}
+            <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: 600, fontSize: '12px' }}>
+              ({withCost} de {services.length} · el resto es por uso)
+            </span>
+          </div>
+        )}
+      </div>
 
       {error && (
         <div style={{ background: '#FFE5E5', color: '#CC3333', borderRadius: '10px', padding: '10px 14px', fontSize: '13px', fontWeight: 600 }}>
@@ -187,7 +203,6 @@ export default function ServicesClient() {
         {services.map((s) => {
           const st = statusFor(s.expires_at);
           const editing = editId === s.id;
-          const freePlan = FREE_PLAN_INFO[s.name];
           const isAnthropic = s.name === 'Anthropic API';
           const alert = isAnthropic ? balAlert : null;
           const initial = (s.name.trim()[0] ?? '?').toUpperCase();
@@ -229,39 +244,25 @@ export default function ServicesClient() {
                 </div>
               )}
 
-              {/* Badge informativo de plan gratuito (hover → tooltip) */}
-              {freePlan && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span
-                    title={freePlan.detail}
-                    style={{
-                      background: 'rgba(255,255,255,0.2)', color: '#FFFFFF', borderRadius: '999px',
-                      padding: '5px 10px', fontSize: '11px', fontWeight: 700, cursor: 'help',
-                      display: 'inline-flex', alignItems: 'center', gap: '5px',
-                    }}
-                  >
-                    ℹ️ Plan gratuito
-                  </span>
-                  <a
-                    href={freePlan.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: '11px', fontWeight: 700, color: '#FFFFFF', textDecoration: 'underline' }}
-                  >
-                    Ver planes ↗
-                  </a>
-                </div>
-              )}
-
               {editing ? (
                 <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={fieldLabel}>Costo mensual (USD)</label>
+                    <input
+                      type="number" min={0} step="0.01" inputMode="decimal"
+                      style={inputStyle}
+                      value={draft.monthly_cost}
+                      onChange={e => setDraft({ ...draft, monthly_cost: e.target.value })}
+                      placeholder="Ej: 20 — vacío = por uso / sin costo fijo"
+                    />
+                  </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={fieldLabel}>Vencimiento</label>
                     <input type="date" style={inputStyle} value={draft.expires_at} onChange={e => setDraft({ ...draft, expires_at: e.target.value })} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={fieldLabel}>Notas</label>
-                    <textarea rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} placeholder="Plan, costo, recordatorios…" />
+                    <textarea rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} value={draft.notes} onChange={e => setDraft({ ...draft, notes: e.target.value })} placeholder="Plan, recordatorios…" />
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <HoverButton
@@ -284,6 +285,14 @@ export default function ServicesClient() {
                 </>
               ) : (
                 <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                    <span style={fieldLabel}>Costo</span>
+                    {s.monthly_cost_usd != null ? (
+                      <span style={{ fontSize: '16px', fontWeight: 800, color: '#CBFF00' }}>{fmtCost(s.monthly_cost_usd)}<span style={{ fontSize: '12px', fontWeight: 600, opacity: 0.7 }}>/mes</span></span>
+                    ) : (
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'rgba(255,255,255,0.7)' }}>Por uso / sin costo fijo</span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                     <span style={fieldLabel}>Vence</span>
                     <span style={{ fontSize: '16px', fontWeight: 800, color: s.expires_at ? '#CBFF00' : 'rgba(255,255,255,0.7)' }}>{formatDate(s.expires_at)}</span>
