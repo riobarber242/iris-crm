@@ -338,6 +338,12 @@ export async function runCampaignBatch(
         role:       'human',
         content:    msgContent,
         tenant_id:  tenantId,
+        // Guardamos el wamid en la fila del mensaje (no solo en
+        // campaign_message_status) para que las reacciones entrantes del cliente
+        // matcheen esta burbuja: el handler de reacción hace
+        // UPDATE messages SET reaction WHERE whatsapp_message_id = <wamid>.
+        // Para envíos de texto wamid es null (igual que antes).
+        whatsapp_message_id: wamid,
       });
 
       // Registrar el envío para trackear ticks y respuestas de botón por wamid.
