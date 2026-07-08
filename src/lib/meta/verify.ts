@@ -6,12 +6,12 @@ export function verifyMetaSignature(
   appSecret: string | undefined,
 ): boolean {
   if (!appSecret) {
-    // Secret not configured (ni por número ni META_APP_SECRET global) — allow the
-    // request but warn loudly. El caller (handler) resuelve el secret por número
-    // con fallback al global; si igual no hay ninguno, se deja pasar como antes.
-    // Endurecer esto (rechazar sin secret) es una tarea aparte.
-    console.warn('[verifyMetaSignature] Sin app secret (ni por número ni META_APP_SECRET global) — saltando verificación de firma.');
-    return true;
+    // Sin ningún secret disponible (ni por número ni META_APP_SECRET global) NO se
+    // puede validar la firma → se rechaza. Antes se dejaba pasar con warning; se
+    // endureció para no aceptar webhooks sin verificar. Si esto rechaza tráfico
+    // legítimo, falta configurar META_APP_SECRET (global) o el app_secret del número.
+    console.error('[verifyMetaSignature] Sin app secret (ni por número ni META_APP_SECRET global) — rechazando por no poder validar la firma.');
+    return false;
   }
 
   if (!signature) {
