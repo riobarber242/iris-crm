@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from './AuthProvider';
+import { thumbUrl } from '@/lib/thumb';
 
 // ── Perfil de usuario en el sidebar ──────────────────────────────────────────
 // Card al pie del sidebar (todos los roles) con avatar + nombre + rol.
@@ -27,7 +28,9 @@ export function Avatar({ url, name, size }: { url?: string | null; name: string;
   if (url) {
     return (
       <img
-        src={url}
+        // Miniatura redimensionada (render/image de Supabase). size*2 = nítido en
+        // retina. Fallback a la URL original si no es Storage público.
+        src={thumbUrl(url, size * 2) ?? url}
         alt={name}
         style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, display: 'block' }}
       />
