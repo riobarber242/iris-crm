@@ -205,6 +205,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
   const [showEmoji, setShowEmoji] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [reactBarFor, setReactBarFor] = useState<string | null>(null); // id del mensaje con barra de reacciones abierta
+  const [reactBarDir, setReactBarDir] = useState<'up' | 'down'>('up'); // dirección de apertura: hacia abajo si el mensaje está pegado al borde superior
   const [emojiQuery, setEmojiQuery] = useState('');
   // "Enviar a verificar": ids de mensajes que ya generaron un comprobante
   // (para no duplicar) y el id en vuelo mientras se crea.
@@ -844,9 +845,24 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
     } catch { /* el estado optimista ya refleja el cambio */ }
   }
 
-  function startLongPress(id: string) {
+  // Abre la barra de reacciones para `id`, decidiendo la dirección de apertura
+  // según el espacio libre sobre el mensaje DENTRO del scroll de la lista. Si el
+  // mensaje está pegado al borde superior (< 48px de aire), abre hacia abajo: la
+  // barra a top:-44px quedaría clipeada por el overflowY del contenedor (listRef).
+  function openReactBar(id: string, el: HTMLElement | null) {
+    let dir: 'up' | 'down' = 'up';
+    const list = listRef.current;
+    if (el && list) {
+      const room = el.getBoundingClientRect().top - list.getBoundingClientRect().top;
+      if (room < 48) dir = 'down';
+    }
+    setReactBarDir(dir);
+    setReactBarFor(id);
+  }
+
+  function startLongPress(id: string, el: HTMLElement | null) {
     if (longPressRef.current) clearTimeout(longPressRef.current);
-    longPressRef.current = setTimeout(() => setReactBarFor(id), 450);
+    longPressRef.current = setTimeout(() => openReactBar(id, el), 450);
   }
   function cancelLongPress() {
     if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
@@ -919,15 +935,15 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
             <div
               key={m.id ?? i}
               className="chat-msg"
-              onMouseEnter={() => {
+              onMouseEnter={(e) => {
                 if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
-                if (reactable) setReactBarFor(m.id!);
+                if (reactable) openReactBar(m.id!, e.currentTarget);
               }}
               onMouseLeave={() => {
                 if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
                 reactBarLeaveTimer.current = setTimeout(() => setReactBarFor(null), 300);
               }}
-              onTouchStart={() => { if (reactable) startLongPress(m.id!); }}
+              onTouchStart={(e) => { if (reactable) startLongPress(m.id!, e.currentTarget); }}
               onTouchEnd={cancelLongPress}
               onTouchMove={cancelLongPress}
               style={{
@@ -1190,7 +1206,13 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 </span>
               )}
 
-              {/* Barra de reacciones (hover desktop / long-press mobile) */}
+              {/* Barra de reacciones (hover desktop / long-press mobile).
+                  Wrapper exterior TRANSPARENTE: es la zona de hover y puentea el
+                  gap entre la burbuja y el pill (con padding), para que el mouse no
+                  cruce "aire muerto" —ahí se colaba el hover del mensaje vecino y la
+                  barra se escapaba—. `reactBarDir` decide arriba/abajo: hacia abajo
+                  cuando el mensaje está pegado al borde superior (si no, top:-44px
+                  quedaría clipeado por el overflow de la lista). */}
               {reactable && reactBarFor === m.id && (
                 <div
                   onMouseEnter={() => {
@@ -1199,21 +1221,28 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   }}
                   onMouseLeave={() => setReactBarFor(null)}
                   style={{
-                  position: 'absolute', top: '-44px', left: 0,
-                  display: 'flex', gap: '2px',
-                  background: '#fff', borderRadius: '999px', padding: '4px 6px', paddingBottom: '4px',
-                  boxShadow: '0 3px 12px rgba(0,0,0,0.18)', zIndex: 5,
-                }}>
-                  {REACTION_EMOJIS.map((e) => (
-                    <button
-                      key={e}
-                      type="button"
-                      onClick={() => sendReaction(m, e)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '2px 4px' }}
-                    >
-                      {e}
-                    </button>
-                  ))}
+                    position: 'absolute', left: 0, zIndex: 5,
+                    ...(reactBarDir === 'down'
+                      ? { top: '100%', paddingTop: '12px' }
+                      : { bottom: '100%', paddingBottom: '10px' }),
+                  }}
+                >
+                  <div style={{
+                    display: 'flex', gap: '2px', width: 'fit-content',
+                    background: '#fff', borderRadius: '999px', padding: '4px 6px',
+                    boxShadow: '0 3px 12px rgba(0,0,0,0.18)',
+                  }}>
+                    {REACTION_EMOJIS.map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        onClick={() => sendReaction(m, e)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '2px 4px' }}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
