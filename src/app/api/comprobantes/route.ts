@@ -46,6 +46,11 @@ export async function GET(request: Request) {
   const limit        = Number.isInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
   const before       = url.searchParams.get('before');   // ISO created_at del último item previo
   const beforeId     = url.searchParams.get('beforeId'); // uuid, desempate del cursor
+  // Rango de fechas (filtro combinado de la bandeja). `from` = límite inferior
+  // inclusivo (>=); `to` = límite superior EXCLUSIVO (<), ya viene como 00:00 del
+  // día siguiente desde el cliente. Ambos ISO; vacío = sin filtrar.
+  const from         = url.searchParams.get('from');
+  const to           = url.searchParams.get('to');
   // Búsqueda server-side por usuario/teléfono del contacto. Se sanea sacando los
   // chars estructurales del `.or()` (`,()`) y wildcards (`*%`); los `.` son seguros
   // (el valor de un filtro PostgREST puede tenerlos). Vacío = sin búsqueda.
@@ -63,6 +68,10 @@ export async function GET(request: Request) {
       .eq('tenant_id', session!.tenant_id);
     if (estado && estado !== 'all') q = q.eq('estado', estado);
     if (contactId) q = q.eq('contact_id', contactId);
+    // Rango de fechas sobre created_at. Se combina con AND al cursor keyset (que
+    // también opera sobre created_at), acotando la ventana paginada.
+    if (from) q = q.gte('created_at', from);
+    if (to)   q = q.lt('created_at', to);
     // Filtro por tipo (Cargas vs Pagos). Los históricos tienen tipo='carga' por el
     // default de la columna, así que /cargas los sigue viendo.
     if (withTipo && (tipo === 'carga' || tipo === 'pago')) q = q.eq('tipo', tipo);

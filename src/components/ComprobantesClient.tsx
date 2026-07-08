@@ -58,6 +58,20 @@ const ESTADO_FILTERS: { key: EstadoFilter; label: string }[] = [
   { key: 'rechazado', label: 'Rechazado' },
 ];
 
+// El <input type="date"> devuelve 'YYYY-MM-DD' (día calendario, sin hora). Lo
+// convertimos a límites de día en horario de Argentina (UTC-3, sin DST) antes de
+// mandarlo al server, para que "desde el 5" no se corra un día por UTC. `to` se
+// manda como el 00:00 del día SIGUIENTE (exclusivo) → "Hasta" incluye el día entero.
+const AR_OFFSET = '-03:00';
+function dayStartISO(d: string) {
+  return new Date(`${d}T00:00:00${AR_OFFSET}`).toISOString();
+}
+function dayEndExclusiveISO(d: string) {
+  const start = new Date(`${d}T00:00:00${AR_OFFSET}`);
+  start.setUTCDate(start.getUTCDate() + 1);
+  return start.toISOString();
+}
+
 // ── Card de comprobante (memoizada) ──────────────────────────────────────────
 // Solo re-renderiza si cambian sus props: el item, sus flags (isConfirming/
 // isDeleting) o los callbacks (que el padre pasa estables con useCallback). El
@@ -258,6 +272,15 @@ export default function ComprobantesClient(
   const { agent } = useAuth();
   const tid = agent?.tenant_id ?? null;
   const [estadoFilter, setEstadoFilter]       = useState<EstadoFilter>('all');
+  // Rango de fechas APLICADO (vacío = sin filtrar → comportamiento actual intacto).
+  const [fechaDesde,   setFechaDesde]         = useState('');
+  const [fechaHasta,   setFechaHasta]         = useState('');
+  // Dropdown de filtros combinado (estado + fechas). Los `draft*` viven dentro del
+  // panel y solo se commitean al tocar "Aplicar" (nada refetchea hasta entonces).
+  const [filtersOpen,  setFiltersOpen]        = useState(false);
+  const [draftEstado,  setDraftEstado]        = useState<EstadoFilter>('all');
+  const [draftDesde,   setDraftDesde]         = useState('');
+  const [draftHasta,   setDraftHasta]         = useState('');
   const [query,        setQuery]              = useState('');
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
@@ -291,7 +314,7 @@ export default function ComprobantesClient(
       ? { sing: 'carga', plur: 'cargas', artS: 'la', fem: true }
       : { sing: 'comprobante', plur: 'comprobantes', artS: 'el', fem: false };
 
-  function estadoUrl(f: EstadoFilter, opts?: { limit?: number; before?: ComprobanteItem }) {
+  function estadoUrl(f: EstadoFilter, opts?: { limit?: number; before?: ComprobanteItem; desde?: string; hasta?: string }) {
     const params = new URLSearchParams();
     if (f !== 'all') params.set('estado', f);
     if (tipo) params.set('tipo', tipo);
@@ -300,6 +323,12 @@ export default function ComprobantesClient(
       params.set('before',   opts.before.created_at);
       params.set('beforeId', opts.before.id);
     }
+    // Rango de fechas. Se pasa explícito al aplicar (evita el closure viejo); poll,
+    // loadMore y realtime NO lo pasan → caen al estado aplicado (fechaDesde/Hasta).
+    const desde = opts?.desde ?? fechaDesde;
+    const hasta = opts?.hasta ?? fechaHasta;
+    if (desde) params.set('from', dayStartISO(desde));
+    if (hasta) params.set('to',   dayEndExclusiveISO(hasta));
     // Búsqueda server-side por usuario/teléfono. loadMore y fetchSilent la heredan
     // (leen `query` acá), así "Cargar más" pagina dentro del filtro y el poll lo respeta.
     if (query.trim()) params.set('q', query.trim());
@@ -307,11 +336,11 @@ export default function ComprobantesClient(
   }
 
   // Full fetch — shows spinner (initial load only). Trae la 1ª página.
-  async function fetchComprobantes(f: EstadoFilter = estadoFilter) {
+  async function fetchComprobantes(f: EstadoFilter = estadoFilter, opts?: { desde?: string; hasta?: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(estadoUrl(f));
+      const res = await fetch(estadoUrl(f, opts));
       if (!res.ok) throw new Error(res.statusText);
       const items: ComprobanteItem[] = await res.json();
       setComprobantes(items);
@@ -356,10 +385,29 @@ export default function ComprobantesClient(
     }
   }
 
-  function handleFilterChange(f: EstadoFilter) {
-    setEstadoFilter(f);
-    fetchComprobantes(f);
+  // Abrir el panel: los drafts arrancan desde lo que ya está aplicado.
+  function openFilters() {
+    setDraftEstado(estadoFilter);
+    setDraftDesde(fechaDesde);
+    setDraftHasta(fechaHasta);
+    setFiltersOpen(true);
   }
+  // Aplicar: commitea drafts → estado aplicado y refetchea con las fechas explícitas
+  // (el setState es async; pasarlas por opts evita usar el closure viejo).
+  function applyFilters() {
+    setEstadoFilter(draftEstado);
+    setFechaDesde(draftDesde);
+    setFechaHasta(draftHasta);
+    setFiltersOpen(false);
+    fetchComprobantes(draftEstado, { desde: draftDesde, hasta: draftHasta });
+  }
+  // Limpiar: resetea los drafts (no aplica hasta tocar "Aplicar").
+  function clearFilters() {
+    setDraftEstado('all');
+    setDraftDesde('');
+    setDraftHasta('');
+  }
+  const filtersActive = estadoFilter !== 'all' || !!fechaDesde || !!fechaHasta;
 
   // Bono del input → number|null. Vacío = sin bono; el backend revalida (0 e
   // inválidos quedan en null).
@@ -603,6 +651,89 @@ export default function ComprobantesClient(
     </div>
   ) : null;
 
+  // Barra de filtros unificada (estado + rango de fechas) en un solo dropdown.
+  // Se define una vez acá y se reusa en el empty-state y en la vista con datos,
+  // así no duplicamos el bloque de botones como antes.
+  const capStyle: React.CSSProperties = { fontSize: '11px', fontWeight: 700, color: '#999', margin: '0 0 8px 0', textTransform: 'uppercase', letterSpacing: '0.06em' };
+  const dateLabelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em' };
+  const dateInputStyle: React.CSSProperties = { padding: '8px 10px', border: '2px solid #e0e0e0', borderRadius: '10px', fontSize: '13px', outline: 'none', background: '#fff' };
+  const activeEstadoLabel = ESTADO_FILTERS.find((e) => e.key === estadoFilter)?.label ?? 'Todos';
+  const filterSummary = filtersActive
+    ? ' · ' + [estadoFilter !== 'all' ? activeEstadoLabel : null, (fechaDesde || fechaHasta) ? 'fecha' : null].filter(Boolean).join(' + ')
+    : '';
+  const filterBar = (
+    <div style={{ position: 'relative', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+      <button
+        onClick={() => (filtersOpen ? setFiltersOpen(false) : openFilters())}
+        style={{
+          background: filtersActive ? '#C8FF00' : '#F0F0F0',
+          color:      filtersActive ? '#000'    : '#555',
+          border: 'none', borderRadius: '999px',
+          padding: '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: '6px',
+        }}
+      >
+        Filtros{filterSummary}<span style={{ fontSize: '10px' }}>▾</span>
+      </button>
+      {manualBtn}
+      {filtersOpen && (
+        <div
+          style={{
+            position: 'absolute', top: 'calc(100% + 8px)', left: 0, right: 0,
+            maxWidth: '360px', marginRight: 'auto',
+            background: '#fff', border: '2px solid #e0e0e0', borderRadius: '14px',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.12)', padding: '14px', zIndex: 20,
+            display: 'flex', flexDirection: 'column', gap: '14px',
+          }}
+        >
+          {/* Estado */}
+          <div>
+            <p style={capStyle}>Estado</p>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {ESTADO_FILTERS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setDraftEstado(key)}
+                  style={{
+                    background:   draftEstado === key ? '#C8FF00' : '#F0F0F0',
+                    color:        draftEstado === key ? '#000'    : '#888',
+                    border: 'none', borderRadius: '999px',
+                    padding: '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Rango de fechas (vacío = sin filtrar) */}
+          <div>
+            <p style={capStyle}>Rango de fechas</p>
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <label style={dateLabelStyle}>
+                Desde
+                <input type="date" value={draftDesde} max={draftHasta || undefined} onChange={(e) => setDraftDesde(e.target.value)} style={dateInputStyle} />
+              </label>
+              <label style={dateLabelStyle}>
+                Hasta
+                <input type="date" value={draftHasta} min={draftDesde || undefined} onChange={(e) => setDraftHasta(e.target.value)} style={dateInputStyle} />
+              </label>
+            </div>
+          </div>
+          {/* Acciones */}
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button onClick={clearFilters} style={{ background: 'transparent', color: '#888', fontWeight: 700, fontSize: '13px', border: '1px solid #ddd', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
+              Limpiar
+            </button>
+            <button onClick={applyFilters} style={{ background: '#111', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '8px 18px', cursor: 'pointer' }}>
+              Aplicar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   if (loading) return (
     <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
       Cargando {NOUN.plur}...
@@ -628,25 +759,7 @@ export default function ComprobantesClient(
       <>
         {manualModal}
         {/* ── Filter bar ── */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {ESTADO_FILTERS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => handleFilterChange(key)}
-                style={{
-                  background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
-                  color:        estadoFilter === key ? '#000'    : '#888',
-                  border:       'none', borderRadius: '999px',
-                  padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {manualBtn}
-        </div>
+        <div style={{ marginBottom: '12px' }}>{filterBar}</div>
         <div style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '14px' }}>
           {emptyMsg}
         </div>
@@ -659,25 +772,7 @@ export default function ComprobantesClient(
       {manualModal}
       {/* ── Filter bar + search ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '4px' }}>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {ESTADO_FILTERS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => handleFilterChange(key)}
-                style={{
-                  background:   estadoFilter === key ? '#C8FF00' : '#F0F0F0',
-                  color:        estadoFilter === key ? '#000'    : '#888',
-                  border:       'none', borderRadius: '999px',
-                  padding:      '6px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {manualBtn}
-        </div>
+        {filterBar}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
