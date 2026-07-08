@@ -1,0 +1,11 @@
+-- Tipo del mensaje entrante de WhatsApp (text, image, document, audio, voice,
+-- video, sticker, location, contacts…). Idempotente. Correr a mano en Supabase → SQL editor.
+--
+-- El webhook (handler.ts) viene mandando el campo `type` en el insert desde el
+-- 2026-06-01, pero la columna nunca se había creado: cada mensaje entrante fallaba
+-- el primer insert ("Could not find the 'type' column of 'messages' in the schema
+-- cache") y se guardaba por el reintento sin campos opcionales. Ese reintento
+-- también descartaba reply_to_wamid/reply_to_preview, así que las respuestas
+-- citadas entrantes no se persistían. Al crear esta columna el insert primario
+-- deja de fallar → se elimina el warning y se recupera el reply-to entrante.
+alter table messages add column if not exists type text;
