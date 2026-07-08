@@ -1,12 +1,16 @@
 import crypto from 'crypto';
 
-export function verifyMetaSignature(signature: string | undefined, rawBody: string): boolean {
-  const appSecret = process.env.META_APP_SECRET ?? process.env.WHATSAPP_APP_SECRET;
-
+export function verifyMetaSignature(
+  signature: string | undefined,
+  rawBody: string,
+  appSecret: string | undefined,
+): boolean {
   if (!appSecret) {
-    // Secret not configured — allow the request but warn loudly.
-    // Set META_APP_SECRET in Vercel env vars to enable full signature verification.
-    console.warn('[verifyMetaSignature] META_APP_SECRET no configurado — saltando verificación de firma. Configurá la variable de entorno en Vercel.');
+    // Secret not configured (ni por número ni META_APP_SECRET global) — allow the
+    // request but warn loudly. El caller (handler) resuelve el secret por número
+    // con fallback al global; si igual no hay ninguno, se deja pasar como antes.
+    // Endurecer esto (rechazar sin secret) es una tarea aparte.
+    console.warn('[verifyMetaSignature] Sin app secret (ni por número ni META_APP_SECRET global) — saltando verificación de firma.');
     return true;
   }
 

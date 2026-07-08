@@ -1,0 +1,12 @@
+-- IRIS CRM — App Secret por número de WhatsApp (multi-app de Meta). Idempotente.
+-- Correr en Supabase → SQL Editor. Este proyecto ejecuta la DDL a mano.
+--
+-- Contexto: hasta ahora la firma de los webhooks se validaba con UN solo secret
+-- global (env META_APP_SECRET), pensado para Casino 17Star. Al sumar clientes con
+-- su propia app de Meta (ej. "iris derqui"), cada uno trae su App Secret distinto y
+-- sus webhooks llegan con 401 "Firma inválida".
+--
+-- Esta columna guarda el App Secret propio de cada número. NULL = usar el
+-- META_APP_SECRET global como fallback (así Casino 17Star sigue validando sin
+-- cargarle nada). El valor lo carga el admin a mano por SQL, no viaja al cliente.
+alter table whatsapp_numbers add column if not exists app_secret text;

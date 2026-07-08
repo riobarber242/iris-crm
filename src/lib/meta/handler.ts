@@ -37,6 +37,37 @@ async function resolveTenantAndNumber(
   }
 }
 
+// phone_number_id del payload (ya parseado), para resolver el app secret ANTES de
+// validar la firma. Un webhook = una app de Meta, así que el primero alcanza.
+function extractPhoneNumberId(payload: any): string | undefined {
+  for (const entry of payload?.entry ?? []) {
+    for (const change of entry?.changes ?? []) {
+      const id = change?.value?.metadata?.phone_number_id;
+      if (id) return id;
+    }
+  }
+  return undefined;
+}
+
+// App secret con el que validar la firma del webhook:
+//   1. whatsapp_numbers.app_secret del número (app propia del cliente, ej. Derki).
+//   2. Fallback: META_APP_SECRET / WHATSAPP_APP_SECRET global (Casino 17Star).
+// Solo elige QUÉ secret probar; la autenticidad la garantiza el HMAC posterior.
+async function resolveAppSecret(phoneNumberId: string | undefined): Promise<string | undefined> {
+  const globalSecret = process.env.META_APP_SECRET ?? process.env.WHATSAPP_APP_SECRET;
+  if (!phoneNumberId) return globalSecret;
+  try {
+    const { data } = await supabaseAdmin
+      .from('whatsapp_numbers').select('app_secret')
+      .eq('phone_number_id', phoneNumberId).maybeSingle();
+    const perNumber = (data?.app_secret ?? '').trim();
+    return perNumber || globalSecret;   // fila sin secret propio → global
+  } catch (err) {
+    console.warn('[webhook] resolveAppSecret falló, uso secret global:', err);
+    return globalSecret;
+  }
+}
+
 // Resuelve el system prompt para Groq con esta prioridad:
 //   1. system_prompt del operador asignado al contacto (si no está vacío)
 //   2. system_prompt del tenant guardado en settings
@@ -263,8 +294,11 @@ export async function handleWhatsappWebhook(
   signature: string | undefined,
   payload: any,
 ) {
-  if (!verifyMetaSignature(signature, rawBody)) {
-    console.error('[webhook] Firma inválida — rechazando request');
+  const phoneNumberId = extractPhoneNumberId(payload);
+  const appSecret = await resolveAppSecret(phoneNumberId);
+
+  if (!verifyMetaSignature(signature, rawBody, appSecret)) {
+    console.error(`[webhook] Firma inválida — rechazando (phone_number_id=${phoneNumberId ?? 'null'})`);
     return { status: 401, body: 'Firma no valida' };
   }
 
