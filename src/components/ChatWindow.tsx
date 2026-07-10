@@ -62,6 +62,12 @@ const EMOJI_CATEGORIES = [
 // Opciones de reacción rápida (WhatsApp Reactions API).
 const REACTION_EMOJIS = ['👍', '✅', '👀', '❤️'];
 
+// Editar/borrar mensajes: OCULTOS en la UI hasta que Meta soporte editar/borrar
+// del lado del cliente (la Cloud API no tiene endpoint para eso). Los endpoints
+// PATCH/DELETE /api/messages y toda la lógica (startEdit/saveEdit/handleDeleteMessage)
+// quedan intactos: poner en true para reactivar los botones.
+const SHOW_EDIT_DELETE_BUTTONS = false;
+
 // Textarea estilo WhatsApp: crece de 1 línea hasta ~5, luego scroll interno.
 const TA_MAX_H = 120; // ~5 líneas
 function growTextarea(el: HTMLTextAreaElement | null) {
@@ -79,15 +85,21 @@ const actionItem: React.CSSProperties = {
 
 // Clasifica el contenido de un mensaje para renderizarlo. Cubre los mensajes
 // viejos de imagen guardados como texto "image"/"document" o como URL pelada.
-function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'sticker-missing' | 'file'; url?: string } {
+function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missing' | 'doc-missing' | 'audio-missing' | 'sticker-missing' | 'unsupported'; url?: string } {
   const c = (content ?? '').trim();
   const isUrl = /^https?:\/\//i.test(c);
+  // URL de imagen pelada (mensajes viejos) → imagen inline. Cualquier OTRA URL
+  // pelada ya NO se trata como "archivo": cae a texto y linkify() la vuelve un
+  // link clickeable (los documentos reales viajan como JSON _type:'document').
   if (isUrl && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(c)) return { kind: 'image', url: c };
-  if (isUrl) return { kind: 'file', url: c };
   if (c === 'image')                    return { kind: 'image-missing' };
   if (c === 'document')                 return { kind: 'doc-missing' };
   if (c === 'audio' || c === 'voice')   return { kind: 'audio-missing' };
   if (c === 'sticker')                  return { kind: 'sticker-missing' };
+  // WhatsApp marca "unsupported" lo que la Cloud API no puede representar
+  // (encuestas, mensajes efímeros, tipos nuevos). Guardamos ese literal; acá lo
+  // mostramos como placeholder en vez del texto crudo "unsupported".
+  if (c === 'unsupported')              return { kind: 'unsupported' };
   return { kind: 'text' };
 }
 
@@ -1086,13 +1098,11 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                     />
                   );
                 }
-                if (b.kind === 'file' && b.url) {
-                  return <a href={b.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 Ver archivo</a>;
-                }
                 if (b.kind === 'image-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🖼️ Imagen</span>;
                 if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
                 if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
                 if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
+                if (b.kind === 'unsupported') return <span style={{ fontSize: '14px', opacity: 0.85, fontStyle: 'italic' }}>⚠️ Mensaje no compatible (encuesta, mensaje efímero u otro tipo que WhatsApp no permite recibir por API)</span>;
                 return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{text}</p>;
               })()}
 
@@ -1158,7 +1168,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 )}
                 {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
                     texto plano (no media). Oculto mientras se edita esta burbuja. */}
-                {canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && body.kind === 'text' && (
+                {SHOW_EDIT_DELETE_BUTTONS && canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && body.kind === 'text' && (
                   <button
                     type="button"
                     onClick={() => startEdit(m)}
@@ -1170,7 +1180,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 )}
                 {/* Eliminar mensaje: solo staff (admin/agent) y solo en mensajes
                     del equipo (human/internal), no en los entrantes del cliente. */}
-                {canDelete && (m.role === 'human' || m.role === 'internal') && m.id && (
+                {SHOW_EDIT_DELETE_BUTTONS && canDelete && (m.role === 'human' || m.role === 'internal') && m.id && (
                   <button
                     type="button"
                     onClick={() => handleDeleteMessage(m.id!)}
