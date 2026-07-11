@@ -50,6 +50,14 @@ function hhmmToMin(s: string): number | null {
   if (h > 23 || mm > 59) return null;
   return h * 60 + mm;
 }
+// Para el campo "Mandar hasta": 00:00 se interpreta como FIN del día (medianoche =
+// 1440), no como el minuto 0. Un input type=time no permite elegir "24:00", así que
+// 00:00 es la única forma de expresar "hasta medianoche". El backend ya acepta 1440
+// (windowCols: e ≤ 1440) y withinWindow corta justo a las 00:00 del día siguiente.
+function hhmmToEndMin(s: string): number | null {
+  const min = hhmmToMin(s);
+  return min === 0 ? 1440 : min;
+}
 function minToHHMM(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
@@ -444,9 +452,10 @@ export default function CampanasClient() {
       // el límite (o es ilimitado), va null → sin tope (se envía como antes).
       const metaLimit = metaInfo?.metaLimit ?? null;
       const dailyCap = metaLimit != null ? Math.max(1, Math.floor((metaLimit * marginPct) / 100)) : null;
-      // Ventana horaria: validamos mismo día (desde < hasta) antes de crear.
+      // Ventana horaria: validamos mismo día (desde < hasta) antes de crear. El "hasta"
+      // usa hhmmToEndMin: 00:00 = medianoche (1440), para poder mandar hasta fin del día.
       const winFromMin = hhmmToMin(windowFrom);
-      const winToMin   = hhmmToMin(windowTo);
+      const winToMin   = hhmmToEndMin(windowTo);
       if (winFromMin == null || winToMin == null || winFromMin >= winToMin) {
         setError('La ventana horaria no es válida: "Mandar desde" debe ser una hora menor que "Mandar hasta".');
         setLaunching(false);
@@ -943,7 +952,7 @@ export default function CampanasClient() {
                   : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
                 {targetMode === 'category' && lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
                 <div><strong>Ritmo:</strong> {intervalMin}–{intervalMax}s entre mensajes{pauseEvery && pauseSeconds ? ` · pausa de ${pauseSeconds}s cada ${pauseEvery}` : ''}</div>
-                <div><strong>Horario:</strong> {windowFrom}–{windowTo} (hora AR)</div>
+                <div><strong>Horario:</strong> {windowFrom}–{windowTo === '00:00' ? 'medianoche' : windowTo} (hora AR)</div>
                 {rampEnabled && <div><strong>Cronograma:</strong> {rampWeeks.map((n, i) => `S${i + 1} ${n}/día`).join(' · ')} (luego {rampWeeks[rampWeeks.length - 1]}/día)</div>}
                 {targetMode === 'category' && sendLimit && <div><strong>Límite:</strong> {sendLimit} contactos</div>}
                 {targetMode === 'category' && excludePrevious && excludeCampaignIds.length > 0 && <div><strong>Excluye:</strong> {excludeCampaignIds.length} campaña(s)</div>}
@@ -1070,12 +1079,14 @@ export default function CampanasClient() {
                           <input type="time" value={windowTo} onChange={(e) => setWindowTo(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }} />
                         </div>
                       </div>
+                      <span style={{ fontSize: '10px', color: '#aaa' }}>Para enviar hasta medianoche, elegí 00:00 como hora de fin.</span>
                       {(() => {
-                        const f = hhmmToMin(windowFrom), t = hhmmToMin(windowTo);
+                        const f = hhmmToMin(windowFrom), t = hhmmToEndMin(windowTo);
                         if (f == null || t == null || f >= t) {
                           return <p style={{ fontSize: '11px', color: '#c0392b', margin: 0, fontWeight: 600 }}>&quot;Mandar desde&quot; tiene que ser una hora menor que &quot;Mandar hasta&quot; (mismo día).</p>;
                         }
-                        return <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>Solo se envía entre {windowFrom} y {windowTo}. Fuera de ese rango la campaña se pausa y retoma sola al volver al horario.</p>;
+                        const toLabel = windowTo === '00:00' ? 'medianoche (00:00)' : windowTo;
+                        return <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>Solo se envía entre {windowFrom} y {toLabel}. Fuera de ese rango la campaña se pausa y retoma sola al volver al horario.</p>;
                       })()}
                     </div>
                   </div>
