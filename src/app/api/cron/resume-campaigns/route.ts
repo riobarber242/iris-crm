@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { runCampaignBatch, tenantUsageSince, withinWindow } from '@/lib/campaigns/send-core';
+import { runCampaignBatch, tenantUsageSince, withinWindow, rampLimitToday, campaignSentSince, startOfArDayISO } from '@/lib/campaigns/send-core';
 
 // Auto-resume de campañas pausadas por el techo diario de Meta. Corre por cron:
 // busca campañas en 'pausada' con reason 'daily_limit', y si el tenant ya tiene cupo
@@ -44,13 +44,14 @@ export async function GET(request: Request) {
 
   try {
     // Campañas a retomar, más antigua primero (se termina una antes de empezar otra).
-    // Motivos: 'daily_limit' (techo Meta), 'fuera_de_horario' (ventana), 'auto_resume'
-    // (continuación de una tanda del cron cortada por tiempo).
+    // Motivos: 'daily_limit' (techo Meta), 'fuera_de_horario' (ventana), 'cupo_diario'
+    // (límite diario del cronograma ramp-up), 'auto_resume' (continuación de una tanda
+    // del cron cortada por tiempo).
     const { data: paused, error } = await supabaseAdmin
       .from('campaigns')
-      .select('id, tenant_id, name, daily_cap, paused_reason, window_start_min, window_end_min')
+      .select('id, tenant_id, name, daily_cap, paused_reason, window_start_min, window_end_min, ramp_schedule, ramp_anchor')
       .eq('status', 'pausada')
-      .in('paused_reason', ['daily_limit', 'fuera_de_horario', 'auto_resume'])
+      .in('paused_reason', ['daily_limit', 'fuera_de_horario', 'cupo_diario', 'auto_resume'])
       .order('paused_at', { ascending: true });
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -59,15 +60,25 @@ export async function GET(request: Request) {
     const sinceISO = new Date(Date.now() - WINDOW_MS).toISOString();
 
     // Regla UNIFORME de reanudación (sirve para cualquier motivo, y así el caso
-    // "pausada por límite Y fuera de horario" espera a que se cumplan AMBAS):
-    //   retomar ⟺ dentro de la ventana horaria  ∧  hay cupo (used < cap, o cap null).
-    // La primera campaña que pase ambas compuertas recibe UNA tanda (resumeMarker:
+    // "pausada por varios límites a la vez" espera a que se cumplan TODOS):
+    //   retomar ⟺ dentro de la ventana horaria  ∧  cupo del ramp del día  ∧  cupo de Meta.
+    // La primera campaña que pase las tres compuertas recibe UNA tanda (resumeMarker:
     // si se corta por tiempo queda 'auto_resume' para la próxima corrida).
     for (const camp of paused) {
       // Compuerta de HORARIO (barata, local).
       if (!withinWindow(camp.window_start_min, camp.window_end_min)) continue;
 
-      // Compuerta de CUPO (solo si hay techo).
+      // Compuerta del RAMP-UP: si esta campaña ya llegó a su límite diario del
+      // cronograma en el día calendario AR actual, esperar. Al cruzar la medianoche
+      // AR el conteo del día arranca en 0 (o cambia de semana) y la próxima corrida
+      // la retoma sola. Barato: 1 count por-campaña. null = sin ramp.
+      const rampLimit = rampLimitToday(camp.ramp_schedule, camp.ramp_anchor);
+      if (rampLimit != null) {
+        const usedToday = await campaignSentSince(camp.id, startOfArDayISO());
+        if (usedToday >= rampLimit) continue;
+      }
+
+      // Compuerta de CUPO de Meta (solo si hay techo).
       const cap = camp.daily_cap != null ? Number(camp.daily_cap) : null;
       if (cap != null) {
         const used = await tenantUsageSince(camp.tenant_id, sinceISO);

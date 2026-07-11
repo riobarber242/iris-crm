@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { arMondayOf } from '@/lib/campaigns/send-core';
 
 // Valida y normaliza la ventana horaria (minutos AR). Solo mismo día: exige
 // 0 ≤ start < end ≤ 1440; si no, va null (sin restricción) para no bloquear envíos.
@@ -8,6 +9,19 @@ function windowCols(start: unknown, end: unknown): { window_start_min: number | 
   const s = Number(start), e = Number(end);
   const ok = Number.isFinite(s) && Number.isFinite(e) && s >= 0 && e <= 1440 && s < e;
   return ok ? { window_start_min: Math.round(s), window_end_min: Math.round(e) } : { window_start_min: null, window_end_min: null };
+}
+
+// Valida el cronograma escalonado (ramp-up) y fija el ancla. ramp_schedule =
+// límite diario por semana calendario (enteros ≥ 1). Si es válido y no vacío, se
+// guarda junto con ramp_anchor = lunes AR de HOY (semana de lanzamiento). Si no,
+// ambos van null = sin ramp (la campaña usa solo el techo de Meta).
+function rampCols(schedule: unknown): { ramp_schedule: number[] | null; ramp_anchor: string | null } {
+  if (!Array.isArray(schedule)) return { ramp_schedule: null, ramp_anchor: null };
+  const clean = schedule
+    .map((n) => Math.floor(Number(n)))
+    .filter((n) => Number.isFinite(n) && n >= 1);
+  if (clean.length === 0) return { ramp_schedule: null, ramp_anchor: null };
+  return { ramp_schedule: clean, ramp_anchor: arMondayOf(new Date()) };
 }
 
 export async function GET() {
@@ -29,7 +43,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -89,6 +103,9 @@ export async function POST(request: Request) {
     // Ventana horaria (minutos AR desde medianoche). Solo mismo día: si no es
     // start < end válido en [0,1440), va null = sin restricción.
     ...windowCols(window_start_min, window_end_min),
+    // Cronograma escalonado (ramp-up): límite diario por semana + ancla (lunes AR).
+    // null = sin ramp (solo techo de Meta).
+    ...rampCols(ramp_schedule),
   };
 
   // Insert con columnas opcionales (exclude_campaign_ids + config); si alguna no

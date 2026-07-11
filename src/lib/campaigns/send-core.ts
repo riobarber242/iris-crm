@@ -58,6 +58,51 @@ export function withinWindow(
   return nowMin >= startMin && nowMin < endMin;
 }
 
+// ── Cronograma escalonado (ramp-up) — utilidades de calendario AR ─────────────
+// El ramp cuenta por DÍA CALENDARIO AR (no ventana móvil) y por SEMANA calendario
+// (lunes a domingo). Medianoche AR = 03:00 UTC (AR = UTC−3 fijo, sin DST).
+
+// Inicio (ISO) del día calendario AR que contiene `now`. Borde para contar los
+// envíos de la campaña "de hoy".
+export function startOfArDayISO(now: Date = new Date()): string {
+  const ar = new Date(now.getTime() - AR_OFFSET_MIN * 60_000);           // reloj de pared AR
+  const midnightUtc = Date.UTC(ar.getUTCFullYear(), ar.getUTCMonth(), ar.getUTCDate(), AR_OFFSET_MIN / 60);
+  return new Date(midnightUtc).toISOString();
+}
+
+// Lunes (fecha AR 'YYYY-MM-DD') de la semana calendario que contiene `now`. El
+// create route lo usa para fijar ramp_anchor con esta misma lógica AR.
+export function arMondayOf(now: Date = new Date()): string {
+  const ar = new Date(now.getTime() - AR_OFFSET_MIN * 60_000);
+  const isoDow = ar.getUTCDay() === 0 ? 7 : ar.getUTCDay();             // 1=lun..7=dom
+  const monday = new Date(Date.UTC(ar.getUTCFullYear(), ar.getUTCMonth(), ar.getUTCDate()));
+  monday.setUTCDate(monday.getUTCDate() - (isoDow - 1));
+  return monday.toISOString().slice(0, 10);
+}
+
+// Índice de semana del cronograma (0 = semana de lanzamiento). anchor = lunes AR
+// guardado al crear. El clamp al último escalón lo hace rampLimitToday, no acá.
+function rampWeekIndex(anchor: string, now: Date = new Date()): number {
+  const a = Date.parse(anchor.slice(0, 10) + 'T00:00:00Z');
+  const m = Date.parse(arMondayOf(now) + 'T00:00:00Z');
+  if (!Number.isFinite(a) || !Number.isFinite(m)) return 0;
+  return Math.max(0, Math.floor((m - a) / (7 * 24 * 3600 * 1000)));
+}
+
+// Límite diario de mensajes para HOY según el cronograma. Clampea al último escalón:
+// pasada la última semana definida, sigue a ese ritmo hasta terminar (Q2). Un bloque
+// parcial de arranque (ej. jueves) cae en índice 0 = Semana 1 (Q1). null = sin ramp.
+export function rampLimitToday(
+  schedule: number[] | null | undefined,
+  anchor: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
+  if (!Array.isArray(schedule) || schedule.length === 0 || !anchor) return null;
+  const idx = Math.min(rampWeekIndex(anchor, now), schedule.length - 1);
+  const lim = Number(schedule[idx]);
+  return Number.isFinite(lim) && lim >= 0 ? lim : null;
+}
+
 // Destinatarios únicos (todas las líneas) contactados por el tenant desde `sinceISO`.
 // count(distinct contact_id) = la unidad que consume el límite de Meta. Prefiere el
 // RPC (conteo en SQL); si no está migrado, cae a traer las filas y contar en JS.
@@ -84,6 +129,22 @@ export async function tenantUsageSince(tenantId: string, sinceISO: string): Prom
     for (const r of data ?? []) set.add(r.contact_id);
   }
   return set.size;
+}
+
+// Cantidad de envíos de UNA campaña desde `sinceISO` (para el ritmo por-día del
+// ramp-up: sinceISO = inicio del día calendario AR). Cuenta filas (cada intento),
+// NO distinct: el ramp limita mensajes/día de esta campaña. head+count = barato.
+export async function campaignSentSince(campaignId: string, sinceISO: string): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('campaign_recipients')
+    .select('id', { count: 'exact', head: true })
+    .eq('campaign_id', campaignId)
+    .gte('sent_at', sinceISO);
+  if (error) {
+    console.warn('[campaign send] No se pudo contar envíos del día (ramp):', error.message);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 async function resolveContacts(filter: string, tenantId: string, targetNumberId: string | null) {
@@ -133,8 +194,8 @@ async function resolveContacts(filter: string, tenantId: string, targetNumberId:
 export type SendResult = {
   ok: true;
   done: boolean;          // true = campaña terminada; false = hay que reanudar (tiempo o pausa)
-  paused: boolean;        // true = se pausó por techo de Meta u horario (NO reintentar ya)
-  reason: 'daily_limit' | 'fuera_de_horario' | null;
+  paused: boolean;        // true = se pausó por techo de Meta, horario o cupo diario (NO reintentar ya)
+  reason: 'daily_limit' | 'fuera_de_horario' | 'cupo_diario' | null;
   sent: number;           // éxitos de ESTA tanda
   sentTotal: number;      // éxitos acumulados
   attemptedTotal: number; // intentos acumulados (para el progreso)
@@ -142,6 +203,8 @@ export type SendResult = {
   remaining: number;
   usedToday: number | null; // destinatarios ya usados en la ventana de 24h (si hay techo)
   cap: number | null;       // techo diario aplicado (daily_cap)
+  rampLimit: number | null;     // límite del cronograma para hoy (si hay ramp)
+  rampUsedToday: number | null; // envíos de esta campaña en el día calendario AR (si hay ramp)
 };
 
 export type SendError = { error: string; status: number };
@@ -278,13 +341,27 @@ export async function runCampaignBatch(
   const winStart = campaign.window_start_min != null ? Number(campaign.window_start_min) : null;
   const winEnd   = campaign.window_end_min   != null ? Number(campaign.window_end_min)   : null;
 
+  // ── Cronograma escalonado (ramp-up, pacing por-campaña-por-día calendario AR) ──
+  // Capa que se COMBINA con el techo de Meta: el límite efectivo del día es
+  // min(rampLimit, cap). ramp_schedule/ramp_anchor null → sin ramp (se ignora esta
+  // compuerta). El conteo es por-campaña en el día calendario AR: baseline de la DB
+  // + los intentos de esta tanda (que ocurren hoy). Se lee una vez al inicio: las
+  // tandas corren dentro de la ventana horaria (lejos de medianoche), no cruzan el
+  // borde del día. Al reabrir un día nuevo el baseline arranca en 0 y el cron retoma.
+  const rampSchedule: number[] = Array.isArray(campaign.ramp_schedule)
+    ? campaign.ramp_schedule.map((n: any) => Number(n)).filter((n: number) => Number.isFinite(n))
+    : [];
+  const rampAnchor: string | null = campaign.ramp_anchor ? String(campaign.ramp_anchor) : null;
+  const rampLimit = rampLimitToday(rampSchedule, rampAnchor);
+  const rampUsedBaseline = rampLimit != null ? await campaignSentSince(campaignId, startOfArDayISO()) : 0;
+
   // El intervalo lo fija el usuario, así que el tope real del lote es por TIEMPO,
   // no por cantidad. Cortamos antes de maxDuration y se reanuda.
   const startedAt = Date.now();
   let sent = 0;                        // éxitos de ESTA tanda
   const attemptedIds: string[] = [];   // intentados (éxito o fallo) de ESTA tanda
   let timedOut = false;
-  let pauseReason: 'daily_limit' | 'fuera_de_horario' | null = null;
+  let pauseReason: 'daily_limit' | 'fuera_de_horario' | 'cupo_diario' | null = null;
 
   for (const contact of contacts) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) { timedOut = true; break; }
@@ -293,7 +370,17 @@ export async function runCampaignBatch(
     //    'fuera_de_horario' con "retoma a las HH:MM" es el más accionable).
     if (!withinWindow(winStart, winEnd)) { pauseReason = 'fuera_de_horario'; break; }
 
-    // 2) Compuerta del TECHO diario de Meta. usado = baseline + intentos de esta
+    // 2) Compuerta del RAMP-UP (ritmo por-campaña en el día calendario AR). Se pausa
+    //    con 'cupo_diario' y retoma sola a la medianoche AR siguiente (el cron
+    //    recomputa el conteo del nuevo día). Va antes que el techo de Meta: el ramp
+    //    (20–50/día) es mucho más bajo, así que es el que realmente frena, y su
+    //    banner "retoma mañana" es el accionable. usado = baseline + intentos de
+    //    esta tanda (todos de hoy; el baseline de la DB no los incluye aún).
+    if (rampLimit != null && rampUsedBaseline + attemptedIds.length >= rampLimit) {
+      pauseReason = 'cupo_diario'; break;
+    }
+
+    // 3) Compuerta del TECHO diario de Meta. usado = baseline + intentos de esta
     //    tanda. Los intentos de esta tanda se insertan en campaign_recipients recién
     //    al final, así que el baseline (que sale de la DB) NO los incluye: sumar
     //    attemptedIds.length es exacto. Cada USAGE_RECHECK_EVERY refrescamos el
@@ -420,9 +507,12 @@ export async function runCampaignBatch(
   // lanzamiento interactivo; el cron no re-notifica en cada reintento.
   if (pauseReason && opts.notifyOnPause) {
     const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-    const body = pauseReason === 'fuera_de_horario'
-      ? `"${campaign.name}" quedó fuera del horario configurado${winStart != null ? ` — retoma a las ${hhmm(winStart)}` : ''}.`
-      : `"${campaign.name}" alcanzó el límite diario de Meta. Retoma automáticamente cuando se libere cupo.`;
+    const body =
+      pauseReason === 'fuera_de_horario'
+        ? `"${campaign.name}" quedó fuera del horario configurado${winStart != null ? ` — retoma a las ${hhmm(winStart)}` : ''}.`
+        : pauseReason === 'cupo_diario'
+          ? `"${campaign.name}" alcanzó su límite diario del cronograma${rampLimit != null ? ` (${rampLimit}/día)` : ''}. Retoma automáticamente mañana.`
+          : `"${campaign.name}" alcanzó el límite diario de Meta. Retoma automáticamente cuando se libere cupo.`;
     try {
       await notifyActiveAgents({ title: 'IRIS · Campaña pausada', body, url: '/campanas', kind: 'conversation' });
     } catch (err) {
@@ -443,5 +533,7 @@ export async function runCampaignBatch(
     remaining: Math.max(0, totalTarget - attemptedTotal),
     usedToday,
     cap,
+    rampLimit,
+    rampUsedToday: rampLimit != null ? rampUsedBaseline + attemptedIds.length : null,
   };
 }

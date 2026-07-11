@@ -18,6 +18,8 @@ type Campaign = {
   paused_reason: string | null;
   window_start_min: number | null;
   window_end_min: number | null;
+  ramp_schedule: number[] | null;
+  ramp_anchor: string | null;
   recipient_ids: string[] | null;
   exclude_campaign_ids: string[] | null;
   delivered_count: number | null;
@@ -50,6 +52,43 @@ function hhmmToMin(s: string): number | null {
 }
 function minToHHMM(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+// ── Cronograma escalonado (ramp-up) — utilidades de fecha (navegador en hora AR) ──
+function atMidnight(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function addDays(d: Date, n: number): Date { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+// Lunes de la semana calendario (lun–dom) que contiene `d`.
+function mondayOf(d: Date): Date {
+  const x = atMidnight(d);
+  const isoDow = x.getDay() === 0 ? 7 : x.getDay();   // 1=lun..7=dom
+  return addDays(x, -(isoDow - 1));
+}
+function fmtDayMonth(d: Date): string {
+  return d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+}
+// Semana del cronograma que contiene `d` (0 = semana del ancla). Clamp lo hace quien llama.
+function weekIndexOf(anchor: Date, d: Date): number {
+  return Math.max(0, Math.floor((mondayOf(d).getTime() - anchor.getTime()) / (7 * 86_400_000)));
+}
+// Estimación de fecha de fin: simula día a día restando el límite del escalón vigente
+// (clampeado al último). Ignora horario/techo de Meta → es un piso optimista.
+function estimateFinish(total: number, weeks: number[], anchor: Date, today: Date): string | null {
+  if (!total || total <= 0 || weeks.length === 0) return null;
+  let remaining = total, day = new Date(today), guard = 0;
+  while (remaining > 0 && guard < 3650) {
+    const lim = weeks[Math.min(weekIndexOf(anchor, day), weeks.length - 1)] || 1;
+    remaining -= lim;
+    if (remaining > 0) day = addDays(day, 1);
+    guard++;
+  }
+  return fmtDayMonth(day);
+}
+// Semana/límite vigente HOY de una campaña ya lanzada (para el indicador de la card).
+function currentRampInfo(c: Campaign): { week: number; limit: number } | null {
+  if (!Array.isArray(c.ramp_schedule) || c.ramp_schedule.length === 0 || !c.ramp_anchor) return null;
+  const anchor = mondayOf(new Date(c.ramp_anchor + 'T00:00:00'));
+  const wIdx = weekIndexOf(anchor, new Date());
+  return { week: wIdx + 1, limit: c.ramp_schedule[Math.min(wIdx, c.ramp_schedule.length - 1)] };
 }
 
 // Cuenta cuántos placeholders {{1}}, {{2}}... distintos tiene el body.
@@ -175,6 +214,11 @@ export default function CampanasClient() {
   // se pausa ('fuera_de_horario') y retoma sola al volver a entrar.
   const [windowFrom,  setWindowFrom]  = useState('08:00');
   const [windowTo,    setWindowTo]    = useState('20:00');
+  // Cronograma escalonado (ramp-up). Off por defecto → comportamiento actual (techo
+  // fijo). rampWeeks = límite diario por semana calendario; se combina con el techo
+  // de Meta (límite efectivo del día = min). El ancla la fija el server al lanzar.
+  const [rampEnabled, setRampEnabled] = useState(false);
+  const [rampWeeks,   setRampWeeks]   = useState<number[]>([20, 20, 30, 50]);
   const [metaInfo,    setMetaInfo]    = useState<{ tier: string | null; metaLimit: number | null; usedToday: number } | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   // Uso en vivo (destinatarios únicos del tenant en 24h) para el indicador "X/Y hoy"
@@ -360,6 +404,7 @@ export default function CampanasClient() {
     setExcludePrevious(false); setExcludeCampaignIds([]);
     setMarginPct(80);
     setWindowFrom('08:00'); setWindowTo('20:00');
+    setRampEnabled(false); setRampWeeks([20, 20, 30, 50]);
     setError('');
   }
 
@@ -427,6 +472,8 @@ export default function CampanasClient() {
         daily_cap:     dailyCap,
         window_start_min: winFromMin,
         window_end_min:   winToMin,
+        // Cronograma escalonado: solo si está activado. El server fija el ancla (lunes AR).
+        ramp_schedule: rampEnabled ? rampWeeks.filter((n) => Number.isFinite(n) && n >= 1) : null,
       };
       const res = await fetch('/api/campaigns', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody),
@@ -519,11 +566,22 @@ export default function CampanasClient() {
       {(() => {
         const byLimit = activeCampaigns.filter((c) => c.status === 'pausada' && c.paused_reason === 'daily_limit');
         const byHours = activeCampaigns.filter((c) => c.status === 'pausada' && c.paused_reason === 'fuera_de_horario');
-        if (byLimit.length === 0 && byHours.length === 0) return null;
+        const byRamp  = activeCampaigns.filter((c) => c.status === 'pausada' && c.paused_reason === 'cupo_diario');
+        if (byLimit.length === 0 && byHours.length === 0 && byRamp.length === 0) return null;
         const banner: React.CSSProperties = { background: '#fff8e6', border: '1px solid #f0c040', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '10px' };
         const txt: React.CSSProperties = { fontSize: '13px', color: '#7a5c00', fontWeight: 700, margin: 0, lineHeight: 1.5 };
         return (
           <>
+            {byRamp.length > 0 && (
+              <div style={banner}>
+                <span style={{ fontSize: '18px', flexShrink: 0 }}>📆</span>
+                <p style={txt}>
+                  {byRamp.length === 1
+                    ? `Campaña pausada: alcanzó su límite diario del cronograma${(() => { const r = currentRampInfo(byRamp[0]); return r ? ` (${r.limit}/día, semana ${r.week})` : ''; })()}. Retoma automáticamente mañana.`
+                    : `${byRamp.length} campañas pausadas por su límite diario del cronograma. Retoman automáticamente mañana.`}
+                </p>
+              </div>
+            )}
             {byLimit.length > 0 && (
               <div style={banner}>
                 <span style={{ fontSize: '18px', flexShrink: 0 }}>⏸️</span>
@@ -886,9 +944,76 @@ export default function CampanasClient() {
                 {targetMode === 'category' && lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
                 <div><strong>Ritmo:</strong> {intervalMin}–{intervalMax}s entre mensajes{pauseEvery && pauseSeconds ? ` · pausa de ${pauseSeconds}s cada ${pauseEvery}` : ''}</div>
                 <div><strong>Horario:</strong> {windowFrom}–{windowTo} (hora AR)</div>
+                {rampEnabled && <div><strong>Cronograma:</strong> {rampWeeks.map((n, i) => `S${i + 1} ${n}/día`).join(' · ')} (luego {rampWeeks[rampWeeks.length - 1]}/día)</div>}
                 {targetMode === 'category' && sendLimit && <div><strong>Límite:</strong> {sendLimit} contactos</div>}
                 {targetMode === 'category' && excludePrevious && excludeCampaignIds.length > 0 && <div><strong>Excluye:</strong> {excludeCampaignIds.length} campaña(s)</div>}
               </div>
+              {/* ── Cronograma escalonado por semanas (ramp-up) ── */}
+              <div style={{ background: '#F8F8F8', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <label style={{ fontSize: '13px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 700 }}>
+                  <input type="checkbox" checked={rampEnabled} onChange={(e) => setRampEnabled(e.target.checked)} />
+                  Cronograma escalonado por semanas (ramp-up)
+                </label>
+
+                {!rampEnabled ? (
+                  <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>
+                    Activalo para subir el volumen de a poco (calentar el número): cada semana calendario (lun–dom) con su propio límite diario. Sin activar, se usa solo el techo de Meta de abajo.
+                  </p>
+                ) : (() => {
+                  const total  = targetMode === 'individual' ? selectedIds.length : (recipientCount ?? 0);
+                  const anchor = mondayOf(new Date());
+                  const today  = atMidnight(new Date());
+                  const last   = rampWeeks[rampWeeks.length - 1];
+                  const est    = estimateFinish(total, rampWeeks, anchor, today);
+                  return (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {rampWeeks.map((lim, i) => {
+                          // Semana 1 se muestra desde HOY (bloque parcial); las demás, lun–dom completas.
+                          const start = i === 0 ? today : addDays(anchor, 7 * i);
+                          const end   = addDays(anchor, 7 * i + 6);
+                          return (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{ fontSize: '12px', color: '#555', flex: 1, minWidth: 0 }}>
+                                <strong>Semana {i + 1}</strong>{' '}
+                                <span style={{ color: '#999' }}>({fmtDayMonth(start)} – {fmtDayMonth(end)})</span>
+                              </span>
+                              <input
+                                type="number" min={1} value={lim}
+                                onChange={(e) => setRampWeeks((w) => w.map((v, j) => j === i ? Math.max(1, Math.floor(Number(e.target.value)) || 1) : v))}
+                                style={{ ...inputStyle, width: '74px', textAlign: 'center', padding: '8px 10px' }}
+                              />
+                              <span style={{ fontSize: '11px', color: '#888', width: '30px' }}>/día</span>
+                              {rampWeeks.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setRampWeeks((w) => w.filter((_, j) => j !== i))}
+                                  title="Quitar semana"
+                                  style={{ background: 'none', border: 'none', color: '#E53935', fontWeight: 800, fontSize: '18px', cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}
+                                >×</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRampWeeks((w) => [...w, w[w.length - 1] ?? 20])}
+                        style={{ alignSelf: 'flex-start', background: '#fff', border: '1px solid #ddd', borderRadius: '8px', padding: '6px 12px', fontSize: '12px', fontWeight: 700, color: '#333', cursor: 'pointer' }}
+                      >
+                        + Agregar semana
+                      </button>
+                      <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>
+                        La semana 1 arranca hoy ({fmtDayMonth(today)}); ese bloque parcial usa <strong>{rampWeeks[0]}/día</strong>. Al terminar la semana {rampWeeks.length} sigue a <strong>{last}/día</strong> hasta completar {total > 0 ? `los ${total.toLocaleString('es-AR')} contactos` : 'la campaña'}.{est ? <> Estimado de fin: <strong>~{est}</strong>.</> : null}
+                      </p>
+                      <p style={{ fontSize: '11px', color: '#888', margin: 0, lineHeight: 1.5 }}>
+                        El horario de envío y el techo de Meta (abajo) se respetan igual: el límite de cada día es el menor entre el del cronograma y el de Meta.
+                      </p>
+                    </>
+                  );
+                })()}
+              </div>
+
               {/* ── Techo diario de Meta (envío escalonado) ── */}
               {(() => {
                 const metaLimit = metaInfo?.metaLimit ?? null;
@@ -1046,6 +1171,24 @@ export default function CampanasClient() {
               🕒 Pausada fuera de horario{c.window_start_min != null ? ` · retoma a las ${minToHHMM(c.window_start_min)}` : ''}.
             </p>
           )}
+          {c.status === 'pausada' && c.paused_reason === 'cupo_diario' && (() => {
+            const r = currentRampInfo(c);
+            return (
+              <p style={{ fontSize: '12px', color: '#c47a00', margin: 0, fontWeight: 600 }}>
+                📆 Pausada por el cronograma{r ? ` · semana ${r.week}, ${r.limit}/día` : ''} · retoma automáticamente mañana.
+              </p>
+            );
+          })()}
+          {/* Chip del cronograma vigente (cualquier campaña activa con ramp). */}
+          {c.status !== 'completada' && (() => {
+            const r = currentRampInfo(c);
+            if (!r) return null;
+            return (
+              <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, color: '#3a5bb8', background: '#eef3ff', borderRadius: '8px', padding: '3px 10px' }}>
+                📆 Cronograma · semana {r.week} · {r.limit}/día
+              </span>
+            );
+          })()}
 
           {c.status === 'borrador' && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
