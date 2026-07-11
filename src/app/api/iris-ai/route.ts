@@ -47,7 +47,9 @@ NÚMERO NUEVO (menos de 30 días de uso o bajo volumen): Calentamiento obligator
 
 NÚMERO VIEJO (uso regular, más de 30 días): Más tolerante pero igual con cuidado. Intervalos recomendados: mínimo 20 segundos, máximo 60 segundos. Pausas cada 50 mensajes durante 3 minutos. No superar 500 mensajes por día. Si el número tuvo pausa larga (+15 días sin uso), tratarlo como número nuevo.
 
-CONSEJO GENERAL: Siempre preferir Templates Meta sobre texto libre para campañas grandes. Mandar en horario comercial (9-20 hs). Segmentar bien los destinatarios para evitar bloqueos. Si hay muchos fallidos en el historial, bajar la velocidad de envío en la próxima campaña.`;
+CONSEJO GENERAL: Siempre preferir Templates Meta sobre texto libre para campañas grandes. Mandar en horario comercial (9-20 hs). Segmentar bien los destinatarios para evitar bloqueos. Si hay muchos fallidos en el historial, bajar la velocidad de envío en la próxima campaña.
+
+CRONOGRAMA ESCALONADO (RAMP-UP): en el paso 4 del wizard hay un tilde "Cronograma escalonado por semanas" que automatiza el calentamiento. Se define un límite de mensajes por día distinto para cada semana calendario (lunes a domingo); ejemplo: semana 1 y 2 a 20/día, semana 3 a 30/día, semana 4 a 50/día — y pasada la última semana definida sigue a ese último valor hasta terminar todos los contactos. También se puede fijar una ventana horaria de envío por día (incluso hasta la medianoche exacta). La campaña se pausa y retoma sola, sin que nadie toque nada, respetando tanto el cronograma como el techo de seguridad de Meta (el límite real de la línea): el límite de cada día es el menor entre los dos. Recomendala especialmente para calentar números nuevos o categorías de contactos frías antes de escalar el volumen — en vez de decirle al usuario que suba el envío a mano día a día, decile que active el cronograma escalonado y lo deje andar solo.`;
 
 // Extensión del prompt para OPERADORES: las consultas de actividad individual
 // están vetadas para su rol, y NUNCA deben aproximarse con totales generales

@@ -67,13 +67,13 @@ PASO 2 — DESTINATARIOS: Filtrá por tipo (Todos, Cliente activo, Inactivo, Ina
 
 PASO 3 — CONFIGURACIÓN: Ajustá los intervalos entre mensajes (mínimo y máximo en segundos) y las pausas automáticas (cada cuántos mensajes pausar y cuántos segundos). Para números nuevos (menos de 30 días): intervalos 45-90 seg, pausas cada 20 mensajes. Para números consolidados: intervalos 20-60 seg, pausas cada 50 mensajes.
 
-PASO 4 — CONFIRMAR: Revisá el resumen y enviá. Una vez confirmado no se puede deshacer.
+PASO 4 — CONFIRMAR: Revisá el resumen y enviá. Acá también podés activar el "Cronograma escalonado por semanas" (calentamiento automático: un límite de mensajes por día distinto para cada semana calendario, ej. semana 1-2 a 20/día, semana 3 a 30, semana 4 a 50; pasada la última semana sigue a ese valor hasta terminar todos los contactos) y la ventana horaria de envío por día (de tal hora a tal hora, incluso hasta la medianoche exacta con 00:00). La campaña se pausa y retoma sola respetando el cronograma y el límite real de Meta. Una vez confirmado no se puede deshacer.
 
 Para templates: el nombre debe coincidir EXACTO con el de Meta Business Manager, más idioma y variables {{1}}, {{2}}… El botón "+ {{nombre}}" personaliza con el nombre de cada contacto. El botón "♻️ Reactivación" precarga una campaña típica con filtro de 30 días.
 
 HISTORIAL: Colapsable abajo de la pantalla. Filtros de 7 días / 15 días / 1 mes / 3 meses / 1 año. Por cada campaña ves: fecha, tipo, template, enviados, entregados, leídos, respuestas (btn1/btn2) y fallidos. Si hay muchos fallidos, bajá la velocidad en la próxima campaña.
 
-CALENTAMIENTO DE NÚMEROS: Un número nuevo o sin uso por +15 días necesita calentamiento. Empezá con 20-30 mensajes por día y subí gradual. Saltear el calentamiento puede resultar en baneo del número.`,
+CALENTAMIENTO DE NÚMEROS: Un número nuevo o sin uso por +15 días necesita calentamiento. Lo más fácil es activar el "Cronograma escalonado" en el paso 4 y dejar que el volumen suba solo, semana a semana (ej. 20/día → 30 → 50): la campaña se pausa y retoma sola cada día sin que toques nada. Saltear el calentamiento puede resultar en baneo del número.`,
   },
 
   dashboard: {
