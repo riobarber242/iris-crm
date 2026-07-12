@@ -41,27 +41,16 @@ export async function GET(request: Request) {
   }
 
   // ── Modo LISTADO (agendados: con casino_username) ──────────────────────────
-  // Paginación OPT-IN: si viene `limit`, se devuelve UNA página ordenada por
-  // casino_username con búsqueda server-side (para la pantalla Contactos, que no
-  // puede traer millones de filas). Sin `limit`, comportamiento LEGACY: lista
-  // completa por created_at (el picker individual del wizard de campañas la
-  // consume entera → hay que mantener compat).
+  // SIEMPRE paginado: se devuelve UNA página ordenada por casino_username con
+  // búsqueda server-side. Antes, sin `limit` se devolvía la lista COMPLETA por
+  // created_at — un footgun: para un tenant grande (tipo Derki, ~millones de
+  // agendados) eso reventaba egress/memoria. Hoy NINGÚN caller pega sin `limit`
+  // (el picker del wizard de campañas y la pantalla Contactos siempre lo mandan),
+  // así que sin `limit` (o inválido) caemos a un default ACOTADO en vez de traer
+  // todo. El tope duro sigue siendo 200 por página.
   const SELECT_COLS = 'id, name, phone, status, casino_username, whatsapp_number_id, created_at';
   const limitParam  = parseInt(url.searchParams.get('limit') ?? '', 10);
-
-  if (!Number.isInteger(limitParam) || limitParam <= 0) {
-    const { data, error } = await supabaseAdmin
-      .from('contacts')
-      .select(SELECT_COLS)
-      .eq('tenant_id', session.tenant_id)
-      .not('casino_username', 'is', null)
-      .neq('casino_username', '')
-      .order('created_at', { ascending: false });
-    if (error) return new NextResponse(error.message, { status: 500 });
-    return NextResponse.json(data ?? []);
-  }
-
-  const limit  = Math.min(limitParam, 200);
+  const limit       = Number.isInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 200;
   const offset = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10) || 0);
   const asc    = url.searchParams.get('sort') !== 'za'; // 'az' (default) | 'za'
   // Búsqueda: se sacan los chars estructurales del `.or()` (`,()`) y los wildcards
