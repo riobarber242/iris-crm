@@ -266,15 +266,12 @@ export default function CampanasClient() {
       if (!res.ok) return;
       const list = await res.json();
       setCampaigns(Array.isArray(list) ? list : []);
-      // Solo polleamos el uso diario si hay un envío en curso con techo (para el
-      // indicador "X/Y hoy"); si no, no gastamos la query.
-      const anySending = Array.isArray(list) && list.some((c: Campaign) => c.status === 'enviando' && c.daily_cap != null);
-      if (anySending) {
-        try {
-          const u = await fetch('/api/campaigns/usage', { cache: 'no-store' });
-          if (u.ok) { const d = await u.json(); setUsageToday(typeof d?.usedToday === 'number' ? d.usedToday : null); }
-        } catch {}
-      }
+    } catch {}
+    // Uso del límite diario de Meta (destinatarios únicos en 24h). Se refresca SIEMPRE
+    // para el dashboard fijo, no solo durante un envío. Query barata (count en DB).
+    try {
+      const u = await fetch('/api/campaigns/usage', { cache: 'no-store' });
+      if (u.ok) { const d = await u.json(); setUsageToday(typeof d?.usedToday === 'number' ? d.usedToday : null); }
     } catch {}
   }
 
@@ -291,6 +288,7 @@ export default function CampanasClient() {
 
   useEffect(() => {
     fetchCampaigns();
+    fetchMetaLimit();   // límite real de Meta + tier para el dashboard fijo (1 llamada a la Graph API)
     fetch('/api/whatsapp-numbers')
       .then((r) => (r.ok ? r.json() : []))
       .then((d) => setLines(Array.isArray(d) ? d : []))
@@ -680,6 +678,65 @@ export default function CampanasClient() {
           {showWizard ? '✕ Cancelar' : '+ Nueva campaña'}
         </button>
       </div>
+
+      {/* Dashboard del límite diario de Meta — siempre visible (haya o no envío corriendo).
+          used = destinatarios únicos de campañas en la ventana móvil de 24h; metaLimit =
+          techo real del WABA según el tier. */}
+      {(() => {
+        if (!metaInfo) return null; // esperamos la lectura del límite (evita flash de "ilimitado")
+        const metaLimit = metaInfo.metaLimit ?? null;
+        const used = usageToday ?? metaInfo.usedToday ?? 0;
+
+        const nota = (
+          <p style={{ fontSize: '11px', color: '#aaa', margin: 0, lineHeight: 1.5 }}>
+            ~ Piso conservador: cuenta destinatarios únicos de <strong>campañas</strong> en 24h. El número real de Meta puede ser algo mayor si hubo envíos de plantilla fuera de campañas.
+          </p>
+        );
+
+        // Sin límite legible (cuenta ilimitada o no se pudo leer): solo el conteo.
+        if (metaLimit == null) {
+          return (
+            <div style={{ background: '#fff', borderRadius: '16px', padding: '16px 22px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <span style={labelStyle}>Límite diario de Meta</span>
+                <span style={{ fontSize: '11px', color: '#888' }}>{metaInfo?.tier ? `${metaInfo.tier} · ` : ''}ilimitado / no disponible</span>
+              </div>
+              <p style={{ fontSize: '14px', color: '#333', margin: 0, fontWeight: 600 }}>
+                Usados en las últimas 24h: <strong>{(used ?? 0).toLocaleString('es-AR')}</strong> destinatarios.
+              </p>
+              {nota}
+            </div>
+          );
+        }
+
+        const u = used ?? 0;
+        const pct = Math.min(100, Math.round((u / metaLimit) * 100));
+        const remaining = Math.max(0, metaLimit - u);
+        const color = pct >= 90 ? '#c0392b' : pct >= 70 ? '#c47a00' : '#1a7a3a';
+        const barColor = pct >= 90 ? '#E53935' : pct >= 70 ? '#f0a020' : '#5ad87a';
+        const alerta = pct >= 90;
+        return (
+          <div style={{ background: alerta ? '#fff5f5' : '#fff', borderRadius: '16px', padding: '16px 22px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', border: alerta ? '1px solid #f0a0a0' : '1px solid transparent', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={labelStyle}>Límite diario de Meta</span>
+              <span style={{ fontSize: '11px', color: '#888' }}>{metaInfo?.tier ? `${metaInfo.tier} · ` : ''}{metaLimit.toLocaleString('es-AR')}/día</span>
+            </div>
+            <div style={{ height: '10px', background: '#eee', borderRadius: '999px', overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: barColor, borderRadius: '999px', transition: 'width 0.3s ease' }} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '18px', fontWeight: 900, color }}>{u.toLocaleString('es-AR')} / {metaLimit.toLocaleString('es-AR')}</span>
+              <span style={{ fontSize: '12px', color: '#888' }}>(~{pct}%) · quedan ~{remaining.toLocaleString('es-AR')} en las próximas 24h</span>
+            </div>
+            {alerta && (
+              <p style={{ fontSize: '12px', color: '#c0392b', fontWeight: 700, margin: 0, lineHeight: 1.5 }}>
+                ⚠️ Cerca del límite diario de Meta — esperá a que se libere cupo antes de lanzar una campaña grande.
+              </p>
+            )}
+            {nota}
+          </div>
+        );
+      })()}
 
       {launchResult && (
         <div style={{ background: '#e8fff0', border: '1px solid #5ad87a', borderRadius: '12px', padding: '12px 16px' }}>
