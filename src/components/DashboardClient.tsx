@@ -241,11 +241,23 @@ export default function DashboardClient() {
 
   // Fase 2: señal de comprobante (via AdminShell). Refresca montos/pendientes, y
   // "de rebote" el status de contactos (una verificación cambia el status → cuentas
-  // del embudo). Los cambios por mensaje ya los cubre el poll de 15s.
+  // del embudo).
   useEffect(() => {
     const h = () => { fetchStats(); fetchCharts(); };
     window.addEventListener('iris:comprobante-broadcast', h);
     return () => window.removeEventListener('iris:comprobante-broadcast', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fase 2: señal de mensaje nuevo (via AdminShell, canal Broadcast messages:tenant).
+  // Refresca fetchStats —donde vive el contador de "no leídos"— sub-segundo, apenas
+  // llega el mensaje. Antes ese contador solo lo agarraba el postgres_changes (3-5s de
+  // latencia) o el poll de 15s, que quedan de red de seguridad. Mismo patrón que el
+  // listener de comprobantes de arriba.
+  useEffect(() => {
+    const h = () => { fetchStats(); };
+    window.addEventListener('iris:message-broadcast', h);
+    return () => window.removeEventListener('iris:message-broadcast', h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
