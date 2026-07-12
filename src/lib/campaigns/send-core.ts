@@ -35,6 +35,14 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+// Renderiza el cuerpo de una plantilla reemplazando {{1}}, {{2}}… por los valores ya
+// resueltos por contacto. Se usa SOLO para persistir el texto real del mensaje en la
+// conversación (lo que muestra el panel); el envío a Meta lo arma sendWhatsAppTemplate.
+// Un índice sin valor deja su placeholder ({{3}} si no hay tercera variable).
+function renderTemplateBody(body: string, vars: string[]): string {
+  return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => vars[Number(n) - 1] ?? `{{${n}}}`);
+}
+
 // ── Ventana horaria (hora Argentina) ─────────────────────────────────────────
 // AR = UTC−3 todo el año (sin DST desde 2009; el resto del sistema ya asume
 // "medianoche AR = 03:00 UTC"). Trabajamos en minutos desde medianoche AR.
@@ -313,16 +321,19 @@ export async function runCampaignBatch(
   const isTemplate = campaign.type === 'template_meta';
   const vars: string[] = Array.isArray(campaign.template_variables) ? campaign.template_variables : [];
 
-  // Botones de respuesta rápida de la plantilla (viven en whatsapp_templates).
+  // Botones de respuesta rápida + cuerpo de la plantilla (viven en whatsapp_templates).
+  // El body se usa para persistir el texto renderizado del mensaje en la conversación.
   let buttons: string[] = [];
+  let templateBody: string | null = null;
   if (isTemplate && campaign.template_name) {
     const { data: tpl } = await supabaseAdmin
       .from('whatsapp_templates')
-      .select('buttons')
+      .select('buttons, body')
       .eq('tenant_id', tenantId)
       .eq('name', campaign.template_name)
       .maybeSingle();
     if (Array.isArray(tpl?.buttons)) buttons = tpl.buttons;
+    if (typeof tpl?.body === 'string') templateBody = tpl.body;
   }
 
   // ── Config de ritmo de envío (con defaults seguros si faltan columnas) ───────
@@ -422,8 +433,13 @@ export async function runCampaignBatch(
         await sendWhatsAppText(contact.phone, campaign.message, tenantId, contact.whatsapp_number_id);
       }
 
+      // Persistimos el texto REAL renderizado (lo que ve el panel). Si no tenemos el
+      // body de la plantilla (borrada / consulta falló), caemos al placeholder de antes
+      // para no guardar un mensaje vacío. El texto libre va tal cual.
       const msgContent = isTemplate
-        ? `[Template: ${campaign.template_name}]${resolvedVars.length ? ` (${resolvedVars.join(', ')})` : ''}`
+        ? (templateBody
+            ? renderTemplateBody(templateBody, resolvedVars)
+            : `[Template: ${campaign.template_name}]${resolvedVars.length ? ` (${resolvedVars.join(', ')})` : ''}`)
         : campaign.message;
 
       await insertMessage({
