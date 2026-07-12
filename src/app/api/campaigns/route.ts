@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
-import { arMondayOf } from '@/lib/campaigns/send-core';
+import { arMondayOf, startOfArDayISO } from '@/lib/campaigns/send-core';
 
 // Valida y normaliza la ventana horaria (minutos AR). Solo mismo día: exige
 // 0 ≤ start < end ≤ 1440; si no, va null (sin restricción) para no bloquear envíos.
@@ -35,6 +35,26 @@ export async function GET() {
     .order('created_at', { ascending: false });
 
   if (error) return new NextResponse(error.message, { status: 500 });
+
+  // Progreso del ramp en vivo: para las campañas con cronograma que están ACTIVAS,
+  // contamos cuántas mandaron HOY (día calendario AR) — mismo criterio que el gate del
+  // ramp (campaignSentSince). 1 sola query para todas; ninguna si no hay ramped activas.
+  const rampedActive = (data ?? []).filter(
+    (c: any) => Array.isArray(c.ramp_schedule) && c.ramp_schedule.length > 0
+      && c.status !== 'completada' && c.status !== 'cancelada',
+  );
+  if (rampedActive.length > 0) {
+    const ids = rampedActive.map((c: any) => c.id);
+    const { data: recs } = await supabaseAdmin
+      .from('campaign_recipients')
+      .select('campaign_id')
+      .in('campaign_id', ids)
+      .gte('sent_at', startOfArDayISO());
+    const tally = new Map<string, number>();
+    for (const r of recs ?? []) tally.set(r.campaign_id, (tally.get(r.campaign_id) ?? 0) + 1);
+    for (const c of rampedActive) (c as any).ramp_used_today = tally.get(c.id) ?? 0;
+  }
+
   return NextResponse.json(data);
 }
 

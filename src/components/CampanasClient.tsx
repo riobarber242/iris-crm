@@ -20,6 +20,7 @@ type Campaign = {
   window_end_min: number | null;
   ramp_schedule: number[] | null;
   ramp_anchor: string | null;
+  ramp_used_today?: number | null; // enviados hoy (día AR) de esta campaña; lo calcula el GET solo para ramped activas
   recipient_ids: string[] | null;
   exclude_campaign_ids: string[] | null;
   // Config de ritmo (para precargar el wizard al editar/relanzar). Vienen del select('*').
@@ -1383,13 +1384,17 @@ export default function CampanasClient() {
               </p>
             );
           })()}
-          {/* Chip del cronograma vigente (cualquier campaña activa con ramp). */}
+          {/* Chip del cronograma vigente con progreso en vivo del día (X/Y hoy). */}
           {c.status !== 'completada' && (() => {
             const r = currentRampInfo(c);
             if (!r) return null;
+            const used = c.ramp_used_today ?? 0;
+            const full = used >= r.limit;
+            // Lleno = mismo rojo de alerta que la card del límite de Meta (consistencia visual).
+            const chipColor = full ? { color: '#c0392b', background: '#ffe6e6' } : { color: '#3a5bb8', background: '#eef3ff' };
             return (
-              <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, color: '#3a5bb8', background: '#eef3ff', borderRadius: '8px', padding: '3px 10px' }}>
-                📆 Cronograma · semana {r.week} · {r.limit}/día
+              <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, ...chipColor, borderRadius: '8px', padding: '3px 10px' }}>
+                📆 Cronograma · semana {r.week} · {used}/{r.limit} hoy
               </span>
             );
           })()}
