@@ -206,6 +206,7 @@ export type SendResult = {
   rampLimit: number | null;     // límite del cronograma para hoy (si hay ramp)
   rampUsedToday: number | null; // envíos de esta campaña en el día calendario AR (si hay ramp)
   cancelled: boolean;           // true = se detuvo (status 'cancelada') durante la tanda; el loop corta
+  handedOff: boolean;           // true = se cortó por tiempo → queda 'pausada'/'auto_resume' y la sigue el cron; el navegador deja de manejarla
 };
 
 export type SendError = { error: string; status: number };
@@ -213,15 +214,17 @@ export type SendError = { error: string; status: number };
 // Corre UNA tanda de envío de la campaña (acotada por tiempo o por el techo diario).
 // opts.notifyOnPause: enviar push al pausar por el techo (true en el lanzamiento
 //   interactivo; false desde el cron, para no re-notificar en cada reintento).
-// opts.resumeMarker: quién dispara los reintentos. En el lanzamiento interactivo
-//   (false) el corte por TIEMPO deja la campaña 'enviando' y la reanuda el navegador.
-//   Desde el cron (true) no hay navegador: el corte por tiempo la deja 'pausada' con
-//   reason 'auto_resume' para que el propio cron la retome en la próxima corrida
-//   (sin banner ni push: no es un tope de Meta, es una continuación).
+// El corte por TIEMPO (presupuesto de tanda) SIEMPRE deja la campaña 'pausada' con
+// reason 'auto_resume', tanto en el camino interactivo como en el del cron: así el
+// cron la retoma en la próxima corrida y NUNCA queda huérfana en 'enviando' (antes,
+// el camino interactivo la dejaba 'enviando' esperando al navegador → si se cerraba
+// la pestaña, no la retomaba nadie porque el cron solo levanta 'pausada'). El
+// resultado marca handedOff=true para que el loop del navegador ceda el control al
+// cron (y no maneje la misma campaña en paralelo → evita doble envío).
 export async function runCampaignBatch(
   campaignId: string,
   tenantId: string,
-  opts: { notifyOnPause?: boolean; resumeMarker?: boolean } = {},
+  opts: { notifyOnPause?: boolean } = {},
 ): Promise<SendResult | SendError> {
   const { data: campaign, error: cErr } = await supabaseAdmin
     .from('campaigns').select('*').eq('id', campaignId).eq('tenant_id', tenantId).single();
@@ -484,16 +487,14 @@ export async function runCampaignBatch(
   //  - pausada por techo de Meta u horario → 'pausada' con su reason (banner + push;
   //    el cron la retoma cuando se cumplan las compuertas: cupo y/o ventana horaria).
   //  - terminada                           → 'completada'.
-  //  - cortada por tiempo:
-  //      · interactivo (resumeMarker=false) → 'enviando' (la reanuda el navegador).
-  //      · cron        (resumeMarker=true)  → 'pausada'/'auto_resume' (continuación
-  //        silenciosa; el propio cron la retoma en la próxima corrida).
+  //  - cortada por TIEMPO (interactivo o cron) → 'pausada'/'auto_resume': continuación
+  //    silenciosa que el cron retoma en la próxima corrida. NUNCA queda en 'enviando'
+  //    (evita el estado huérfano si se cierra la pestaña).
   let newStatus: string;
   let newReason: string | null;
-  if (pauseReason)                   { newStatus = 'pausada';    newReason = pauseReason; }
-  else if (done)                     { newStatus = 'completada'; newReason = null; }
-  else if (opts.resumeMarker)        { newStatus = 'pausada';    newReason = 'auto_resume'; }
-  else                               { newStatus = 'enviando';   newReason = null; }
+  if (pauseReason)  { newStatus = 'pausada';    newReason = pauseReason; }
+  else if (done)    { newStatus = 'completada'; newReason = null; }
+  else              { newStatus = 'pausada';    newReason = 'auto_resume'; }
 
   // Anti-carrera "Detener": el operador pudo tocar Detener MIENTRAS corría esta tanda.
   // Re-leemos el estado antes de escribir; si quedó 'cancelada', la respetamos —
@@ -553,5 +554,8 @@ export async function runCampaignBatch(
     rampLimit,
     rampUsedToday: rampLimit != null ? rampUsedBaseline + attemptedIds.length : null,
     cancelled: wasCancelled,
+    // Cortada por tiempo (no cancelada, no pausa por límite): quedó 'pausada'/'auto_resume'
+    // y la sigue el cron → el navegador debe soltar el control (no manejarla en paralelo).
+    handedOff: !wasCancelled && timedOut && !pauseReason,
   };
 }

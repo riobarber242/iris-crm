@@ -62,8 +62,8 @@ export async function GET(request: Request) {
     // Regla UNIFORME de reanudación (sirve para cualquier motivo, y así el caso
     // "pausada por varios límites a la vez" espera a que se cumplan TODOS):
     //   retomar ⟺ dentro de la ventana horaria  ∧  cupo del ramp del día  ∧  cupo de Meta.
-    // La primera campaña que pase las tres compuertas recibe UNA tanda (resumeMarker:
-    // si se corta por tiempo queda 'auto_resume' para la próxima corrida).
+    // La primera campaña que pase las tres compuertas recibe UNA tanda (si se corta
+    // por tiempo, runCampaignBatch la deja 'auto_resume' y la retoma la próxima corrida).
     for (const camp of paused) {
       // Compuerta de HORARIO (barata, local).
       if (!withinWindow(camp.window_start_min, camp.window_end_min)) continue;
@@ -85,7 +85,7 @@ export async function GET(request: Request) {
         if (used >= cap) continue;
       }
 
-      const res = await runCampaignBatch(camp.id, camp.tenant_id, { notifyOnPause: false, resumeMarker: true });
+      const res = await runCampaignBatch(camp.id, camp.tenant_id, { notifyOnPause: false });
       const outcome = 'error' in res
         ? { error: res.error }
         : { done: res.done, paused: res.paused, reason: res.reason, sent: res.sent, usedToday: res.usedToday, cap: res.cap };

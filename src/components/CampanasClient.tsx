@@ -220,6 +220,9 @@ export default function CampanasClient() {
   const [launchProgress, setLaunchProgress] = useState('');
   const [error,       setError]       = useState('');
   const [launchResult, setLaunchResult] = useState<{ sent: number; total: number } | null>(null);
+  // Aviso de "hand-off al cron": la campaña era grande, se cortó por tiempo y sigue
+  // enviándose sola en segundo plano (el navegador soltó el control).
+  const [launchQueued, setLaunchQueued] = useState<{ sent: number; total: number } | null>(null);
   const [deletingNo,  setDeletingNo]  = useState<string | null>(null);
 
   // ── Techo diario de Meta (envío escalonado) ──────────────────────────────────
@@ -434,7 +437,7 @@ export default function CampanasClient() {
   }
 
   function openWizard() {
-    resetWizard(); setShowWizard(true); setLaunchResult(null);
+    resetWizard(); setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
     fetchRecipientCount('todos', 'todas');
     fetchMetaLimit();
   }
@@ -478,7 +481,7 @@ export default function CampanasClient() {
       setRampEnabled(true); setRampWeeks(c.ramp_schedule);
     }
 
-    setShowWizard(true); setLaunchResult(null);
+    setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
     fetchRecipientCount(c.target_filter || 'todos', c.target_number_id ?? 'todas');
     fetchMetaLimit();
   }
@@ -583,7 +586,7 @@ export default function CampanasClient() {
       // Auto-resume: /send corta por presupuesto de tiempo en campañas grandes y
       // devuelve done:false; lo re-llamamos hasta done:true (saltea a los ya
       // intentados server-side). El guard es un backstop ante un bucle inesperado.
-      let done = false, guard = 0, sentTotal = 0, total = 0, pausedByLimit = false;
+      let done = false, guard = 0, sentTotal = 0, total = 0, pausedByLimit = false, handedOff = false;
       while (!done) {
         if (++guard > 300) throw new Error('El envío no terminó tras muchos reintentos; revisá el estado de la campaña.');
         const sendRes = await fetch('/api/campaigns/send', {
@@ -593,15 +596,19 @@ export default function CampanasClient() {
         if (!sendRes.ok) throw new Error(data?.error ?? 'Error al enviar la campaña.');
         sentTotal = data.sentTotal ?? data.sent ?? sentTotal;
         total     = data.total ?? total;
-        // Pausada por el techo diario de Meta: NO reintentamos (el cron la retoma
-        // sola al liberarse cupo). Cortamos el loop; el banner de la pantalla avisa.
         if (data.cancelled) break;                                // el operador la detuvo: cortamos limpio
+        // Cortada por tiempo: quedó 'pausada'/'auto_resume' y la sigue el cron. Soltamos
+        // el control (no la manejamos en paralelo → evita doble envío) y avisamos.
+        if (data.handedOff) { handedOff = true; break; }
+        // Pausada por el techo diario de Meta u horario: NO reintentamos (el cron la
+        // retoma sola). Cortamos el loop; el banner de la pantalla avisa.
         if (data.paused) { pausedByLimit = true; break; }
         done = data.done !== false;                               // sin done → compat: tratamos como terminado
         if (!done) setLaunchProgress(`Enviando ${data.attemptedTotal ?? sentTotal} / ${total}…`);
       }
 
-      setLaunchResult(pausedByLimit ? null : { sent: sentTotal, total });
+      if (handedOff) setLaunchQueued({ sent: sentTotal, total });
+      else setLaunchResult(pausedByLimit ? null : { sent: sentTotal, total });
       closeWizard();
       fetchCampaigns();
     } catch (e: any) {
@@ -671,6 +678,14 @@ export default function CampanasClient() {
         <div style={{ background: '#e8fff0', border: '1px solid #5ad87a', borderRadius: '12px', padding: '12px 16px' }}>
           <p style={{ fontSize: '13px', color: '#1a7a3a', fontWeight: 700, margin: 0 }}>
             ✅ Campaña lanzada: enviada a {launchResult.sent} de {launchResult.total} contactos.
+          </p>
+        </div>
+      )}
+
+      {launchQueued && (
+        <div style={{ background: '#eef3ff', border: '1px solid #a9c0f0', borderRadius: '12px', padding: '12px 16px' }}>
+          <p style={{ fontSize: '13px', color: '#3a5bb8', fontWeight: 700, margin: 0, lineHeight: 1.5 }}>
+            📨 La campaña es grande: se enviaron {launchQueued.sent} de {launchQueued.total} y el resto sigue saliendo solo en segundo plano. Se completa automáticamente — no hace falta que dejes esta pantalla abierta.
           </p>
         </div>
       )}
