@@ -126,7 +126,10 @@ function effectiveFilter(f: string, days: number): string {
   return f === 'inactivo_dias' ? `inactivo_${days}d` : f;
 }
 
-function filterLabel(value: string): string {
+function filterLabel(value: string | null | undefined): string {
+  // Null-safe: una campaña con target_filter null/'' no debe romper TODA la lista
+  // (antes value.match(null) tiraba un TypeError que volteaba la pantalla entera).
+  if (!value) return 'Todos los contactos';
   if (value === 'seleccion') return 'Contactos seleccionados';
   const m = value.match(/^inactivo_(\d+)d$/);
   if (m) return `Inactivo sin recargar ${m[1]} días`;
