@@ -11,7 +11,7 @@ type Campaign = {
   template_variables: string[] | null;
   target_filter: string;
   target_number_id: string | null;
-  status: 'borrador' | 'enviando' | 'completada' | 'pausada';
+  status: 'borrador' | 'enviando' | 'completada' | 'pausada' | 'cancelada';
   sent_count: number;
   created_at: string;
   daily_cap: number | null;
@@ -505,6 +505,7 @@ export default function CampanasClient() {
         total     = data.total ?? total;
         // Pausada por el techo diario de Meta: NO reintentamos (el cron la retoma
         // sola al liberarse cupo). Cortamos el loop; el banner de la pantalla avisa.
+        if (data.cancelled) break;                                // el operador la detuvo: cortamos limpio
         if (data.paused) { pausedByLimit = true; break; }
         done = data.done !== false;                               // sin done → compat: tratamos como terminado
         if (!done) setLaunchProgress(`Enviando ${data.attemptedTotal ?? sentTotal} / ${total}…`);
@@ -518,6 +519,20 @@ export default function CampanasClient() {
     }
     setLaunching(false);
     setLaunchProgress('');
+  }
+
+  // Detener (cancelar) una campaña en curso o pausada: pasa a estado terminal
+  // 'cancelada'. El cron ya no la retoma y, si había una tanda en vuelo, el backend
+  // no la revive (guarda anti-carrera en runCampaignBatch). Conserva el progreso.
+  async function handleStop(campaign: Campaign) {
+    if (!confirm(`¿Detener la campaña "${campaign.name}"? No se enviarán más mensajes. Después vas a poder eliminarla o editarla y relanzarla.`)) return;
+    try {
+      await fetch('/api/campaigns', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaignId: campaign.id, status: 'cancelada' }),
+      });
+      fetchCampaigns();
+    } catch {}
   }
 
   async function handleDelete(campaign: Campaign) {
@@ -1144,6 +1159,7 @@ export default function CampanasClient() {
               const pill = c.status === 'enviando' ? { bg: '#fff8d6', fg: '#b8860b', label: c.status }
                 : isQueued ? { bg: '#eef3ff', fg: '#3a5bb8', label: 'en cola' }
                 : c.status === 'pausada' ? { bg: '#ffe9c7', fg: '#c47a00', label: c.status }
+                : c.status === 'cancelada' ? { bg: '#f3d9d9', fg: '#a33a3a', label: 'detenida' }
                 : { bg: '#F0F0F0', fg: '#888', label: c.status };
               return (
                 <span style={{ background: pill.bg, color: pill.fg, fontSize: '11px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
@@ -1200,6 +1216,12 @@ export default function CampanasClient() {
               </span>
             );
           })()}
+
+          {(c.status === 'enviando' || c.status === 'pausada') && (
+            <button onClick={() => handleStop(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#a33a3a', fontWeight: 700, fontSize: '13px', border: '1px solid #e0a0a0', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
+              ⏹ Detener
+            </button>
+          )}
 
           {c.status === 'borrador' && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>

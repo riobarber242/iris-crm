@@ -205,6 +205,7 @@ export type SendResult = {
   cap: number | null;       // techo diario aplicado (daily_cap)
   rampLimit: number | null;     // límite del cronograma para hoy (si hay ramp)
   rampUsedToday: number | null; // envíos de esta campaña en el día calendario AR (si hay ramp)
+  cancelled: boolean;           // true = se detuvo (status 'cancelada') durante la tanda; el loop corta
 };
 
 export type SendError = { error: string; status: number };
@@ -227,6 +228,8 @@ export async function runCampaignBatch(
 
   if (cErr || !campaign) return { error: 'Campaña no encontrada', status: 404 };
   if (campaign.status === 'completada') return { error: 'La campaña ya fue enviada', status: 409 };
+  // Detenida por el operador: no arrancamos ni la revivimos a 'enviando'.
+  if (campaign.status === 'cancelada') return { error: 'La campaña fue detenida', status: 409 };
 
   await supabaseAdmin.from('campaigns')
     .update({ status: 'enviando', paused_reason: null, paused_at: null })
@@ -492,20 +495,34 @@ export async function runCampaignBatch(
   else if (opts.resumeMarker)        { newStatus = 'pausada';    newReason = 'auto_resume'; }
   else                               { newStatus = 'enviando';   newReason = null; }
 
-  const isPaused = newStatus === 'pausada';
-  await supabaseAdmin
-    .from('campaigns')
-    .update({
-      status:        newStatus,
-      sent_count:    sentTotal,
-      paused_reason: newReason,
-      paused_at:     isPaused ? new Date().toISOString() : null,
-    })
-    .eq('id', campaignId).eq('tenant_id', tenantId);
+  // Anti-carrera "Detener": el operador pudo tocar Detener MIENTRAS corría esta tanda.
+  // Re-leemos el estado antes de escribir; si quedó 'cancelada', la respetamos —
+  // solo persistimos el progreso (sent_count) y NO la revivimos a enviando/pausada.
+  const { data: fresh } = await supabaseAdmin
+    .from('campaigns').select('status').eq('id', campaignId).eq('tenant_id', tenantId).single();
+  const wasCancelled = fresh?.status === 'cancelada';
+
+  if (wasCancelled) {
+    await supabaseAdmin.from('campaigns')
+      .update({ sent_count: sentTotal })
+      .eq('id', campaignId).eq('tenant_id', tenantId);
+  } else {
+    const isPaused = newStatus === 'pausada';
+    await supabaseAdmin
+      .from('campaigns')
+      .update({
+        status:        newStatus,
+        sent_count:    sentTotal,
+        paused_reason: newReason,
+        paused_at:     isPaused ? new Date().toISOString() : null,
+      })
+      .eq('id', campaignId).eq('tenant_id', tenantId);
+  }
 
   // Aviso por push al pausar (banner lo maneja la pantalla por estado). Solo en el
-  // lanzamiento interactivo; el cron no re-notifica en cada reintento.
-  if (pauseReason && opts.notifyOnPause) {
+  // lanzamiento interactivo; el cron no re-notifica en cada reintento. Si se detuvo
+  // en el medio, no avisamos de una "pausa" que ya no aplica.
+  if (pauseReason && opts.notifyOnPause && !wasCancelled) {
     const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
     const body =
       pauseReason === 'fuera_de_horario'
@@ -535,5 +552,6 @@ export async function runCampaignBatch(
     cap,
     rampLimit,
     rampUsedToday: rampLimit != null ? rampUsedBaseline + attemptedIds.length : null,
+    cancelled: wasCancelled,
   };
 }

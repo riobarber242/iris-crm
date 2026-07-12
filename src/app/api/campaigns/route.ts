@@ -151,12 +151,18 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const { campaignId, status } = body;
 
-  if (!campaignId || !['borrador', 'enviando', 'completada', 'pausada'].includes(status)) {
+  if (!campaignId || !['borrador', 'enviando', 'completada', 'pausada', 'cancelada'].includes(status)) {
     return new NextResponse('Falta campaignId o estado válido', { status: 400 });
   }
 
+  // 'cancelada' = estado terminal (detener). Limpiamos el motivo/fecha de pausa para
+  // que no quede un banner colgado; el cron ya ignora todo lo que no sea 'pausada'.
+  const patch = status === 'cancelada'
+    ? { status, paused_reason: null, paused_at: null }
+    : { status };
+
   const { data, error } = await supabaseAdmin
-    .from('campaigns').update({ status }).eq('id', campaignId).eq('tenant_id', session.tenant_id).select('*').single();
+    .from('campaigns').update(patch).eq('id', campaignId).eq('tenant_id', session.tenant_id).select('*').single();
 
   if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data);
