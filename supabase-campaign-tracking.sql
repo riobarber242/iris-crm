@@ -22,6 +22,16 @@ create table if not exists campaign_message_status (
 create index if not exists idx_cms_wamid    on campaign_message_status (wamid);
 create index if not exists idx_cms_campaign on campaign_message_status (campaign_id);
 
+-- Por si la tabla YA EXISTÍA sin estas columnas: `create table if not exists` es
+-- no-op si la tabla ya estaba (fue creada antes con otro esquema), así que estas 3
+-- columnas nunca se agregaron. El handler de webhooks (src/lib/meta/handler.ts) lee
+-- delivered_at/read_at y escribe btn_text; sin ellas, el bloque de tracking FALLA en
+-- silencio (try/catch) y delivered_count/read_count/btn* nunca se mueven. Verificado
+-- en prod 2026-07-12: "column campaign_message_status.delivered_at does not exist".
+alter table campaign_message_status add column if not exists delivered_at timestamptz;
+alter table campaign_message_status add column if not exists read_at      timestamptz;
+alter table campaign_message_status add column if not exists btn_text     text;
+
 -- ── Contadores denormalizados en campaigns ───────────────────────────────────
 alter table campaigns add column if not exists delivered_count integer default 0;
 alter table campaigns add column if not exists read_count      integer default 0;
