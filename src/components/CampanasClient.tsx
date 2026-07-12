@@ -22,6 +22,12 @@ type Campaign = {
   ramp_anchor: string | null;
   recipient_ids: string[] | null;
   exclude_campaign_ids: string[] | null;
+  // Config de ritmo (para precargar el wizard al editar/relanzar). Vienen del select('*').
+  interval_min_sec: number | null;
+  interval_max_sec: number | null;
+  pause_every: number | null;
+  pause_seconds: number | null;
+  send_limit: number | null;
   delivered_count: number | null;
   read_count: number | null;
   failed_count: number | null;
@@ -227,6 +233,13 @@ export default function CampanasClient() {
   // de Meta (límite efectivo del día = min). El ancla la fija el server al lanzar.
   const [rampEnabled, setRampEnabled] = useState(false);
   const [rampWeeks,   setRampWeeks]   = useState<number[]>([20, 20, 30, 50]);
+  // Editar y relanzar (Pieza 3). editingId != null → el wizard está en modo edición
+  // (reusa la misma fila vía PUT). pendingEdit guarda la campaña mientras cargan de
+  // forma async la plantilla y el límite de Meta (los aplican los effects de abajo).
+  const [editingId,   setEditingId]   = useState<string | null>(null);
+  const [pendingEdit, setPendingEdit] = useState<Campaign | null>(null);
+  const editTplApplied    = useRef(false); // plantilla ya reaplicada en modo edición
+  const editMarginApplied = useRef(false); // marginPct ya derivado de daily_cap
   const [metaInfo,    setMetaInfo]    = useState<{ tier: string | null; metaLimit: number | null; usedToday: number } | null>(null);
   const [metaLoading, setMetaLoading] = useState(false);
   // Uso en vivo (destinatarios únicos del tenant en 24h) para el indicador "X/Y hoy"
@@ -413,6 +426,7 @@ export default function CampanasClient() {
     setMarginPct(80);
     setWindowFrom('08:00'); setWindowTo('20:00');
     setRampEnabled(false); setRampWeeks([20, 20, 30, 50]);
+    setEditingId(null); setPendingEdit(null);
     setError('');
   }
 
@@ -422,6 +436,75 @@ export default function CampanasClient() {
     fetchMetaLimit();
   }
   function closeWizard() { resetWizard(); setShowWizard(false); }
+
+  // ── Editar y relanzar (Pieza 3) ──────────────────────────────────────────────
+  // Abre el wizard precargado con los datos de una campaña DETENIDA. Los campos
+  // simples se setean acá; la plantilla (async: depende de que carguen) y el margen
+  // (depende del límite de Meta) los aplican los effects de abajo vía pendingEdit.
+  function openEditWizard(c: Campaign) {
+    resetWizard();
+    editTplApplied.current = false;
+    editMarginApplied.current = false;
+    setEditingId(c.id);
+    setPendingEdit(c);
+    setName(c.name);
+    setTemplateLang(c.template_language ?? 'es');
+
+    if (Array.isArray(c.recipient_ids) && c.recipient_ids.length > 0) {
+      setTargetMode('individual');
+      setSelectedIds(c.recipient_ids);
+    } else {
+      const m = (c.target_filter || '').match(/^inactivo_(\d+)d$/);
+      if (m) { setFilter('inactivo_dias'); setInactiveDays(Number(m[1])); }
+      else if (c.target_filter && c.target_filter !== 'seleccion') setFilter(c.target_filter);
+    }
+
+    setLineFilter(c.target_number_id ?? 'todas');
+    setIntervalMin(String(c.interval_min_sec ?? 1));
+    setIntervalMax(String(c.interval_max_sec ?? 3));
+    setPauseEvery(c.pause_every != null ? String(c.pause_every) : '');
+    setPauseSeconds(c.pause_seconds != null ? String(c.pause_seconds) : '');
+    setSendLimit(c.send_limit != null ? String(c.send_limit) : '');
+    setExcludeCampaignIds(Array.isArray(c.exclude_campaign_ids) ? c.exclude_campaign_ids : []);
+    setExcludePrevious(Array.isArray(c.exclude_campaign_ids) && c.exclude_campaign_ids.length > 0);
+
+    if (c.window_start_min != null) setWindowFrom(minToHHMM(c.window_start_min));
+    if (c.window_end_min != null) setWindowTo(c.window_end_min >= 1440 ? '00:00' : minToHHMM(c.window_end_min));
+
+    if (Array.isArray(c.ramp_schedule) && c.ramp_schedule.length > 0) {
+      setRampEnabled(true); setRampWeeks(c.ramp_schedule);
+    }
+
+    setShowWizard(true); setLaunchResult(null);
+    fetchRecipientCount(c.target_filter || 'todos', c.target_number_id ?? 'todas');
+    fetchMetaLimit();
+  }
+
+  // Reaplica la plantilla al editar: espera a que carguen las plantillas, selecciona la
+  // que matchea por nombre (trae body/botones) y restaura las variables guardadas.
+  useEffect(() => {
+    if (!pendingEdit || editTplApplied.current || templates.length === 0) return;
+    const t = templates.find((x) => x.name === pendingEdit.template_name);
+    if (t) {
+      selectTemplate(t);
+      const saved = Array.isArray(pendingEdit.template_variables) ? pendingEdit.template_variables : [];
+      if (saved.length) setTemplateVars(saved);
+    } else {
+      setTemplateName(pendingEdit.template_name ?? ''); // no está: al menos preservamos el nombre
+    }
+    editTplApplied.current = true;
+  }, [pendingEdit, templates]);
+
+  // Deriva marginPct del daily_cap guardado, cuando ya se leyó el límite real de Meta.
+  useEffect(() => {
+    if (!pendingEdit || editMarginApplied.current) return;
+    const lim = metaInfo?.metaLimit;
+    if (lim == null) return;
+    if (pendingEdit.daily_cap != null) {
+      setMarginPct(Math.min(100, Math.max(10, Math.round((pendingEdit.daily_cap / lim) * 100))));
+    }
+    editMarginApplied.current = true;
+  }, [pendingEdit, metaInfo]);
 
   function canAdvance(): boolean {
     if (step === 1) return !!name.trim() && !!templateName.trim();
@@ -484,8 +567,12 @@ export default function CampanasClient() {
         // Cronograma escalonado: solo si está activado. El server fija el ancla (lunes AR).
         ramp_schedule: rampEnabled ? rampWeeks.filter((n) => Number.isFinite(n) && n >= 1) : null,
       };
+      // Crear (POST) o, en modo edición, actualizar la MISMA fila (PUT) y relanzar.
+      // En PUT el backend saltea a los ya enviados (filtro por campaign_recipients).
       const res = await fetch('/api/campaigns', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createBody),
+        method: editingId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingId ? { campaignId: editingId, ...createBody } : createBody),
       });
       if (!res.ok) throw new Error(await res.text());
       const campaign = await res.json();
@@ -659,6 +746,14 @@ export default function CampanasClient() {
               );
             })}
           </div>
+
+          {editingId && (
+            <div style={{ background: '#eef6ee', border: '1px solid #cde8cd', borderRadius: '10px', padding: '10px 14px' }}>
+              <p style={{ fontSize: '12px', color: '#1a7a3a', fontWeight: 600, margin: 0, lineHeight: 1.5 }}>
+                ✏️ Estás editando una campaña detenida. Al relanzar, a quienes ya recibieron el mensaje NO se les reenvía; solo salen los pendientes y los que agregues.
+              </p>
+            </div>
+          )}
 
           {/* ── PASO 1: Plantilla ── */}
           {step === 1 && (
@@ -1134,7 +1229,7 @@ export default function CampanasClient() {
               </button>
             ) : (
               <button type="button" onClick={launch} disabled={launching} style={{ background: launching ? '#e0e0e0' : '#C8FF00', color: '#000', fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '10px', padding: '10px 22px', cursor: launching ? 'not-allowed' : 'pointer', opacity: launching ? 0.6 : 1 }}>
-                {launching ? (launchProgress || 'Lanzando…') : '🚀 Lanzar campaña'}
+                {launching ? (launchProgress || (editingId ? 'Relanzando…' : 'Lanzando…')) : (editingId ? '🔁 Relanzar campaña' : '🚀 Lanzar campaña')}
               </button>
             )}
           </div>
@@ -1223,7 +1318,18 @@ export default function CampanasClient() {
             </button>
           )}
 
-          {(c.status === 'borrador' || c.status === 'cancelada') && (
+          {c.status === 'cancelada' && (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button onClick={() => openEditWizard(c)} style={{ background: 'transparent', color: '#1a7a3a', fontWeight: 700, fontSize: '13px', border: '1px solid #86efac', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
+                ✏️ Editar y relanzar
+              </button>
+              <button onClick={() => handleDelete(c)} style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
+                Eliminar
+              </button>
+            </div>
+          )}
+
+          {c.status === 'borrador' && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
               Eliminar
             </button>

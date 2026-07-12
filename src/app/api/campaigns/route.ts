@@ -125,6 +125,92 @@ export async function POST(request: Request) {
   return NextResponse.json(data);
 }
 
+// Editar y relanzar una campaña DETENIDA (Pieza 3). Reusa la MISMA fila: actualiza
+// los campos editados y la deja en 'borrador' para que el cliente la relance con el
+// loop de /send. El salteo de "ya enviados" es gratis: runCampaignBatch filtra a los
+// que ya están en campaign_recipients de ESTA campaña, así que la corrida original
+// no se repite y solo se manda a los pendientes + los nuevos que se hayan agregado.
+export async function PUT(request: Request) {
+  const session = await getSessionAgent();
+  if (!session) return new NextResponse('No autenticado', { status: 401 });
+
+  const body = await request.json();
+  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+
+  if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
+  if (!name) return new NextResponse('Falta nombre', { status: 400 });
+
+  // Solo se edita una campaña DETENIDA (estado terminal reversible). Las demás no:
+  // borrador se edita creando; enviando/pausada hay que detenerla; completada ya cerró.
+  const { data: current } = await supabaseAdmin
+    .from('campaigns').select('status').eq('id', campaignId).eq('tenant_id', session.tenant_id).single();
+  if (!current) return new NextResponse('Campaña no encontrada', { status: 404 });
+  if (current.status !== 'cancelada') {
+    return new NextResponse('Solo se puede editar una campaña detenida', { status: 409 });
+  }
+
+  const excludeIds: string[] = Array.isArray(exclude_campaign_ids)
+    ? exclude_campaign_ids.filter((x: unknown) => typeof x === 'string') : [];
+  const recipientIds: string[] = Array.isArray(recipient_ids)
+    ? recipient_ids.filter((x: unknown) => typeof x === 'string') : [];
+
+  let targetNumberId: string | null = null;
+  if (target_number_id) {
+    const { data: num } = await supabaseAdmin
+      .from('whatsapp_numbers').select('id')
+      .eq('id', target_number_id).eq('tenant_id', session.tenant_id).maybeSingle();
+    if (!num) return new NextResponse('Línea inválida', { status: 400 });
+    targetNumberId = num.id;
+  }
+
+  const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
+  if (campaignType === 'texto_libre' && !message?.trim()) return new NextResponse('Falta mensaje', { status: 400 });
+  if (campaignType === 'template_meta' && !template_name?.trim()) return new NextResponse('Falta nombre de template', { status: 400 });
+
+  // Campos base + config, espejando el POST. Al relanzar la dejamos en 'borrador' y sin
+  // pausa; re-anclamos el ramp a HOY (si no, un relanzamiento días después caería en
+  // una semana equivocada del cronograma). NO tocamos sent_count: el salteo se apoya en
+  // campaign_recipients, no en ese contador.
+  const baseRow = {
+    name,
+    message:            campaignType === 'texto_libre' ? message : null,
+    target_filter:      target_filter ?? 'todos',
+    target_number_id:   targetNumberId,
+    status:             'borrador',
+    type:               campaignType,
+    template_name:      campaignType === 'template_meta' ? template_name.trim() : null,
+    template_language:  campaignType === 'template_meta' ? (template_language ?? 'es') : null,
+    template_variables: campaignType === 'template_meta' ? (template_variables ?? []) : null,
+    send_limit:         send_limit ? Number(send_limit) : null,
+  };
+  const configRow = {
+    interval_min_sec: interval_min_sec != null ? Number(interval_min_sec) : 1,
+    interval_max_sec: interval_max_sec != null ? Number(interval_max_sec) : 3,
+    pause_every:      pause_every ? Number(pause_every) : null,
+    pause_seconds:    pause_seconds ? Number(pause_seconds) : null,
+    daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
+    paused_reason:    null,
+    paused_at:        null,
+    ...windowCols(window_start_min, window_end_min),
+    ...rampCols(ramp_schedule),   // rampCols re-ancla ramp_anchor = lunes AR de hoy
+  };
+
+  const scope = (q: any) => q.eq('id', campaignId).eq('tenant_id', session.tenant_id);
+  const { data, error } = await scope(
+    supabaseAdmin.from('campaigns')
+      .update({ ...baseRow, ...configRow, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds }),
+  ).select('*').single();
+
+  // Fallback si alguna columna opcional no existe todavía (mismo criterio que el POST).
+  if (error) {
+    console.warn('[campaigns] Update con columnas opcionales falló, reintento sin ellas:', error.message);
+    const { data: retry, error: rErr } = await scope(supabaseAdmin.from('campaigns').update(baseRow)).select('*').single();
+    if (rErr) return new NextResponse(rErr.message, { status: 500 });
+    return NextResponse.json(retry);
+  }
+  return NextResponse.json(data);
+}
+
 export async function DELETE(request: Request) {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
