@@ -255,11 +255,14 @@ export default function CampanasClient() {
   const [historyOpen,  setHistoryOpen]  = useState(true);
   const [historyRange, setHistoryRange] = useState('1m');
 
-  const activeCampaigns = campaigns.filter((c) => c.status !== 'completada');
+  // Activas = en vuelo o borrador. Las terminales (completada/cancelada) van al Historial.
+  const activeCampaigns = campaigns.filter((c) => c.status !== 'completada' && c.status !== 'cancelada');
 
   async function fetchCampaigns() {
     try {
-      const res = await fetch('/api/campaigns');
+      // no-store: el poll debe ver siempre el estado fresco (evita cualquier respuesta
+      // servida del caché HTTP del navegador → el listado se actualiza en vivo).
+      const res = await fetch('/api/campaigns', { cache: 'no-store' });
       if (!res.ok) return;
       const list = await res.json();
       setCampaigns(Array.isArray(list) ? list : []);
@@ -268,7 +271,7 @@ export default function CampanasClient() {
       const anySending = Array.isArray(list) && list.some((c: Campaign) => c.status === 'enviando' && c.daily_cap != null);
       if (anySending) {
         try {
-          const u = await fetch('/api/campaigns/usage');
+          const u = await fetch('/api/campaigns/usage', { cache: 'no-store' });
           if (u.ok) { const d = await u.json(); setUsageToday(typeof d?.usedToday === 'number' ? d.usedToday : null); }
         } catch {}
       }
@@ -582,6 +585,10 @@ export default function CampanasClient() {
       });
       if (!res.ok) throw new Error(await res.text());
       const campaign = await res.json();
+
+      // Refetch inmediato: que la card (y el botón Detener) aparezca al toque en el
+      // listado en vez de esperar al poll de 10s.
+      fetchCampaigns();
 
       // Auto-resume: /send corta por presupuesto de tiempo en campañas grandes y
       // devuelve done:false; lo re-llamamos hasta done:true (saltea a los ya
@@ -1336,17 +1343,6 @@ export default function CampanasClient() {
             </button>
           )}
 
-          {c.status === 'cancelada' && (
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button onClick={() => openEditWizard(c)} style={{ background: 'transparent', color: '#1a7a3a', fontWeight: 700, fontSize: '13px', border: '1px solid #86efac', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
-                ✏️ Editar y relanzar
-              </button>
-              <button onClick={() => handleDelete(c)} style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
-                Eliminar
-              </button>
-            </div>
-          )}
-
           {c.status === 'borrador' && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
               Eliminar
@@ -1359,14 +1355,15 @@ export default function CampanasClient() {
       {(() => {
         const rangeDays = HISTORY_RANGES.find((r) => r.value === historyRange)?.days ?? 30;
         const rangeStart = Date.now() - rangeDays * 86_400_000;
-        const completadas = campaigns.filter((c) => c.status === 'completada' && new Date(c.created_at).getTime() >= rangeStart);
+        // Terminales del período: completadas (mandaron todo) + canceladas (detenidas).
+        const terminadas = campaigns.filter((c) => (c.status === 'completada' || c.status === 'cancelada') && new Date(c.created_at).getTime() >= rangeStart);
 
         return (
           <div style={{ background: '#fff', borderRadius: '16px', boxShadow: '0 2px 10px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
             <button onClick={() => setHistoryOpen(!historyOpen)} style={{ width: '100%', background: 'none', border: 'none', padding: '16px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', cursor: 'pointer', textAlign: 'left' }}>
               <span style={{ fontSize: '15px', fontWeight: 800, color: '#000' }}>
                 📜 Historial de envíos
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#999', marginLeft: '8px' }}>{completadas.length} campaña{completadas.length !== 1 ? 's' : ''}</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#999', marginLeft: '8px' }}>{terminadas.length} campaña{terminadas.length !== 1 ? 's' : ''}</span>
               </span>
               <span style={{ fontSize: '12px', color: '#999' }}>{historyOpen ? '▲' : '▼'}</span>
             </button>
@@ -1381,23 +1378,43 @@ export default function CampanasClient() {
                   ))}
                 </div>
 
-                {completadas.length === 0 ? (
-                  <p style={{ textAlign: 'center', padding: '20px 0', color: '#999', fontSize: '13px', margin: 0 }}>No hay campañas completadas en este período.</p>
+                {terminadas.length === 0 ? (
+                  <p style={{ textAlign: 'center', padding: '20px 0', color: '#999', fontSize: '13px', margin: 0 }}>No hay campañas en este período.</p>
                 ) : (
-                  completadas.map((c) => {
+                  terminadas.map((c) => {
                     const sent = c.sent_count ?? c.recipient_ids?.length ?? 0;
                     const noCount = c.btn2_count ?? 0;
                     return (
                       <div key={c.id} style={{ background: '#F8F8F8', borderRadius: '12px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                           <div>
-                            <p style={{ fontSize: '14px', fontWeight: 800, color: '#000', margin: 0 }}>{c.name}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <p style={{ fontSize: '14px', fontWeight: 800, color: '#000', margin: 0 }}>{c.name}</p>
+                              {(() => {
+                                const b = c.status === 'cancelada'
+                                  ? { bg: '#f3d9d9', fg: '#a33a3a', label: 'Detenida' }
+                                  : { bg: '#e8fff0', fg: '#1a7a3a', label: 'Completa' };
+                                return (
+                                  <span style={{ background: b.bg, color: b.fg, fontSize: '10px', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap' }}>
+                                    {b.label}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                             <p style={{ fontSize: '12px', color: '#999', margin: '3px 0 0 0' }}>
                               {new Date(c.created_at).toLocaleDateString('es-AR')}
                               {c.template_name && <> · <code>{c.template_name}</code></>}
                             </p>
                           </div>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {c.status === 'cancelada' && (
+                              <button
+                                onClick={() => openEditWizard(c)}
+                                style={{ background: 'transparent', color: '#1a7a3a', fontWeight: 700, fontSize: '12px', border: '1px solid #86efac', borderRadius: '10px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              >
+                                ✏️ Editar y relanzar
+                              </button>
+                            )}
                             {noCount > 0 && (
                               <button
                                 onClick={() => handleDeleteNo(c)}
