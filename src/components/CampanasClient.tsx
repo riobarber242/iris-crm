@@ -536,7 +536,7 @@ export default function CampanasClient() {
   }
 
   async function handleDelete(campaign: Campaign) {
-    if (!confirm(`¿Eliminar la campaña "${campaign.name}"?`)) return;
+    if (!confirm(`¿Eliminar la campaña "${campaign.name}"? Se borra el registro y sus estadísticas. Los mensajes ya enviados a los clientes no se tocan. No se puede deshacer.`)) return;
     try {
       await fetch('/api/campaigns', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -1223,7 +1223,7 @@ export default function CampanasClient() {
             </button>
           )}
 
-          {c.status === 'borrador' && (
+          {(c.status === 'borrador' || c.status === 'cancelada') && (
             <button onClick={() => handleDelete(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '13px', border: '1px solid #f08080', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
               Eliminar
             </button>
@@ -1273,15 +1273,23 @@ export default function CampanasClient() {
                               {c.template_name && <> · <code>{c.template_name}</code></>}
                             </p>
                           </div>
-                          {noCount > 0 && (
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {noCount > 0 && (
+                              <button
+                                onClick={() => handleDeleteNo(c)}
+                                disabled={deletingNo === c.id}
+                                style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: deletingNo === c.id ? 'not-allowed' : 'pointer', opacity: deletingNo === c.id ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                              >
+                                {deletingNo === c.id ? 'Eliminando…' : `🗑 Eliminar los que dijeron No (${noCount})`}
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleDeleteNo(c)}
-                              disabled={deletingNo === c.id}
-                              style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: deletingNo === c.id ? 'not-allowed' : 'pointer', opacity: deletingNo === c.id ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                              onClick={() => handleDelete(c)}
+                              style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                             >
-                              {deletingNo === c.id ? 'Eliminando…' : `🗑 Eliminar los que dijeron No (${noCount})`}
+                              Eliminar campaña
                             </button>
-                          )}
+                          </div>
                         </div>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                           <Chip label="enviados"   value={sent}                color="#555"    bg="#ececec" />

@@ -135,9 +135,20 @@ export async function DELETE(request: Request) {
   const { data: campaign } = await supabaseAdmin
     .from('campaigns').select('status').eq('id', campaignId).eq('tenant_id', session.tenant_id).single();
   if (!campaign) return new NextResponse('No encontrada', { status: 404 });
-  if (campaign.status !== 'borrador') {
-    return new NextResponse('Solo se pueden eliminar campañas en borrador', { status: 409 });
+  // Solo se borra un estado TERMINAL (borrador nunca lanzó; cancelada/completada ya
+  // no envían). Una campaña en curso o pausada hay que detenerla primero (Pieza 1).
+  if (campaign.status === 'enviando' || campaign.status === 'pausada') {
+    return new NextResponse('Detené la campaña antes de eliminarla', { status: 409 });
   }
+
+  // Limpieza best-effort de las filas hijas (no hay FK con cascade en el esquema).
+  // Los mensajes de la conversación (tabla messages) NO se tocan: el historial del
+  // cliente se conserva. Si alguna tabla no existe, no abortamos el borrado.
+  const { error: recErr } = await supabaseAdmin.from('campaign_recipients').delete().eq('campaign_id', campaignId);
+  if (recErr) console.warn('[campaigns] No se pudieron borrar campaign_recipients:', recErr.message);
+  const { error: cmsErr } = await supabaseAdmin
+    .from('campaign_message_status').delete().eq('campaign_id', campaignId).eq('tenant_id', session.tenant_id);
+  if (cmsErr) console.warn('[campaigns] No se pudieron borrar campaign_message_status:', cmsErr.message);
 
   const { error } = await supabaseAdmin.from('campaigns').delete().eq('id', campaignId).eq('tenant_id', session.tenant_id);
   if (error) return new NextResponse(error.message, { status: 500 });
