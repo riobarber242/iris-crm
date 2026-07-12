@@ -21,11 +21,11 @@ import { runCampaignBatch, tenantUsageSince, withinWindow, rampLimitToday, campa
 // IMPORTANTE — por qué UNA sola tanda por corrida:
 // runCampaignBatch tiene su propio presupuesto interno de 270s; si arrancáramos
 // varias podríamos exceder maxDuration (300s) y que Vercel mate la función a mitad
-// de una tanda. Los intentos se registran en campaign_recipients al FINAL de la
-// tanda: si se cortara antes, esos contactos ya recibieron el mensaje pero no
-// quedarían registrados → doble envío en la próxima corrida. Con una tanda por
-// corrida siempre entra en el tiempo de ejecución. El cron horario continúa las
-// campañas restantes en las siguientes corridas.
+// de una tanda. Cada intento se registra en campaign_recipients APENAS se manda (no
+// al final de la tanda), así que aunque un kill duro corte la función a mitad, los ya
+// enviados quedan registrados y no se reenvían. Además el loop reserva headroom para
+// el sleep, de modo que la tanda cierra su estado dentro del tiempo de ejecución. El
+// cron continúa las campañas restantes en las siguientes corridas.
 export const maxDuration = 300;
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;

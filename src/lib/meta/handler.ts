@@ -333,6 +333,18 @@ async function processStatus(status: any) {
   if (!wamid || !newStat) return;
   if (!['sent', 'delivered', 'read', 'failed'].includes(newStat)) return;
 
+  // Detalle del error de Meta (solo en 'failed'). Meta manda errors:[{code,title,
+  // message,error_data:{details}}]. Lo capturamos para explicar POR QUÉ falló un envío
+  // (número no está en WhatsApp, plantilla pausada, etc.). Antes se descartaba y el
+  // fallo quedaba sin razón en ningún lado.
+  const metaErr = Array.isArray(status?.errors) && status.errors.length > 0 ? status.errors[0] : null;
+  const errCode  = metaErr?.code != null ? Number(metaErr.code) : null;
+  const errTitle = (metaErr?.title ?? null) as string | null;
+  const errMsg   = (metaErr?.error_data?.details ?? metaErr?.message ?? null) as string | null;
+  if (newStat === 'failed') {
+    console.warn(`[status] wamid=${wamid} FAILED code=${errCode ?? '?'} title="${errTitle ?? ''}" details="${errMsg ?? ''}"`);
+  }
+
   const { error } = await supabaseAdmin
     .from('messages')
     .update({ status: newStat })
@@ -367,6 +379,17 @@ async function processStatus(status: any) {
       if (counterCol) {
         const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col: counterCol });
         if (incErr) console.warn(`[status] increment_campaign_counter ${counterCol} falló:`, incErr.message);
+      }
+
+      // Persistir el motivo del fallo (columnas nuevas: ver supabase-campaign-message-error.sql).
+      // Update aparte y best-effort: si las columnas todavía no están migradas, solo falla
+      // ESTO (queda en el log de arriba igual), no el tracking base ni el contador.
+      if (newStat === 'failed' && metaErr) {
+        const { error: errUpd } = await supabaseAdmin
+          .from('campaign_message_status')
+          .update({ error_code: errCode, error_title: errTitle, error_message: errMsg })
+          .eq('id', cms.id);
+        if (errUpd) console.warn('[status] No se guardó el detalle del error (¿columnas error_* migradas?):', errUpd.message);
       }
     }
   } catch (err) {

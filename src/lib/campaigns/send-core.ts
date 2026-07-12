@@ -380,7 +380,8 @@ export async function runCampaignBatch(
   let timedOut = false;
   let pauseReason: 'daily_limit' | 'fuera_de_horario' | 'cupo_diario' | null = null;
 
-  for (const contact of contacts) {
+  for (let i = 0; i < contacts.length; i++) {
+    const contact = contacts[i];
     if (Date.now() - startedAt > TIME_BUDGET_MS) { timedOut = true; break; }
 
     // 1) Compuerta de HORARIO (primero: en el caso combinado, el banner
@@ -476,22 +477,35 @@ export async function runCampaignBatch(
     // que el progreso avance aunque un contacto falle siempre.
     attemptedIds.push(contact.id);
 
-    // Pausa automática cada N mensajes; si no, intervalo aleatorio entre min y max.
-    if (pauseEvery > 0 && pauseSecs > 0 && sent > 0 && sent % pauseEvery === 0) {
-      await sleep(pauseSecs * 1000);
-    } else {
-      const delayMs = (intervalMin + Math.random() * (intervalMax - intervalMin)) * 1000;
-      await sleep(delayMs);
+    // Registrar el destinatario YA (no al final de la tanda): si la función muere a
+    // mitad —p.ej. Vercel la mata al llegar a maxDuration—, los que ya se mandaron
+    // quedan igual en campaign_recipients, así la reanudación NO se los reenvía (evita
+    // doble envío). Antes se insertaban todos juntos al final: una tanda cortada por un
+    // kill duro perdía ese registro y esos contactos recibían el mensaje dos veces.
+    // Best-effort: si la tabla no existe, seguimos (el resto del flujo no depende de ella).
+    {
+      const { error: recErr } = await supabaseAdmin
+        .from('campaign_recipients')
+        .insert({ campaign_id: campaignId, contact_id: contact.id });
+      if (recErr) console.warn('[campaign send] No se registró destinatario (¿tabla campaign_recipients?):', recErr.message);
     }
-  }
 
-  // Registrar los intentos de ESTA tanda: sirve para reanudar (arriba) y para que
-  // futuras campañas puedan excluir a los ya contactados. Si la tabla no existe, no rompe.
-  if (attemptedIds.length > 0) {
-    const { error: recErr } = await supabaseAdmin
-      .from('campaign_recipients')
-      .insert(attemptedIds.map((cid) => ({ campaign_id: campaignId, contact_id: cid })));
-    if (recErr) console.warn('[campaign send] No se registraron destinatarios (¿tabla campaign_recipients?):', recErr.message);
+    // Pausa entre mensajes, SOLO si quedan más por mandar. Antes de dormir chequeamos
+    // que la espera entre a tiempo dentro del presupuesto de la tanda: si el próximo
+    // sleep cruzaría TIME_BUDGET_MS, cortamos acá sin dormir. Clave con intervalos
+    // grandes (decenas de segundos): el chequeo de tiempo del tope del loop corre
+    // ANTES del sleep, así que sin esto un sleep de 45–90s podía empujar la función más
+    // allá de maxDuration (300s) y hacer que Vercel la matara DURANTE el sleep, dejando
+    // la tanda huérfana en 'enviando' (nunca llegaba al cierre de estado de abajo).
+    const moreToGo = i < contacts.length - 1;
+    if (moreToGo) {
+      const isPause = pauseEvery > 0 && pauseSecs > 0 && sent > 0 && sent % pauseEvery === 0;
+      const sleepMs = isPause
+        ? pauseSecs * 1000
+        : (intervalMin + Math.random() * (intervalMax - intervalMin)) * 1000;
+      if (Date.now() - startedAt + sleepMs > TIME_BUDGET_MS) { timedOut = true; break; }
+      await sleep(sleepMs);
+    }
   }
 
   const attemptedTotal = attemptedBefore + attemptedIds.length;   // intentos acumulados
