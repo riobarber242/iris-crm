@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 
 // POST /api/profile/avatar — subir/cambiar la foto del PROPIO perfil.
 // multipart/form-data con campo "file". Valida tipo y tamaño en backend
@@ -62,6 +63,21 @@ export async function POST(request: Request) {
       .upload(path, bytes, { contentType: file.type, upsert: true }));
   }
   if (upErr) return NextResponse.json({ error: `No se pudo subir la imagen: ${upErr.message}` }, { status: 500 });
+
+  // Thumb pre-generado (best-effort, en after()): webp chico sibling del avatar para
+  // servirlo estático en ProfileCard en vez de transformar al vuelo. El borrado de
+  // fotos previas de arriba ya limpia los .thumb.webp viejos. Si falla, cae al original.
+  after(async () => {
+    try {
+      const thumb = await makeThumb(bytes);
+      if (thumb) {
+        await supabaseAdmin.storage.from(BUCKET)
+          .upload(thumbPathFor(path), thumb, { contentType: 'image/webp', upsert: true });
+      }
+    } catch (err) {
+      console.warn('[profile/avatar] No se pudo generar/subir el thumb:', err);
+    }
+  });
 
   const { data: pub } = supabaseAdmin.storage.from(BUCKET).getPublicUrl(path);
   const avatar_url = pub.publicUrl;
