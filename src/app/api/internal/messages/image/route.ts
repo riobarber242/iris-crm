@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireInternalMember, resolveRoom, insertInternalMessage } from '@/lib/internal-chat';
+import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 
 // POST /api/internal/messages/image — imagen en el chat interno.
 // multipart/form-data: file, caption?, roomId?. Sube al bucket 'comprobantes'
@@ -31,6 +32,21 @@ export async function POST(req: NextRequest) {
       .upload(path, buffer, { contentType: file.type, upsert: true });
 
     if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 });
+
+    // Thumb pre-generado (best-effort, en after() para no sumar latencia): webp chico
+    // sibling del original. Si falla, el front cae al original vía onError.
+    after(async () => {
+      try {
+        const thumb = await makeThumb(buffer);
+        if (thumb) {
+          await supabaseAdmin.storage
+            .from('comprobantes')
+            .upload(thumbPathFor(path), thumb, { contentType: 'image/webp', upsert: true });
+        }
+      } catch (err) {
+        console.warn('[internal/messages/image] No se pudo generar/subir el thumb:', err);
+      }
+    });
 
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
     const content = JSON.stringify({ _type: 'image', url: publicUrl, caption });
