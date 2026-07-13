@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { isCajaEnabled, isCasinoEnabled, cobrarSueldo, crearDescarga, cerrarTurno } from '@/lib/caja';
 import { postInternalSystemMessage } from '@/lib/internal-chat';
 import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
+import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -382,6 +383,22 @@ export async function POST(request: Request) {
     const { error: upErr } = await supabaseAdmin.storage
       .from('comprobantes').upload(path, buffer, { contentType: file.type, upsert: true });
     if (upErr) return new NextResponse('No se pudo subir la foto del comprobante', { status: 500 });
+    // Thumb pre-generado (best-effort, en after()): solo si es imagen raster (la
+    // foto puede venir como PDF). Si falla, el front cae al original.
+    if ((file.type || '').startsWith('image/')) {
+      after(async () => {
+        try {
+          const thumb = await makeThumb(buffer);
+          if (thumb) {
+            await supabaseAdmin.storage
+              .from('comprobantes')
+              .upload(thumbPathFor(path), thumb, { contentType: 'image/webp', upsert: true });
+          }
+        } catch (err) {
+          console.warn('[caja/operador] No se pudo generar/subir el thumb:', err);
+        }
+      });
+    }
     const imageUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
 
     const r = await crearDescarga(session, monto, imageUrl);
