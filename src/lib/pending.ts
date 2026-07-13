@@ -37,6 +37,12 @@ export function classifyPending(opts: {
   // El operador humano fue el último en hablar → la conversación ya está atendida.
   if (lastRole === 'human') return null;
 
+  // Un evento de sistema (role 'system', p.ej. el chip "✅ Apretó: …" de un click
+  // de botón de campaña) NO es algo que un humano deba responder. Sin esto, cada
+  // click de una campaña marcaría la conversación como no leída e inundaría la
+  // lista de pendientes durante un envío masivo.
+  if (lastRole === 'system') return null;
+
   // Un mensaje automático del sistema (bot u offline, role 'assistant') como
   // ÚLTIMA palabra NO es rojo: todavía no lo atendió ningún humano. Queda 🟠
   // naranja aunque sea un cliente conocido (known_client) o tenga human_taken

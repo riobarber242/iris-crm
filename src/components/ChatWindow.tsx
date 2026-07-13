@@ -135,6 +135,17 @@ function parseMedia(raw: string): MediaContent | null {
   return null;
 }
 
+// Evento de sistema dentro del hilo (NO es una burbuja): p.ej. el click de un
+// botón de plantilla de campaña. Se renderiza como chip centrado. content es
+// JSON { _type:'campaign_event', text, payload }.
+function parseCampaignEvent(raw: string): { text: string | null; payload?: string } | null {
+  try {
+    const p = JSON.parse(raw);
+    if (p?._type === 'campaign_event') return { text: p.text ?? null, payload: p.payload };
+  } catch {}
+  return null;
+}
+
 function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -895,6 +906,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
         m,
         i,
         media:    parseMedia(m.content),
+        event:    parseCampaignEvent(m.content),
         body:     classifyBody(m.content),
         rel:      m.created_at ? formatRelativeTime(m.created_at) : '',
         fullDate: m.created_at ? new Date(m.created_at).toLocaleString('es-AR') : undefined,
@@ -919,7 +931,21 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
             <button type="button" onClick={() => fetchMessages()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontWeight: 700, textDecoration: 'underline', fontSize: '13px', padding: 0 }}>Reintentar</button>
           </div>
         )}
-        {rows.map(({ m, i, media, body, rel, fullDate, text }) => {
+        {rows.map(({ m, i, media, body, rel, fullDate, text, event }) => {
+          // Evento de sistema (p.ej. click de botón de campaña): chip centrado, no
+          // burbuja. Cae en su lugar cronológico dentro del hilo (por created_at).
+          if (event) {
+            return (
+              <div key={m.id ?? i} style={{ alignSelf: 'center', maxWidth: '85%', margin: '2px 0' }}>
+                <div style={{
+                  background: '#EDEDED', color: '#555', borderRadius: '12px',
+                  padding: '5px 12px', fontSize: '12px', fontWeight: 600, textAlign: 'center',
+                }}>
+                  ✅ Apretó: {event.text || 'el botón'}
+                </div>
+              </div>
+            );
+          }
           const isBot   = m.role === 'assistant';
           const isHuman = m.role === 'human';
           // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.

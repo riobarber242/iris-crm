@@ -470,7 +470,7 @@ async function processMessage(
       try {
         const { data: cms } = await supabaseAdmin
           .from('campaign_message_status')
-          .select('id, campaign_id, btn_payload')
+          .select('id, campaign_id, btn_payload, contact_id, tenant_id')
           .eq('wamid', ctxWamid)
           .maybeSingle();
         if (cms?.campaign_id) {
@@ -484,6 +484,19 @@ async function processMessage(
             if (col) {
               const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col });
               if (incErr) console.warn(`[button] increment_campaign_counter ${col} falló:`, incErr.message);
+            }
+            // Además del contador agregado, registrar el click como evento visible
+            // en la conversación del contacto: un chip centrado "✅ Apretó: …". Solo
+            // en el PRIMER click (idempotente ante reenvíos del webhook / re-clicks).
+            // insertMessage emite el Broadcast Fase 2 → aparece en vivo en el chat.
+            if (cms.contact_id) {
+              const { error: evErr } = await insertMessage({
+                contact_id: cms.contact_id,
+                role:       'system',
+                content:    JSON.stringify({ _type: 'campaign_event', text: btnText || null, payload }),
+                tenant_id:  cms.tenant_id,
+              });
+              if (evErr) console.warn('[button] No se pudo insertar el evento de click en el chat:', evErr.message);
             }
           }
         }
