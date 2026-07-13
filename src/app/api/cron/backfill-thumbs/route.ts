@@ -8,10 +8,17 @@ import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 // front (parte 5) las imágenes viejas caerían al original full-res (egress) hasta
 // re-subirlas. Genera el thumb con sharp (NO usa render/image) → cero transforms.
 //
-// Uso (solo admin, scopeado a su tenant). Se llama por lotes y se re-llama con el
-// nextCursor hasta que venga null, una fuente por vez:
-//   POST /api/admin/backfill-thumbs?source=comprobantes&limit=100
-//   POST /api/admin/backfill-thumbs?source=messages&limit=100&cursor=<created_at>
+// SCOPE GLOBAL, a propósito: la optimización aplica a TODA la plataforma, no al
+// tenant de quien lo dispara. Por eso vive bajo /api/cron (exento de cookie en
+// middleware) con la misma auth dual que /api/cron/resume-campaigns: staff logueado
+// (para correr a mano) o Authorization: Bearer ${CRON_SECRET} (headless). En ningún
+// caso el tenant de la sesión filtra los datos: supabaseAdmin (service-role) lee
+// todos los tenants.
+//
+// Uso — se llama por lotes y se re-llama con el nextCursor hasta que venga null,
+// una fuente por vez:
+//   POST /api/cron/backfill-thumbs?source=comprobantes&limit=100
+//   POST /api/cron/backfill-thumbs?source=messages&limit=100&cursor=<created_at>
 //   ... source ∈ comprobantes | messages | internal | avatars
 //
 // Idempotente/resumable: si el thumb ya existe, saltea. upsert:true.
@@ -86,29 +93,32 @@ function imageUrlFromContent(content: string | null): string | null {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSessionAgent();
-  if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
-  if (session.role !== 'admin') return NextResponse.json({ error: 'Solo admin' }, { status: 403 });
+  // Auth dual (igual que /api/cron/resume-campaigns): staff logueado para correr a
+  // mano, o el secret headless. NO depende del tenant de la sesión: el scope es global.
+  const session  = await getSessionAgent();
+  const isStaff  = !!session && (session.role === 'admin' || session.role === 'agent');
+  const secret   = process.env.CRON_SECRET;
+  const secretOk = !!secret && req.headers.get('authorization') === `Bearer ${secret}`;
+  if (!isStaff && !secretOk) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
   const source = searchParams.get('source') ?? 'comprobantes';
   const limit  = Math.min(Math.max(Number(searchParams.get('limit') ?? 100), 1), 500);
   const cursor = searchParams.get('cursor'); // created_at ISO del último procesado
-  const tid    = session.tenant_id;
 
   let urls: (string | null)[] = [];
   let nextCursor: string | null = null;
 
   if (source === 'avatars') {
-    // Tabla chica: sin cursor, todos los avatares del tenant de una.
+    // Tabla chica: sin cursor, todos los avatares de TODOS los tenants de una.
     const { data, error } = await supabaseAdmin
-      .from('agents').select('avatar_url').eq('tenant_id', tid).not('avatar_url', 'is', null);
+      .from('agents').select('avatar_url').not('avatar_url', 'is', null);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     urls = (data ?? []).map((r: any) => r.avatar_url);
   } else if (source === 'comprobantes') {
     let q = supabaseAdmin
       .from('comprobantes').select('image_url, created_at')
-      .eq('tenant_id', tid).not('image_url', 'is', null);
+      .not('image_url', 'is', null);
     if (cursor) q = q.lt('created_at', cursor);
     const { data, error } = await q.order('created_at', { ascending: false }).limit(limit);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -118,7 +128,7 @@ export async function POST(req: NextRequest) {
     const table = source === 'messages' ? 'messages' : 'internal_messages';
     let q = supabaseAdmin
       .from(table).select('content, created_at')
-      .eq('tenant_id', tid).like('content', '%"_type":"image"%');
+      .like('content', '%"_type":"image"%');
     if (cursor) q = q.lt('created_at', cursor);
     const { data, error } = await q.order('created_at', { ascending: false }).limit(limit);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
