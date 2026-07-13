@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { broadcastComprobanteChange } from '@/lib/realtime-broadcast';
+import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 
 // Carga manual de un pago hecho por el agente desde afuera (premio grande pagado
 // por fuera del sistema). SOLO admin/agent. Sube la imagen del comprobante y
@@ -42,6 +43,22 @@ export async function POST(req: NextRequest) {
       .upload(path, buffer, { contentType: file.type || 'image/jpeg', upsert: true });
     if (uploadError) {
       return new NextResponse(`No se pudo subir la imagen: ${uploadError.message}`, { status: 500 });
+    }
+    // Thumb pre-generado (best-effort, en after()): solo si es imagen raster (el
+    // comprobante puede venir como PDF). Si falla, el front cae al original.
+    if ((file.type || '').startsWith('image/')) {
+      after(async () => {
+        try {
+          const thumb = await makeThumb(buffer);
+          if (thumb) {
+            await supabaseAdmin.storage
+              .from('comprobantes')
+              .upload(thumbPathFor(path), thumb, { contentType: 'image/webp', upsert: true });
+          }
+        } catch (err) {
+          console.warn('[pago-manual] No se pudo generar/subir el thumb:', err);
+        }
+      });
     }
     imageUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
   }
