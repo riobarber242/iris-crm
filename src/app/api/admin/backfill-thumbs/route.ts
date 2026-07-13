@@ -48,7 +48,7 @@ async function ensureThumb(url: string | null | undefined): Promise<Outcome> {
   try {
     // ¿Ya existe el thumb? → saltear (resume/re-run barato).
     const { data: existing } = await supabaseAdmin.storage.from(loc.bucket).list(dir, { search: thumbName, limit: 1 });
-    if (existing?.some((f) => f.name === thumbName)) return 'skip';
+    if (existing?.some((f: { name: string }) => f.name === thumbName)) return 'skip';
 
     // Bajar el original, redimensionar, subir el thumb.
     const { data: orig, error: dlErr } = await supabaseAdmin.storage.from(loc.bucket).download(loc.path);
