@@ -9,6 +9,8 @@ import { decideBotResponse, BOT_FLOW_STATES } from './bot-decision';
 import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
 import { insertMessage } from '../messages';
+import { after } from 'next/server';
+import { makeThumb, thumbPathFor } from '../thumb-generate';
 
 // Tenant principal (fallback cuando no se puede resolver por whatsapp_phone_id).
 const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -228,6 +230,26 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
   }
 
   console.log(`[saveComprobanteImage] Step3 ✓ archivo guardado en Storage`);
+
+  // Thumb pre-generado (best-effort, FUERA del camino de respuesta): solo para
+  // imágenes raster (fotos y stickers → image/*). PDF/audio/video quedan sin thumb
+  // (no se listan como miniatura). Corre en after() para NO sumar latencia al
+  // webhook —que es el path más sensible—; la descarga+subida del original ya fue
+  // bloqueante porque el mensaje la necesita. Si falla, el front cae al original.
+  if (contentType.startsWith('image/')) {
+    after(async () => {
+      try {
+        const thumb = await makeThumb(buffer);
+        if (thumb) {
+          await supabaseAdmin.storage
+            .from(COMPROBANTES_BUCKET)
+            .upload(thumbPathFor(filePath), thumb, { contentType: 'image/webp', upsert: true });
+        }
+      } catch (err) {
+        console.warn('[saveComprobanteImage] No se pudo generar/subir el thumb:', err);
+      }
+    });
+  }
 
   // ── Step 4: build permanent public URL ───────────────────────────────────
   // Format: {SUPABASE_URL}/storage/v1/object/public/comprobantes/{filePath}
