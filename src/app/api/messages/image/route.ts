@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { sendWhatsAppImage } from '@/lib/meta/client';
 import { insertMessage } from '@/lib/messages';
+import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,6 +42,25 @@ export async function POST(req: NextRequest) {
     if (uploadError) {
       return NextResponse.json({ error: uploadError.message }, { status: 500 });
     }
+
+    // Thumb pre-generado (best-effort, FUERA del camino de respuesta): un webp chico
+    // sibling del original para servir como objeto estático en vez de pedir la
+    // transformación al vuelo. after() lo corre una vez enviada la respuesta —Vercel
+    // mantiene viva la función hasta que termina— así no suma latencia al envío. Si
+    // falla, seguimos sin thumb (el front cae al original vía onError).
+    // Ver src/lib/thumb-generate.ts.
+    after(async () => {
+      try {
+        const thumb = await makeThumb(buffer);
+        if (thumb) {
+          await supabaseAdmin.storage
+            .from('comprobantes')
+            .upload(thumbPathFor(path), thumb, { contentType: 'image/webp', upsert: true });
+        }
+      } catch (err) {
+        console.warn('[messages/image] No se pudo generar/subir el thumb:', err);
+      }
+    });
 
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
 
