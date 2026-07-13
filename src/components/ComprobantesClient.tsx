@@ -156,8 +156,16 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
               loading="lazy"
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-                (e.target as HTMLImageElement).parentElement!.innerHTML =
+                const img = e.currentTarget;
+                if (img.dataset.fellback !== '1') {
+                  // 1er fallo: el thumb estático no existe → probar el original full-res.
+                  img.dataset.fellback = '1';
+                  img.src = item.image_url!;
+                  return;
+                }
+                // 2do fallo (el original tampoco carga) → placeholder "Sin imagen".
+                img.style.display = 'none';
+                img.parentElement!.innerHTML =
                   '<span style="font-size:11px;color:#aaa;padding:4px;text-align:center;word-break:break-all;">Sin imagen</span>';
               }}
             />

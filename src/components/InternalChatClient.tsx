@@ -9,7 +9,7 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { useAuth } from '@/components/AuthProvider';
 import { Avatar } from '@/components/ProfileCard';
-import { thumbUrl } from '@/lib/thumb';
+import { thumbUrl, fallbackToOriginal } from '@/lib/thumb';
 import { searchEmojisEs } from '@/lib/emoji-es';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -807,9 +807,11 @@ export default function InternalChatClient() {
                 {media?._type === 'image' ? (
                   <div>
                     <img
-                      // Thumbnail redimensionado; el full-res se ve al hacer click (lightbox).
+                      // Miniatura estática (.thumb.webp); el full-res se ve al hacer
+                      // click. onError cae al original si falta el thumb.
                       src={thumbUrl(media.url, 480) ?? media.url}
                       alt={media.caption || 'imagen'}
+                      onError={fallbackToOriginal(media.url)}
                       style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
                       onLoad={handleMediaLoad}
                       onClick={() => setLightboxUrl(media.url)}

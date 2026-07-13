@@ -1,24 +1,32 @@
-// Thumbnails vía la transformación de imágenes de Supabase Storage (endpoint
-// `render/image`, disponible en el plan Pro del proyecto). Reescribe la URL
-// pública `/storage/v1/object/public/<bucket>/<path>` a
-// `/storage/v1/render/image/public/<bucket>/<path>?width=..&quality=..`, que
-// sirve una versión redimensionada (KBs) en vez de la foto full-res.
+// Miniaturas servidas como objetos ESTÁTICOS pre-generados en Storage, no vía la
+// transformación al vuelo de Supabase (render/image). Cada imagen se sube junto a
+// su sibling `<path>.thumb.webp` (~400px) en los 6 puntos de subida (ver
+// thumb-generate.ts); acá el front solo deriva esa ruta. Motivo: render/image se
+// factura por imagen ORIGEN transformada por ciclo; los .webp estáticos no cuentan
+// como transformación (solo egress/storage) → el contador de transforms cae a ~0.
 //
-// El driver de egress era la lista de Comprobantes: renderizaba CADA imagen
-// full-res (~61 KB prom, hasta 806 KB) en un thumbnail de 88px. Con esto cada
-// miniatura pesa ~11 KB. La imagen completa se sigue sirviendo on-demand (el
-// lightbox / click usa la URL original).
+// thumbUrl: URL pública `/storage/v1/object/public/<bucket>/<path>` → la del thumb
+// `…/<path>.thumb.webp`. Cualquier otra URL (PDF, externa, data:) se devuelve
+// intacta. Los args width/quality quedan por compatibilidad de firma con los
+// call-sites (un único tamaño para todos); ya no se usan.
 //
-// Solo aplica a imágenes raster servidas desde Storage público. Cualquier otra
-// URL (PDF, externa, data:) se devuelve intacta — el llamador ya separa PDFs.
-export function thumbUrl(url: string | null | undefined, width: number, quality = 50): string | null {
+// Si el thumb no existe (imagen previa al backfill que no se pudo pre-generar), el
+// <img> cae al original con fallbackToOriginal() en el onError del componente.
+export function thumbUrl(url: string | null | undefined, _width?: number, _quality?: number): string | null {
   if (!url) return url ?? null;
   const marker = '/storage/v1/object/public/';
   if (!url.includes(marker)) return url; // no es Storage público → sin cambio
-  const rendered = url.replace(marker, '/storage/v1/render/image/public/');
-  const sep = rendered.includes('?') ? '&' : '?';
-  // resize=contain: escala proporcional sin recortar. Sin esto, el default de
-  // Supabase (cover) RECORTA (ej. un comprobante 821x1280 pedido a width=480 volvía
-  // 480x1280 con la izquierda cortada → texto ilegible en la burbuja del chat).
-  return `${rendered}${sep}width=${width}&quality=${quality}&resize=contain`;
+  return `${url}.thumb.webp`;
+}
+
+// onError para <img src={thumbUrl(x) ?? x}>: si la miniatura estática no existe,
+// cae UNA vez al original full-res. El flag data-fellback evita el loop infinito si
+// el original también falla.
+export function fallbackToOriginal(original: string) {
+  return (e: { currentTarget: HTMLImageElement }) => {
+    const img = e.currentTarget;
+    if (img.dataset.fellback === '1') return; // el original también falló → no insistir
+    img.dataset.fellback = '1';
+    img.src = original;
+  };
 }

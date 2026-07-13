@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
-import { thumbUrl } from '@/lib/thumb';
+import { thumbUrl, fallbackToOriginal } from '@/lib/thumb';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
@@ -1039,7 +1039,8 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               ) : media?._type === 'image' ? (
                 <div>
                   <img
-                    // Thumbnail redimensionado; el full-res se ve al hacer click (lightbox).
+                    // Miniatura estática (.thumb.webp); el full-res se ve al hacer
+                    // click (lightbox). onError cae al original si falta el thumb.
                     src={thumbUrl(media.url, 480) ?? media.url}
                     alt={media.caption || 'imagen'}
                     loading="lazy"
@@ -1049,6 +1050,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                       display: 'block', cursor: 'pointer', background: '#00000010',
                     }}
                     onLoad={handleMediaLoad}
+                    onError={fallbackToOriginal(media.url)}
                     onClick={() => setLightboxUrl(media.url)}
                   />
                   {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
@@ -1114,12 +1116,14 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   const url = b.url;
                   return (
                     <img
-                      // Thumbnail redimensionado; el full-res se ve al hacer click (lightbox).
+                      // Miniatura estática (.thumb.webp); el full-res se ve al hacer
+                      // click. onError cae al original si falta el thumb.
                       src={thumbUrl(url, 480) ?? url}
                       alt="imagen"
                       loading="lazy"
                       style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
                       onLoad={handleMediaLoad}
+                      onError={fallbackToOriginal(url)}
                       onClick={() => setLightboxUrl(url)}
                     />
                   );
