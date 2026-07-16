@@ -505,7 +505,7 @@ async function processMessage(
             const col = payload === 'btn_0' ? 'btn1_count' : payload === 'btn_1' ? 'btn2_count' : null;
             if (col) {
               const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col });
-              if (incErr) console.warn(`[button] increment_campaign_counter ${col} falló:`, incErr.message);
+              if (incErr) console.error(`[button] increment_campaign_counter ${col} FALLÓ campaign=${cms.campaign_id} contact=${cms.contact_id}:`, incErr.message);
             }
             // Además del contador agregado, registrar el click como evento visible
             // en la conversación del contacto: un chip centrado "✅ Apretó: …". Solo
@@ -518,12 +518,15 @@ async function processMessage(
                 content:    JSON.stringify({ _type: 'campaign_event', text: btnText || null, payload }),
                 tenant_id:  cms.tenant_id,
               });
-              if (evErr) console.warn('[button] No se pudo insertar el evento de click en el chat:', evErr.message);
+              if (evErr) console.error(
+                `[button] CHIP NO INSERTADO campaign=${cms.campaign_id} contact=${cms.contact_id} payload=${payload}:`,
+                evErr.message,
+              );
             }
           }
         }
       } catch (err) {
-        console.warn('[button] Tracking de botón falló (¿tabla campaign_message_status?):', err);
+        console.error(`[button] Tracking de botón FALLÓ context=${ctxWamid}:`, err);
       }
     }
     return;
