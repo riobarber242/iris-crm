@@ -1,20 +1,22 @@
 // src/lib/casino/client.ts
-// Todas las llamadas al casino (admin.celuapuestas.bond) pasan por un Cloudflare
-// Worker proxy (casino-proxy) que agrega Origin/Referer y desbloquea el acceso.
-// El proxy se autentica con el header X-Proxy-Secret.
+// Todas las llamadas al casino pasan por un Cloudflare Worker proxy (casino-proxy)
+// que agrega Origin/Referer y desbloquea el acceso. El proxy se autentica con el
+// header X-Proxy-Secret.
+//
+// Etapa 2, PR 2: el client ya NO conoce ninguna credencial de casino. Cada función
+// recibe `creds: CasinoCreds` (usuario/id/password/skin del AGENTE de ESE tenant),
+// resueltas por el route con resolveCasinoCreds(). Solo el proxy (URL + secret)
+// sigue siendo global: es infraestructura compartida, no una credencial de casino.
+
+import type { CasinoCreds } from './account';
 
 const PROXY_URL = process.env.CASINO_PROXY_URL!;
 const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
-const AGENT_USERNAME = process.env.CASINO_AGENT_USERNAME ?? 'gonza0106';
-const AGENT_ID = process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt';
-const AGENT_PASSWORD = process.env.CASINO_AGENT_PASSWORD ?? '';
-const SKIN_DOMAIN = 'admin.celuapuestas.bond';
-// skinId fijo de CeluApuestas (Casino 17Star). Lo exige AddPlayer.
-const SKIN_ID = process.env.CASINO_SKIN_ID ?? 'eeafa00307a1';
 
-// Cache en memoria del access token (por instancia/lambda). Se renueva vía
-// TokenAuth/Authenticate cuando vence, con un margen de 60s.
-let tokenCache: { token: string; expiresAt: number } | null = null;
+// Cache en memoria del access token (por instancia/lambda), keyed por
+// skinDomain|agentUsername: cada agente/casino tiene su propio token. Se renueva
+// vía TokenAuth/Authenticate cuando vence, con un margen de 60s.
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 // Header común que autentica cada request contra el Worker proxy.
 function proxyHeaders(extra?: Record<string, string>) {
@@ -45,23 +47,25 @@ async function casinoFetch(url: string, init: RequestInit, timeoutMs: number = C
   }
 }
 
-// Devuelve un access token válido del casino. Autentica con usuario+contraseña a
-// través del proxy y cachea el token hasta su expiración (expireInSeconds) con un
-// margen de 60s.
-async function getCasinoToken(): Promise<string | null> {
+// Devuelve un access token válido del casino para ESTAS credenciales. Autentica
+// con usuario+contraseña a través del proxy y cachea el token hasta su expiración
+// (expireInSeconds) con un margen de 60s. El cache es por skinDomain|agentUsername.
+async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
   const now = Date.now();
-  if (tokenCache && now < tokenCache.expiresAt) return tokenCache.token;
+  const cacheKey = `${creds.skinDomain}|${creds.agentUsername}`;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) return cached.token;
 
-  if (!AGENT_PASSWORD) return null;
+  if (!creds.agentPassword) return null;
 
   try {
     const res = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
       headers: proxyHeaders(),
       body: JSON.stringify({
-        userNameOrEmailAddress: AGENT_USERNAME,
-        password: AGENT_PASSWORD,
-        skinDomain: SKIN_DOMAIN,
+        userNameOrEmailAddress: creds.agentUsername,
+        password: creds.agentPassword,
+        skinDomain: creds.skinDomain,
       }),
     });
 
@@ -86,7 +90,7 @@ async function getCasinoToken(): Promise<string | null> {
     console.log('[Casino] accessToken (20):', String(token).slice(0, 20));
     // Margen de 60s para no usar un token a punto de vencer.
     const ttlMs = (expireInSeconds > 60 ? expireInSeconds - 60 : Math.max(expireInSeconds, 0)) * 1000;
-    tokenCache = { token, expiresAt: now + ttlMs };
+    tokenCache.set(cacheKey, { token, expiresAt: now + ttlMs });
     return token;
   } catch (err: any) {
     console.error('[Casino] Authenticate error:', err?.message ?? err);
@@ -94,21 +98,21 @@ async function getCasinoToken(): Promise<string | null> {
   }
 }
 
-async function casinoHeaders() {
-  const token = await getCasinoToken();
+async function casinoHeaders(creds: CasinoCreds) {
+  const token = await getCasinoToken(creds);
   return proxyHeaders({ 'Authorization': `Bearer ${token}` });
 }
 
-// Saldo de fichas del agente del casino (gonza0106). Baja al verificar cargas
+// Saldo de fichas del agente del casino del tenant. Baja al verificar cargas
 // (deposita a un jugador) y sube al verificar pagos. Endpoint:
 //   GET /api/services/app/Agent/GetAgentBalance?agentId=...&username=...
 // Respuesta: { result: <number>, success: true }. Devuelve null si falla.
-export async function getAgentBalance(): Promise<number | null> {
-  const params = new URLSearchParams({ agentId: AGENT_ID, username: AGENT_USERNAME });
+export async function getAgentBalance(creds: CasinoCreds): Promise<number | null> {
+  const params = new URLSearchParams({ agentId: creds.agentId, username: creds.agentUsername });
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`;
 
   try {
-    const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders() });
+    const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders(creds) });
     if (!res.ok) {
       console.error(`[Casino] GetAgentBalance HTTP ${res.status}`);
       return null;
@@ -129,10 +133,10 @@ export async function getAgentBalance(): Promise<number | null> {
   }
 }
 
-export async function getPlayerTargetId(username: string): Promise<string | null> {
+export async function getPlayerTargetId(creds: CasinoCreds, username: string): Promise<string | null> {
   const params = new URLSearchParams({
     parentId: '-1',
-    username: AGENT_USERNAME,
+    username: creds.agentUsername,
     userId: 'NaN',
     userType: '2',
     searchText: username,
@@ -144,7 +148,7 @@ export async function getPlayerTargetId(username: string): Promise<string | null
 
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
 
-  const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders() });
+  const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders(creds) });
 
   if (!res.ok) {
     console.error(`[Casino] GetAgentWithChildren HTTP ${res.status}`);
@@ -195,9 +199,9 @@ export interface DoDepositResult {
   error?: string;
 }
 
-export async function doDeposit(params: { username: string; targetId: string; amount: number }): Promise<DoDepositResult> {
+export async function doDeposit(creds: CasinoCreds, params: { username: string; targetId: string; amount: number }): Promise<DoDepositResult> {
   // El query param ?username= lleva el username del AGENTE (no el del player).
-  const url = `${PROXY_URL}/api/services/app/Players/DoDeposit?username=${AGENT_USERNAME}`;
+  const url = `${PROXY_URL}/api/services/app/Players/DoDeposit?username=${creds.agentUsername}`;
 
   // Body COMPLETO con contexto del agente. El casino lo exige: con el body
   // simplificado { targetId, amount } devuelve "Entidad no encontrada"; con este
@@ -207,8 +211,8 @@ export async function doDeposit(params: { username: string; targetId: string; am
     username: params.username,
     userName: params.username,
     userType: 1,
-    agentId: AGENT_ID,
-    agentUserName: AGENT_USERNAME,
+    agentId: creds.agentId,
+    agentUserName: creds.agentUsername,
     amount: params.amount,
     targetId: Number(params.targetId),
   });
@@ -217,7 +221,7 @@ export async function doDeposit(params: { username: string; targetId: string; am
 
   const res = await casinoFetch(url, {
     method: 'POST',
-    headers: await casinoHeaders(),
+    headers: await casinoHeaders(creds),
     body: reqBody,
   });
 
@@ -242,15 +246,15 @@ export async function doDeposit(params: { username: string; targetId: string; am
   return { success: false, error: errorBody };
 }
 
-export async function creditPlayer(username: string, amount: number): Promise<DoDepositResult> {
+export async function creditPlayer(creds: CasinoCreds, username: string, amount: number): Promise<DoDepositResult> {
   // getPlayerTargetId / doDeposit pueden lanzar (incluido el timeout de casinoFetch).
   // Lo convertimos en un resultado para que el flujo de verificar comprobantes
   // responda un 400 limpio ("La recarga NO se verificó") en vez de un 500.
   try {
-    const targetId = await getPlayerTargetId(username);
+    const targetId = await getPlayerTargetId(creds, username);
     if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
 
-    return await doDeposit({ username, targetId, amount });
+    return await doDeposit(creds, { username, targetId, amount });
   } catch (err: any) {
     console.error('[Casino] creditPlayer error:', err?.message ?? err);
     return { success: false, error: err?.message ?? 'Error al acreditar en el casino' };
@@ -268,14 +272,14 @@ export interface CreatePlayerResult {
 // Crea un jugador en el casino. POST /api/services/app/Players/AddPlayer con
 // { userName, password, skinIds: [SKIN_ID] }. Devuelve success en status 201.
 // La contraseña debe tener ≥8 chars, 1 dígito, 1 mayúscula y 1 minúscula.
-export async function createPlayer(userName: string, password: string): Promise<CreatePlayerResult> {
+export async function createPlayer(creds: CasinoCreds, userName: string, password: string): Promise<CreatePlayerResult> {
   const url = `${PROXY_URL}/api/services/app/Players/AddPlayer`;
-  const reqBody = JSON.stringify({ userName, password, skinIds: [SKIN_ID] });
+  const reqBody = JSON.stringify({ userName, password, skinIds: [creds.skinId] });
   console.log('[Casino] AddPlayer URL:', url, '— userName:', userName);
 
   let res: Response;
   try {
-    res = await casinoFetch(url, { method: 'POST', headers: await casinoHeaders(), body: reqBody }, ADDPLAYER_TIMEOUT_MS);
+    res = await casinoFetch(url, { method: 'POST', headers: await casinoHeaders(creds), body: reqBody }, ADDPLAYER_TIMEOUT_MS);
   } catch (err: any) {
     console.error('[Casino] AddPlayer error de red:', err?.message ?? err);
     return { success: false, error: err?.message ?? 'Error de red al crear el usuario en el casino' };

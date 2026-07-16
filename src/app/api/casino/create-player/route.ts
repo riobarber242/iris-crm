@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { createPlayer, getPlayerTargetId } from '@/lib/casino/client';
+import { resolveCasinoCreds } from '@/lib/casino/account';
 import { renderCredentials } from '@/lib/casino/credentials';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
@@ -47,6 +48,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: 'El casino no está activado para este tenant' }, { status: 403 });
   }
 
+  // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+  const creds = await resolveCasinoCreds(session.tenant_id);
+  if (!creds) {
+    return NextResponse.json({ success: false, error: 'Casino no configurado' }, { status: 503 });
+  }
+
   const body = await request.json().catch(() => ({} as any));
   const contactId = typeof body.contactId === 'string' ? body.contactId.trim() : '';
   let username = typeof body.suggestedUsername === 'string' ? body.suggestedUsername.trim().toLowerCase() : '';
@@ -73,11 +80,11 @@ export async function POST(request: Request) {
 
   // Reintento correlativo: si el casino rechaza por usuario ya existente,
   // incrementamos el número (…1js → …2js → …) hasta 20 intentos.
-  let result = await createPlayer(username, password);
+  let result = await createPlayer(creds, username, password);
   let attempts = 0;
   while (!result.success && result.taken && attempts < 20) {
     username = nextUsername(username);
-    result = await createPlayer(username, password);
+    result = await createPlayer(creds, username, password);
     attempts++;
   }
 
@@ -86,7 +93,7 @@ export async function POST(request: Request) {
   // y que un reintento manual genere un usuario duplicado).
   if (!result.success && /no respondió a tiempo/i.test(result.error ?? '')) {
     try {
-      const targetId = await getPlayerTargetId(username);
+      const targetId = await getPlayerTargetId(creds, username);
       if (targetId) {
         console.log(`[create-player] timeout pero el usuario existe → tratado como creado: ${username}`);
         result = { success: true, username };

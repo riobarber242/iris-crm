@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { getAgentBalance } from '@/lib/casino/client';
+import { resolveCasinoCreds } from '@/lib/casino/account';
 
 // Cache en memoria del saldo (por instancia/lambda) para no martillar el casino
-// si varios agentes miran Fichas a la vez. El saldo es GLOBAL (un único agente
-// gonza0106), así que una sola entrada alcanza. TTL corto (10s).
+// si varios agentes miran Fichas a la vez. Keyed por tenant: el saldo es el del
+// agente de casino de ESE tenant (PR 2: ya no hay un único agente global). TTL
+// corto (10s).
 const CACHE_TTL_MS = 10_000;
-let balanceCache: { balance: number; expiresAt: number } | null = null;
+const balanceCache = new Map<string, { balance: number; expiresAt: number }>();
 
 // GET /api/casino/balance — saldo de fichas del agente en el casino.
 //   { enabled: false }                      si el tenant no tiene casino activado
@@ -28,19 +30,26 @@ export async function GET() {
   }
 
   const now = Date.now();
-  if (balanceCache && now < balanceCache.expiresAt) {
-    return NextResponse.json({ enabled: true, balance: balanceCache.balance, cached: true });
+  const cached = balanceCache.get(session.tenant_id);
+  if (cached && now < cached.expiresAt) {
+    return NextResponse.json({ enabled: true, balance: cached.balance, cached: true });
   }
 
-  const balance = await getAgentBalance();
+  // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+  const creds = await resolveCasinoCreds(session.tenant_id);
+  if (!creds) {
+    return NextResponse.json({ enabled: true, balance: null, error: 'Casino no configurado' });
+  }
+
+  const balance = await getAgentBalance(creds);
   if (balance === null) {
     // No pisamos el cache con un fallo; devolvemos lo último si lo hay.
-    if (balanceCache) {
-      return NextResponse.json({ enabled: true, balance: balanceCache.balance, cached: true, stale: true });
+    if (cached) {
+      return NextResponse.json({ enabled: true, balance: cached.balance, cached: true, stale: true });
     }
     return NextResponse.json({ enabled: true, balance: null, error: 'No se pudo obtener el saldo del casino' });
   }
 
-  balanceCache = { balance, expiresAt: now + CACHE_TTL_MS };
+  balanceCache.set(session.tenant_id, { balance, expiresAt: now + CACHE_TTL_MS });
   return NextResponse.json({ enabled: true, balance, cached: false });
 }

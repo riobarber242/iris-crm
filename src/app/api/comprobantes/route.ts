@@ -7,6 +7,7 @@ import { reconcileContactStatus } from '@/lib/contact-status';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { aplicarCargaComprobante, aplicarPagoComprobante, editarMovimientoComprobante } from '@/lib/caja';
 import { creditPlayer } from '@/lib/casino/client';
+import { resolveCasinoCreds } from '@/lib/casino/account';
 import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, renderAutoMsg } from '@/lib/auto-msg';
 import { insertMessage } from '@/lib/messages';
 import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/realtime-broadcast';
@@ -386,7 +387,12 @@ export async function PATCH(request: Request) {
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }
-        const cred = await creditPlayer(username, montoTotal);
+        // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+        const casinoCreds = await resolveCasinoCreds(session.tenant_id);
+        if (!casinoCreds) {
+          return new NextResponse('Casino no configurado. La recarga NO se verificó.', { status: 400 });
+        }
+        const cred = await creditPlayer(casinoCreds, username, montoTotal);
         if (!cred.success) {
           return new NextResponse(cred.error ?? 'No se pudo acreditar en el casino. La recarga NO se verificó.', { status: 400 });
         }
