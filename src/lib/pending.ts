@@ -37,11 +37,12 @@ export function classifyPending(opts: {
   // El operador humano fue el último en hablar → la conversación ya está atendida.
   if (lastRole === 'human') return null;
 
-  // Un evento de sistema (role 'system', p.ej. el chip "✅ Apretó: …" de un click
-  // de botón de campaña) NO es algo que un humano deba responder. Sin esto, cada
-  // click de una campaña marcaría la conversación como no leída e inundaría la
-  // lista de pendientes durante un envío masivo.
-  if (lastRole === 'system') return null;
+  // NOTA (2026-07-16): un evento de sistema (role 'system', p.ej. el chip
+  // "✅ Apretó: …" de un click de botón de campaña) SÍ marca pendiente a propósito:
+  // el click abre la ventana de 24hs de WhatsApp y el operador necesita ver que hay
+  // que responder a tiempo. Antes lo suprimíamos para no inflar la bandeja en envíos
+  // masivos; se revirtió porque ver los leads enganchados pesa más. Cae en 🟠 naranja
+  // por el flujo de abajo (a menos que known_client/human_taken → 🔴 rojo).
 
   // Un mensaje automático del sistema (bot u offline, role 'assistant') como
   // ÚLTIMA palabra NO es rojo: todavía no lo atendió ningún humano. Queda 🟠
