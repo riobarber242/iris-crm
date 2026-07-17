@@ -18,11 +18,14 @@ const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
 // vía TokenAuth/Authenticate cuando vence, con un margen de 60s.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-// Header común que autentica cada request contra el Worker proxy.
-function proxyHeaders(extra?: Record<string, string>) {
+// Header común que autentica cada request contra el Worker proxy. X-Casino-Target
+// le dice al Worker a qué casino reenviar (el skin_domain del tenant); el Worker lo
+// valida contra su allowlist. Etapa 2, PR 3: multi-tenant en el proxy.
+function proxyHeaders(skinDomain: string, extra?: Record<string, string>) {
   return {
     'Content-Type': 'application/json',
     'X-Proxy-Secret': PROXY_SECRET,
+    'X-Casino-Target': skinDomain,
     ...extra,
   };
 }
@@ -61,7 +64,7 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
   try {
     const res = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
-      headers: proxyHeaders(),
+      headers: proxyHeaders(creds.skinDomain),
       body: JSON.stringify({
         userNameOrEmailAddress: creds.agentUsername,
         password: creds.agentPassword,
@@ -100,7 +103,7 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
 
 async function casinoHeaders(creds: CasinoCreds) {
   const token = await getCasinoToken(creds);
-  return proxyHeaders({ 'Authorization': `Bearer ${token}` });
+  return proxyHeaders(creds.skinDomain, { 'Authorization': `Bearer ${token}` });
 }
 
 // Saldo de fichas del agente del casino del tenant. Baja al verificar cargas
