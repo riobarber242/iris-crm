@@ -22,7 +22,7 @@ const navLabels: Record<string, string> = {
   'top-clientes': 'Top Clientes',
   campanas:       'Campañas',
   agentes:        'Operadores',
-  tenants:        'Agentes',
+  tenants:        'Clientes',
   servicios:      'Servicios',
   'mi-bot':       'Mi Bot',
   'chat-interno': 'Chat interno',
