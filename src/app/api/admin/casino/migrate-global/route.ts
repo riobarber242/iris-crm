@@ -83,7 +83,10 @@ export async function POST() {
   const player_url   = (cfg.get('casino_player_url') ?? '').trim() || null;
   const player_url_2 = (cfg.get('casino_player_url_2') ?? '').trim() || null;
   const template     = (cfg.get('casino_credentials_template') ?? '').trim() || null;
-  const label        = tenant?.name ? `Casino ${tenant.name}` : 'Casino';
+  // Sin duplicar "Casino" cuando el tenant ya se llama "Casino X" (arreglo del
+  // label "Casino Casino 17Star"). Re-correr este endpoint corrige la fila existente.
+  const tenantName   = (tenant?.name ?? '').trim();
+  const label        = !tenantName ? 'Casino' : /^casino\b/i.test(tenantName) ? tenantName : `Casino ${tenantName}`;
 
   const agent_password_enc = encryptSecret(password);
 
