@@ -387,7 +387,7 @@ export async function PATCH(request: Request) {
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }
-        // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+        // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
         const casinoCreds = await resolveCasinoCreds(session.tenant_id);
         if (!casinoCreds) {
           return new NextResponse('Casino no configurado. La recarga NO se verificó.', { status: 400 });

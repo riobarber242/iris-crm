@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: 'El casino no está activado para este tenant' }, { status: 403 });
   }
 
-  // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+  // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
   const creds = await resolveCasinoCreds(session.tenant_id);
   if (!creds) {
     return NextResponse.json({ success: false, error: 'Casino no configurado' }, { status: 503 });

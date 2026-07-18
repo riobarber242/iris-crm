@@ -35,7 +35,7 @@ export async function GET() {
     return NextResponse.json({ enabled: true, balance: cached.balance, cached: true });
   }
 
-  // Credenciales del casino del tenant (fila de casino_accounts, con fallback a env).
+  // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
   const creds = await resolveCasinoCreds(session.tenant_id);
   if (!creds) {
     return NextResponse.json({ enabled: true, balance: null, error: 'Casino no configurado' });

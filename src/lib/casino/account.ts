@@ -6,9 +6,11 @@
 // El client (client.ts) ya no conoce ninguna credencial: la recibe resuelta acá.
 //
 // resolveCasinoCreds() es el punto de entrada de los route handlers: devuelve la
-// fila del tenant y, si todavía no la tiene, cae a las env globales dejando un
-// log FALLBACK-ENV. Ese fallback es TRANSITORIO (mientras conviven tenants ya
-// migrados con otros que aún leen del env) y se corta en el PR 6.
+// fila del tenant o null. Etapa 2, PR 6 — FAIL-CLOSED: se cortó el fallback a las
+// env globales (gonza0106). Un tenant sin fila ya NO cae a las credenciales de otro
+// casino; los callers devuelven "Casino no configurado". Censo previo al corte: el
+// único tenant con casino_deposit_enabled='true' (17Star) tiene su fila verificada,
+// así que el corte no cambia el comportamiento de nadie en producción.
 
 import { supabaseAdmin } from '@/lib/db';
 import { decryptSecret } from '@/lib/secure-secret';
@@ -67,36 +69,10 @@ export async function loadCasinoAccount(tenantId: string): Promise<CasinoCreds |
   };
 }
 
-// Credenciales desde las env vars GLOBALES (la cuenta mono-tenant de 17Star). Los
-// defaults son los MISMOS que tenía client.ts y que usa el seed de migrate-global,
-// así que para 17Star el resultado es idéntico. TRANSITORIO: se elimina en el PR 6
-// cuando toda conexión viva en casino_accounts. Fail-closed si falta el password.
-export function envCasinoCreds(tenantId: string): CasinoCreds | null {
-  const agentPassword = process.env.CASINO_AGENT_PASSWORD ?? '';
-  if (!agentPassword) return null;
-
-  return {
-    agentUsername: process.env.CASINO_AGENT_USERNAME ?? 'gonza0106',
-    agentId:       process.env.CASINO_AGENT_ID ?? 'cmoj1nya83zdnmhqizvk1hpbt',
-    agentPassword,
-    skinId:        process.env.CASINO_SKIN_ID ?? 'eeafa00307a1',
-    skinDomain:    'admin.celuapuestas.bond',
-    tenantId,
-  };
-}
-
-// Punto de entrada de los routes: la fila del tenant primero; si no existe, cae a
-// las env globales dejando el log FALLBACK-ENV (para monitorear qué tenants aún no
-// migraron). Devuelve null solo si no hay ni fila ni env (→ "Casino no configurado").
+// Punto de entrada de los routes: SOLO la fila de casino_accounts del tenant.
+// Devuelve null si no hay fila (→ los callers responden "Casino no configurado").
+// PR 6: se eliminó el fallback a las env globales — un tenant sin fila jamás
+// opera con las credenciales de otro casino (fail-closed).
 export async function resolveCasinoCreds(tenantId: string): Promise<CasinoCreds | null> {
-  const fromRow = await loadCasinoAccount(tenantId);
-  if (fromRow) return fromRow;
-
-  const fromEnv = envCasinoCreds(tenantId);
-  if (fromEnv) {
-    console.warn(`[casino] FALLBACK-ENV tenant=${tenantId} (sin fila en casino_accounts; usando credenciales globales de env)`);
-    return fromEnv;
-  }
-
-  return null;
+  return loadCasinoAccount(tenantId);
 }
