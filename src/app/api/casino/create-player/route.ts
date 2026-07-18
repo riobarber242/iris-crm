@@ -126,19 +126,33 @@ export async function POST(request: Request) {
   // guarda como mensaje 'human'). Best-effort: si falla, cae al template default.
   let message = '';
   try {
-    // {link1}: URL para jugadores (casino_player_url) con fallback a la del panel
-    //          y al env, para tenants que aún no cargaron la URL nueva.
-    // {link2}: casino_player_url_2 (opcional; si falta, se omite su línea).
-    const { data: cfgRows } = await supabaseAdmin
-      .from('settings').select('key, value')
-      .in('key', ['casino_player_url', 'casino_player_url_2', 'casino_api_base_url', 'casino_credentials_template'])
-      .eq('tenant_id', session.tenant_id);
+    // Prioridad de player_url / player_url_2 / template: la FILA de casino_accounts
+    // (lo que edita el form del PR5) → settings (tenants sin migrar / valores viejos)
+    // → env CASINO_API_BASE_URL (solo el fallback histórico de {link1}). Antes se leía
+    // solo de settings, así que las ediciones del form nuevo no tenían efecto.
+    const [{ data: acct }, { data: cfgRows }] = await Promise.all([
+      supabaseAdmin
+        .from('casino_accounts')
+        .select('player_url, player_url_2, credentials_template, api_base_url')
+        .eq('tenant_id', session.tenant_id).eq('is_default', true).eq('active', true).maybeSingle(),
+      supabaseAdmin
+        .from('settings').select('key, value')
+        .in('key', ['casino_player_url', 'casino_player_url_2', 'casino_api_base_url', 'casino_credentials_template'])
+        .eq('tenant_id', session.tenant_id),
+    ]);
     const byKey = new Map<string, string>((cfgRows ?? []).map((r: any) => [r.key, String(r.value ?? '')]));
-    const link1 = (byKey.get('casino_player_url')?.trim()
+    const rowStr = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+
+    // {link1}: player_url de la fila → settings → api_base_url (fila → settings) → env.
+    const link1 = rowStr(acct?.player_url)
+      || byKey.get('casino_player_url')?.trim()
+      || rowStr(acct?.api_base_url)
       || byKey.get('casino_api_base_url')?.trim()
-      || String(process.env.CASINO_API_BASE_URL ?? '').trim());
-    const link2 = (byKey.get('casino_player_url_2') ?? '').trim();
-    const template = byKey.get('casino_credentials_template') ?? null;
+      || String(process.env.CASINO_API_BASE_URL ?? '').trim();
+    // {link2}: player_url_2 de la fila → settings (opcional; si falta, se omite su línea).
+    const link2 = rowStr(acct?.player_url_2) || (byKey.get('casino_player_url_2') ?? '').trim();
+    // template: credentials_template de la fila → settings → default (lo pone renderCredentials).
+    const template = rowStr(acct?.credentials_template) || byKey.get('casino_credentials_template') || null;
     message = renderCredentials(template, { username, password, link1, link2 });
   } catch (err) {
     console.warn('[casino/create-player] no se pudo armar el mensaje con el template, usando default:', err);
