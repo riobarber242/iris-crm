@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import axios from 'axios';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { readWaSecret } from '@/lib/meta/wa-secrets';
 
 // Verifica un número contra la Graph API de Meta:
 // GET /{phone_number_id}?fields=display_phone_number con el token del número
@@ -17,13 +18,14 @@ export async function POST(request: Request) {
 
   const { data: num } = await supabaseAdmin
     .from('whatsapp_numbers')
-    .select('phone_number_id, access_token')
+    .select('id, phone_number_id, access_token, access_token_enc')
     .eq('id', id)
     .eq('tenant_id', session.tenant_id)
     .maybeSingle();
   if (!num) return new NextResponse('Número no encontrado', { status: 404 });
 
-  const token = num.access_token || process.env.WHATSAPP_ACCESS_TOKEN;
+  // Lectura dual (cifrado → plano); sin token propio → token global de env.
+  const token = readWaSecret(num.access_token_enc, num.access_token, 'access_token', num.id) || process.env.WHATSAPP_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json({ ok: false, error: 'Sin access token (ni propio ni global en env)' });
   }

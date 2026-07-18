@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText, resolveCreds, withTransientRetry } from './client';
+import { readWaSecret } from './wa-secrets';
 import { getOfflineMsg } from '../bot-config';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
@@ -60,9 +61,10 @@ async function resolveAppSecret(phoneNumberId: string | undefined): Promise<stri
   if (!phoneNumberId) return globalSecret;
   try {
     const { data } = await supabaseAdmin
-      .from('whatsapp_numbers').select('app_secret')
+      .from('whatsapp_numbers').select('id, app_secret, app_secret_enc')
       .eq('phone_number_id', phoneNumberId).maybeSingle();
-    const perNumber = (data?.app_secret ?? '').trim();
+    // Lectura dual (cifrado → plano) del app_secret propio del número.
+    const perNumber = (readWaSecret(data?.app_secret_enc, data?.app_secret, 'app_secret', data?.id) ?? '').trim();
     return perNumber || globalSecret;   // fila sin secret propio → global
   } catch (err) {
     console.warn('[webhook] resolveAppSecret falló, uso secret global:', err);

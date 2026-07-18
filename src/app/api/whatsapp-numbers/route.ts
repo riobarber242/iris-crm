@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
 
 // Gestión de números de WhatsApp del tenant (multi-número). Solo rol admin.
 // El access_token NUNCA se devuelve al cliente: el GET expone solo has_token.
+// PR1: el token se guarda CIFRADO en access_token_enc; la columna plana queda en
+// null en las altas/ediciones nuevas (las filas viejas se cifran con el backfill).
 
-const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token';
+const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token, access_token_enc';
 
 function sanitize(row: any) {
-  const { access_token, ...rest } = row;
-  return { ...rest, has_token: !!access_token };
+  // Ni el token plano ni el cifrado viajan al cliente: solo el booleano de presencia.
+  const { access_token, access_token_enc, ...rest } = row;
+  return { ...rest, has_token: !!(access_token || access_token_enc) };
 }
 
 async function requireAdmin(): Promise<{ session: any; error?: undefined } | { session?: undefined; error: NextResponse }> {
@@ -57,6 +61,11 @@ export async function POST(request: Request) {
   if (!/^\d+$/.test(phoneNumberId)) {
     return new NextResponse('phone_number_id inválido: debe ser el ID numérico del número en Meta', { status: 400 });
   }
+  // Si hay token, exigimos la clave de cifrado (fail-closed en la ESCRITURA: no
+  // guardamos un token nuevo en texto plano). La lectura sigue siendo fail-open.
+  if (accessToken && !isSecretEncryptionConfigured()) {
+    return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
+  }
 
   // Duplicado: la unique constraint también lo frena, pero así el error es claro.
   const { data: dup } = await supabaseAdmin
@@ -71,13 +80,15 @@ export async function POST(request: Request) {
   const { data, error: insErr } = await supabaseAdmin
     .from('whatsapp_numbers')
     .insert({
-      tenant_id:       session.tenant_id,
+      tenant_id:        session.tenant_id,
       label,
-      phone_number_id: phoneNumberId,
-      access_token:    accessToken,
-      waba_id:         wabaId,
-      active:          true,
-      is_default:      (count ?? 0) === 0,
+      phone_number_id:  phoneNumberId,
+      // Token cifrado; la columna plana queda null en las altas nuevas.
+      access_token:     null,
+      access_token_enc: accessToken ? encryptSecret(accessToken) : null,
+      waba_id:          wabaId,
+      active:           true,
+      is_default:       (count ?? 0) === 0,
     })
     .select(FIELDS)
     .single();
@@ -123,7 +134,16 @@ export async function PATCH(request: Request) {
     if (!label) return new NextResponse('El label no puede quedar vacío', { status: 400 });
     updates.label = label;
   }
-  if (body?.access_token !== undefined) updates.access_token = String(body.access_token).trim() || null;
+  if (body?.access_token !== undefined) {
+    const t = String(body.access_token).trim();
+    if (t && !isSecretEncryptionConfigured()) {
+      return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
+    }
+    // Token nuevo → cifrado; vacío → se limpia. En ambos casos la columna plana
+    // queda null (dejamos de escribir texto plano).
+    updates.access_token     = null;
+    updates.access_token_enc = t ? encryptSecret(t) : null;
+  }
   if (body?.waba_id !== undefined)      updates.waba_id      = String(body.waba_id).trim() || null;
 
   if (body?.active !== undefined) {

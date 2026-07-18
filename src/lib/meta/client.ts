@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { supabaseAdmin } from '../db';
+import { readWaSecret } from './wa-secrets';
 
 const BASE_URL = 'https://graph.facebook.com/v21.0';
 
@@ -35,23 +36,26 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
     if (numberId) {
       const { data } = await supabaseAdmin
         .from('whatsapp_numbers')
-        .select('phone_number_id, access_token')
+        .select('id, phone_number_id, access_token, access_token_enc')
         .eq('id', numberId)
         .maybeSingle();
       if (data?.phone_number_id) {
-        return { token: data.access_token || getToken(), phoneId: data.phone_number_id };
+        // Lectura dual (cifrado → plano). null = sin token propio → token global.
+        const token = readWaSecret(data.access_token_enc, data.access_token, 'access_token', data.id) || getToken();
+        return { token, phoneId: data.phone_number_id };
       }
     }
     if (tenantId) {
       const { data: def } = await supabaseAdmin
         .from('whatsapp_numbers')
-        .select('phone_number_id, access_token')
+        .select('id, phone_number_id, access_token, access_token_enc')
         .eq('tenant_id', tenantId)
         .eq('is_default', true)
         .eq('active', true)
         .maybeSingle();
       if (def?.phone_number_id) {
-        return { token: def.access_token || getToken(), phoneId: def.phone_number_id };
+        const token = readWaSecret(def.access_token_enc, def.access_token, 'access_token', def.id) || getToken();
+        return { token, phoneId: def.phone_number_id };
       }
       const { data } = await supabaseAdmin
         .from('tenants')
