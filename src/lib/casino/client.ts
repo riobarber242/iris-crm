@@ -310,3 +310,84 @@ export async function createPlayer(creds: CasinoCreds, userName: string, passwor
   console.error(`[Casino] AddPlayer falló: ${errorBody}${taken ? ' (usuario tomado)' : ''}`);
   return { success: false, error: errorBody, taken };
 }
+
+// ── Test de conexión (Etapa 2, PR 4) ─────────────────────────────────────────
+// Diagnóstico de credenciales para /api/casino/test-connection. A diferencia de
+// getAgentBalance (que colapsa todo a null en el hot-path del depósito), DISTINGUE
+// cada modo de falla para dar un mensaje específico en el form. NO toca tokenCache:
+// usa el token fresco de SU propio Authenticate (probamos credenciales sin guardar,
+// y no queremos envenenar el cache del flujo real).
+export type CasinoTestResult =
+  | { ok: true; agentName: string; balance: number; authResultKeys: string[] }
+  | { ok: false; reason: 'bad_credentials' | 'agent_not_found' | 'forbidden_target' | 'timeout' | 'unknown'; detail?: string };
+
+export async function testCasinoConnection(creds: CasinoCreds): Promise<CasinoTestResult> {
+  // ── 1) Authenticate (login del agente) ──────────────────────────────────────
+  let authRes: Response;
+  try {
+    authRes = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
+      method: 'POST',
+      headers: proxyHeaders(creds.skinDomain),
+      body: JSON.stringify({
+        userNameOrEmailAddress: creds.agentUsername,
+        password: creds.agentPassword,
+        skinDomain: creds.skinDomain,
+      }),
+    });
+  } catch (err: any) {
+    if (err?.message === 'El casino no respondió a tiempo') return { ok: false, reason: 'timeout' };
+    return { ok: false, reason: 'unknown', detail: err?.message ?? 'Error de red' };
+  }
+
+  const authBody = await authRes.text().catch(() => '');
+  // 403 texto plano lo pone el WORKER (no el casino) cuando el skin_domain no está
+  // en el allowlist: ese es el caso "casino todavía no habilitado".
+  if (authRes.status === 403 && /forbidden casino target/i.test(authBody)) {
+    return { ok: false, reason: 'forbidden_target' };
+  }
+  // 401 "Unauthorized" texto plano = X-Proxy-Secret inválido (infra, no credenciales).
+  if (authRes.status === 401 && /^unauthorized$/i.test(authBody.trim())) {
+    return { ok: false, reason: 'unknown', detail: 'Proxy secret inválido' };
+  }
+
+  let authData: any = null;
+  try { authData = JSON.parse(authBody); } catch { /* no-JSON → bad_credentials abajo */ }
+  const token: string | null = authData?.result?.accessToken ?? null;
+  if (!token) {
+    // Login rechazado por el casino (usuario/contraseña). Cubre 401/500 con error ABP.
+    return { ok: false, reason: 'bad_credentials' };
+  }
+
+  // Solo los NOMBRES de campos del result (sin valores/tokens): confirma si
+  // Authenticate ya trae agentId/skinId (pregunta de diseño del PR 4).
+  const authResultKeys =
+    authData?.result && typeof authData.result === 'object' ? Object.keys(authData.result) : [];
+  console.log('[Casino] test-connection Authenticate result keys:', authResultKeys.join(', '));
+
+  // ── 2) GetAgentBalance (prueba concreta: saldo real del agente) ──────────────
+  const params = new URLSearchParams({ agentId: creds.agentId, username: creds.agentUsername });
+  let balRes: Response;
+  try {
+    balRes = await casinoFetch(
+      `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`,
+      { method: 'GET', headers: proxyHeaders(creds.skinDomain, { Authorization: `Bearer ${token}` }) },
+    );
+  } catch (err: any) {
+    if (err?.message === 'El casino no respondió a tiempo') return { ok: false, reason: 'timeout' };
+    return { ok: false, reason: 'unknown', detail: err?.message ?? 'Error de red' };
+  }
+
+  const balBody = await balRes.text().catch(() => '');
+  if (balRes.status === 403 && /forbidden casino target/i.test(balBody)) {
+    return { ok: false, reason: 'forbidden_target' };
+  }
+  let balData: any = null;
+  try { balData = JSON.parse(balBody); } catch { /* → agent_not_found abajo */ }
+  const balance = Number(balData?.result);
+  if (!Number.isFinite(balance)) {
+    // Login OK pero sin saldo: el agentId no existe / no cuelga de este login.
+    return { ok: false, reason: 'agent_not_found', detail: balBody.slice(0, 200) };
+  }
+
+  return { ok: true, agentName: creds.agentUsername, balance, authResultKeys };
+}
