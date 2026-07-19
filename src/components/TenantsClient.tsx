@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import OnboardingWizard from './OnboardingWizard';
+import AdminTenantNumbersModal, { AdminWaNumber, numbersHealth } from './AdminTenantNumbersModal';
 
 type Tenant = {
   id: string;
@@ -21,6 +22,7 @@ type Tenant = {
   paid_until: string | null;
   skin: string;
   notes: string | null;
+  max_whatsapp_numbers: number;
 };
 
 const MAX_PROMPT = 4000;
@@ -41,14 +43,6 @@ function statusBadge(t: Tenant): { label: string; bg: string; fg: string } {
   return { label: 'Activo', bg: '#E7F9D5', fg: '#3F7A12' };
 }
 
-function fmtAmount(n: number): string {
-  return '$' + (Number(n) || 0).toLocaleString('es-AR');
-}
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-AR');
-}
 
 const inputStyle: React.CSSProperties = {
   background: '#F5F5F5', border: '2px solid #eee', borderRadius: '10px',
@@ -76,27 +70,47 @@ export default function TenantsClient() {
   const [editing, setEditing] = useState<Tenant | null>(null);
   // modal de edición de membresía (plan / status / monto / paga hasta / skin / notas)
   const [editingMembership, setEditingMembership] = useState<Tenant | null>(null);
-  // id del tenant cuyo status se está togglear (suspender/activar)
-  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // wizard de alta guiada
   const [wizardOpen, setWizardOpen] = useState(false);
 
+  // Números de WhatsApp por tenant (para los chips/cupo/estado de cada tarjeta) y
+  // el tenant cuyo modal de gestión está abierto. Guardamos el ID (no el objeto)
+  // para que el modal siempre lea el tenant fresco tras refrescar (status/cupo).
+  const [numbersByTenant, setNumbersByTenant] = useState<Record<string, AdminWaNumber[]>>({});
+  const [openTenantId, setOpenTenantId] = useState<string | null>(null);
+
+  async function fetchAllNumbers(list: Tenant[]) {
+    const entries = await Promise.all(list.map(async (t) => {
+      try {
+        const res = await fetch(`/api/tenants/${t.id}/whatsapp-numbers`);
+        return [t.id, res.ok ? await res.json() : []] as const;
+      } catch { return [t.id, [] as AdminWaNumber[]] as const; }
+    }));
+    setNumbersByTenant(Object.fromEntries(entries));
+  }
+
   async function fetchTenants() {
     try {
       const res = await fetch('/api/tenants');
-      if (res.ok) setTenants(await res.json());
-      else setError((await res.json().catch(() => ({}))).error ?? 'Error cargando tenants');
+      if (res.ok) {
+        const data = await res.json();
+        setTenants(data);
+        fetchAllNumbers(data);
+      } else {
+        setError((await res.json().catch(() => ({}))).error ?? 'Error cargando tenants');
+      }
     } catch { setError('Error de red'); }
     finally { setLoading(false); }
   }
 
   useEffect(() => { fetchTenants(); }, []);
 
-  // Suspender / Activar: toggle directo de status sin abrir el modal.
+  const openTenant = tenants.find((t) => t.id === openTenantId) ?? null;
+
+  // Suspender / Activar: toggle directo de status (el spinner lo maneja quien llama).
   async function toggleStatus(t: Tenant) {
     const next = t.status === 'suspended' ? 'active' : 'suspended';
-    setTogglingId(t.id);
     setError('');
     try {
       const res = await fetch(`/api/tenants/${t.id}`, {
@@ -105,11 +119,7 @@ export default function TenantsClient() {
       if (res.ok) await fetchTenants();
       else setError((await res.json().catch(() => ({}))).error ?? 'No se pudo cambiar el estado');
     } catch { setError('Error de red'); }
-    finally { setTogglingId(null); }
   }
-
-  // Nombre · Skin · Plan · Estado · Paga hasta · Monto · Acciones
-  const cols = '1.6fr 1fr 0.9fr 1fr 1fr 1fr 1.4fr';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -137,7 +147,7 @@ export default function TenantsClient() {
       {/* Alta guiada: crea tenant + usuario + system prompt + operadores de una. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button onClick={() => setWizardOpen(true)} style={{ ...btn('#0a0a0a', '#C8FF00'), padding: '12px 22px', fontSize: '14px' }}>
-          + Nuevo agente
+          + Nuevo cliente
         </button>
       </div>
 
@@ -147,63 +157,91 @@ export default function TenantsClient() {
         </div>
       )}
 
-      {/* Tabla */}
+      {/* Leyenda del punto de estado (salud de config, no verificación en vivo) */}
+      {!loading && tenants.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', fontSize: '12px', color: '#777' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#5ad87a' }} /> Con app_secret OK</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#e6a700' }} /> Falta app_secret / inactivo</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#bbb' }} /> Sin números</span>
+        </div>
+      )}
+
+      {/* Tarjetas por cliente. Tocar una abre el modal unificado (membresía + números). */}
       {loading ? (
-        <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando tenants…</p>
+        <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando clientes…</p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: cols, gap: '10px', padding: '8px 16px', fontSize: '11px', fontWeight: 700, color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            <span>Nombre</span><span>Skin</span><span>Plan</span><span>Estado</span><span>Paga hasta</span><span>Monto</span><span>Acciones</span>
-          </div>
-
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {tenants.map((t) => {
-            const badge = statusBadge(t);
+            const nums = numbersByTenant[t.id] ?? [];
+            const health = numbersHealth(nums);
+            const dotColor = health === 'g' ? '#5ad87a' : health === 'y' ? '#e6a700' : '#bbb';
+            const dotRing  = health === 'g' ? '#e8fff0' : health === 'y' ? '#fff5da' : '#eee';
+            const full = nums.length >= t.max_whatsapp_numbers;
             return (
-              <div key={t.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: '10px', alignItems: 'center', background: '#fff', borderRadius: '12px', padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
-                {/* Nombre + usuario como subtítulo */}
-                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-                  <span style={{ fontSize: '11px', color: t.username ? '#999' : '#ccc', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {t.username || '—'}
+              <button
+                key={t.id}
+                onClick={() => setOpenTenantId(t.id)}
+                style={{
+                  textAlign: 'left', width: '100%', font: 'inherit', color: 'inherit', cursor: 'pointer',
+                  background: '#fff', border: '1px solid #e4e5df', borderRadius: '16px', padding: '16px',
+                  boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '12px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: 0 }}>
+                    <span style={{ width: 11, height: 11, borderRadius: '50%', background: dotColor, boxShadow: `0 0 0 3px ${dotRing}`, flexShrink: 0 }} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}>
+                      <b style={{ fontSize: '16px', fontWeight: 800, color: '#111', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</b>
+                      {t.username && <span style={{ fontSize: '11px', color: '#aaa', fontFamily: 'monospace' }}>{t.username}</span>}
+                    </span>
                   </span>
-                </span>
-
-                <span style={{ fontSize: '13px', color: '#555' }}>{SKIN_LABEL[t.skin] ?? t.skin ?? '—'}</span>
-
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#555' }}>{PLAN_LABEL[t.plan] ?? t.plan ?? '—'}</span>
-
-                <span>
-                  <span style={{
-                    display: 'inline-block', fontSize: '11px', fontWeight: 800, borderRadius: '999px',
-                    padding: '3px 10px', letterSpacing: '0.03em', background: badge.bg, color: badge.fg,
-                  }}>
-                    {badge.label}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                    <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '3px 8px', borderRadius: '20px', background: '#f5f5f5', color: '#777', border: '1px solid #eaeaea' }}>{PLAN_LABEL[t.plan] ?? t.plan}</span>
+                    {(() => { const b = statusBadge(t); return <span style={{ fontSize: '10px', fontWeight: 800, borderRadius: '20px', padding: '3px 8px', background: b.bg, color: b.fg }}>{b.label}</span>; })()}
                   </span>
-                </span>
+                </div>
 
-                <span style={{ fontSize: '13px', color: '#555' }}>{fmtDate(t.paid_until)}</span>
-
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#111' }}>{fmtAmount(t.monthly_amount)}</span>
-
-                <span style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  <button onClick={() => setEditingMembership(t)} style={{ ...btn('#1a1a1a', '#C8FF00'), padding: '6px 12px', fontSize: '12px' }}>Membresía</button>
-                  <button
-                    onClick={() => toggleStatus(t)}
-                    disabled={togglingId === t.id}
-                    style={{ ...btn(t.status === 'suspended' ? '#E7F9D5' : '#FFE0E0', t.status === 'suspended' ? '#3F7A12' : '#C0392B'), padding: '6px 12px', fontSize: '12px', opacity: togglingId === t.id ? 0.6 : 1 }}
-                  >
-                    {togglingId === t.id ? '…' : (t.status === 'suspended' ? 'Activar' : 'Suspender')}
-                  </button>
-                  <button onClick={() => setEditing(t)} style={{ ...btn('#F0F0F0', '#333'), padding: '6px 12px', fontSize: '12px' }}>Agente</button>
-                </span>
-              </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                    {nums.length === 0 ? (
+                      <span style={{ fontSize: '12.5px', color: '#bbb', fontStyle: 'italic' }}>Sin números conectados</span>
+                    ) : nums.map((n) => (
+                      <span key={n.id} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', fontWeight: 700,
+                        padding: '4px 10px', borderRadius: '20px', whiteSpace: 'nowrap',
+                        ...(n.is_default ? { background: '#1a1a1a', color: '#C8FF00', border: '1px solid #1a1a1a' } : { background: '#f5f5f5', color: '#333', border: '1px solid #eaeaea' }),
+                        ...(n.active ? {} : { color: '#aaa', textDecoration: 'line-through' }),
+                      }}>
+                        {n.is_default && <span style={{ fontSize: '11px' }}>★</span>}
+                        {n.label ?? '(sin label)'}
+                      </span>
+                    ))}
+                  </div>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: full ? '#9a6b00' : '#777', background: full ? '#fff5da' : '#f5f5f5', border: `1px solid ${full ? '#e6c15a' : '#eaeaea'}`, borderRadius: '8px', padding: '4px 9px', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {nums.length} / {t.max_whatsapp_numbers}
+                  </span>
+                  <span style={{ color: '#bbb', fontSize: '18px', flexShrink: 0 }}>›</span>
+                </div>
+              </button>
             );
           })}
 
           {tenants.length === 0 && (
-            <p style={{ textAlign: 'center', color: '#bbb', fontSize: '14px', padding: '20px 0' }}>No hay tenants todavía.</p>
+            <p style={{ textAlign: 'center', color: '#bbb', fontSize: '14px', padding: '20px 0' }}>No hay clientes todavía.</p>
           )}
         </div>
+      )}
+
+      {/* Modal unificado: membresía/agente/suspender + números del cliente. */}
+      {openTenant && (
+        <AdminTenantNumbersModal
+          tenant={openTenant}
+          onClose={() => setOpenTenantId(null)}
+          onChanged={() => fetchAllNumbers(tenants)}
+          onMembership={() => { const t = openTenant; setOpenTenantId(null); setEditingMembership(t); }}
+          onAgent={() => { const t = openTenant; setOpenTenantId(null); setEditing(t); }}
+          onToggleStatus={() => toggleStatus(openTenant)}
+        />
       )}
     </div>
   );
@@ -215,10 +253,6 @@ export default function TenantsClient() {
 // ─────────────────────────────────────────────────────────────────────────────
 function EditTenantModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose: () => void; onSaved: () => void }) {
   const [name,     setName]     = useState(tenant.name);
-  const [phoneId,  setPhoneId]  = useState(tenant.whatsapp_phone_id ?? '');
-  const [wabaId,   setWabaId]   = useState(tenant.whatsapp_waba_id ?? '');
-  const [display,  setDisplay]  = useState(tenant.whatsapp_display_number ?? '');
-  const [token,    setToken]    = useState(tenant.whatsapp_access_token ?? '');
   const [prompt,   setPrompt]   = useState(tenant.system_prompt ?? '');
   const [password, setPassword] = useState('');
   const [showPw,   setShowPw]   = useState(false);
@@ -236,10 +270,6 @@ function EditTenantModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose
     try {
       const body: Record<string, any> = {
         name: name.trim(),
-        whatsapp_phone_id: phoneId.trim(),
-        whatsapp_access_token: token.trim(),
-        waba_id: wabaId.trim(),
-        numero_visible: display.trim(),
         system_prompt: prompt,
       };
       if (password) body.nueva_password = password;
@@ -262,7 +292,7 @@ function EditTenantModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose
       <div style={panel} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#000', margin: 0 }}>Editar agente</h2>
+            <h2 style={{ fontSize: '20px', fontWeight: 900, color: '#000', margin: 0 }}>Editar cliente</h2>
             <p style={{ fontSize: '13px', color: '#999', margin: '4px 0 0' }}>{tenant.name}{tenant.username ? ` · ${tenant.username}` : ''}</p>
           </div>
           <button onClick={onClose} style={{ ...btn('#F0F0F0', '#666'), padding: '6px 12px' }}>✕</button>
@@ -281,23 +311,10 @@ function EditTenantModal({ tenant, onClose, onSaved }: { tenant: Tenant; onClose
           </Field>
         </Section>
 
-        {/* Sección 2 — WhatsApp */}
-        <Section title="WhatsApp">
-          <Field label="Phone Number ID">
-            <input style={inputStyle} value={phoneId} onChange={e => setPhoneId(e.target.value)} placeholder="dejar vacío = sin línea" />
-          </Field>
-          <Field label="WABA ID">
-            <input style={inputStyle} value={wabaId} onChange={e => setWabaId(e.target.value)} placeholder="opcional" />
-          </Field>
-          <Field label="Número visible">
-            <input style={inputStyle} value={display} onChange={e => setDisplay(e.target.value)} placeholder="+54 9 11 1234-5678 (opcional)" />
-          </Field>
-          <Field label="Access Token">
-            <input style={inputStyle} value={token} onChange={e => setToken(e.target.value)} placeholder="dejar vacío = usa token global" />
-          </Field>
-        </Section>
+        {/* Los números de WhatsApp (con token/app_secret cifrados) se cargan desde
+            la sección "Números de WhatsApp" del modal del cliente, no acá. */}
 
-        {/* Sección 3 — Bot */}
+        {/* Sección 2 — Bot */}
         <Section title="Bot">
           <Field label="System Prompt">
             <textarea
@@ -346,6 +363,7 @@ function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onC
   const [paidUntil, setPaidUntil] = useState((tenant.paid_until ?? '').slice(0, 10));
   const [skin,    setSkin]    = useState(tenant.skin ?? 'casino');
   const [notes,   setNotes]   = useState(tenant.notes ?? '');
+  const [maxNumbers, setMaxNumbers] = useState(String(tenant.max_whatsapp_numbers ?? 2));
 
   const [error, setError]   = useState('');
   const [saving, setSaving] = useState(false);
@@ -353,6 +371,8 @@ function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onC
   async function save() {
     const amountNum = Math.trunc(Number(amount));
     if (!Number.isFinite(amountNum) || amountNum < 0) { setError('El monto mensual debe ser un entero ≥ 0.'); return; }
+    const maxNum = Math.trunc(Number(maxNumbers));
+    if (!Number.isFinite(maxNum) || maxNum < 1) { setError('El cupo de números debe ser un entero ≥ 1.'); return; }
 
     setError('');
     setSaving(true);
@@ -362,6 +382,7 @@ function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onC
         monthly_amount: amountNum,
         paid_until: paidUntil || '',   // vacío → el backend lo guarda como null
         notes,
+        max_whatsapp_numbers: maxNum,
       };
       const res = await fetch(`/api/tenants/${tenant.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -408,6 +429,9 @@ function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onC
             <select style={inputStyle} value={skin} onChange={e => setSkin(e.target.value)}>
               {SKIN_OPTIONS.map(s => <option key={s} value={s}>{SKIN_LABEL[s] ?? s}</option>)}
             </select>
+          </Field>
+          <Field label="Cupo de números de WhatsApp">
+            <input style={inputStyle} type="number" min="1" step="1" value={maxNumbers} onChange={e => setMaxNumbers(e.target.value)} />
           </Field>
         </Section>
 

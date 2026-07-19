@@ -1,82 +1,72 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
-import { getSessionAgent } from '@/lib/current-agent';
+import { requireAdmin } from '@/lib/current-agent';
 import { encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
 import { numbersQuota } from '@/lib/wa-numbers';
 
-// Gestión de números de WhatsApp del tenant (multi-número). Solo rol admin.
-// El access_token NUNCA se devuelve al cliente: el GET expone solo has_token.
-// PR1: el token se guarda CIFRADO en access_token_enc; la columna plana queda en
-// null en las altas/ediciones nuevas (las filas viejas se cifran con el backfill).
+// Gestión ADMIN de los números de WhatsApp de OTRO tenant (panel /admin/tenants).
+// A diferencia de /api/whatsapp-numbers (que scopea a la sesión del cliente), acá
+// el scope es el tenant del path y el acceso es requireAdmin (admin global).
+//
+// El POST/PATCH aceptan y CIFRAN el app_secret (app_secret_enc) — la pieza que
+// faltaba y causaba el 401 "Firma inválida" en clientes con app de Meta propia.
+// Los secretos (token / app_secret) NUNCA viajan al cliente: el GET expone solo
+// has_token / has_app_secret.
 
-const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token, access_token_enc';
+const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token, access_token_enc, app_secret, app_secret_enc';
 
 function sanitize(row: any) {
-  // Ni el token plano ni el cifrado viajan al cliente: solo el booleano de presencia.
-  const { access_token, access_token_enc, ...rest } = row;
-  return { ...rest, has_token: !!(access_token || access_token_enc) };
+  const { access_token, access_token_enc, app_secret, app_secret_enc, ...rest } = row;
+  return {
+    ...rest,
+    has_token:      !!(access_token || access_token_enc),
+    has_app_secret: !!(app_secret || app_secret_enc),
+  };
 }
 
-async function requireAdmin(): Promise<{ session: any; error?: undefined } | { session?: undefined; error: NextResponse }> {
-  const session = await getSessionAgent();
-  if (!session) return { error: new NextResponse('No autenticado', { status: 401 }) };
-  if (session.role !== 'admin') return { error: new NextResponse('Requiere rol admin', { status: 403 }) };
-  return { session };
-}
+// GET: números del tenant del path.
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await requireAdmin())) return new NextResponse('Requiere rol admin', { status: 403 });
+  const { id: tenantId } = await params;
 
-async function requireAdminOrAgent(): Promise<{ session: any; error?: undefined } | { session?: undefined; error: NextResponse }> {
-  const session = await getSessionAgent();
-  if (!session) return { error: new NextResponse('No autenticado', { status: 401 }) };
-  if (session.role !== 'admin' && session.role !== 'agent') return { error: new NextResponse('Requiere rol admin o agent', { status: 403 }) };
-  return { session };
-}
-
-// GET: cualquier sesión (no solo admin) — Campañas e Import necesitan listar
-// las líneas para sus selectores. La respuesta no expone secretos (has_token
-// es booleano; el token nunca viaja). POST/PATCH/verify admiten admin y agent (scope por tenant).
-export async function GET() {
-  const session = await getSessionAgent();
-  if (!session) return new NextResponse('No autenticado', { status: 401 });
-
-  const { data, error: dbErr } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('whatsapp_numbers')
     .select(FIELDS)
-    .eq('tenant_id', session.tenant_id)
+    .eq('tenant_id', tenantId)
     .order('created_at', { ascending: true });
 
-  if (dbErr) return new NextResponse(dbErr.message, { status: 500 });
+  if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json((data ?? []).map(sanitize));
 }
 
-export async function POST(request: Request) {
-  // PR4: el alta la hace SOLO el admin (el panel del cliente ya no ofrece agregar).
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+// POST: alta de un número en el tenant del path (con app_secret y cupo).
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await requireAdmin())) return new NextResponse('Requiere rol admin', { status: 403 });
+  const { id: tenantId } = await params;
 
   const body = await request.json().catch(() => null);
   const label         = String(body?.label ?? '').trim();
   const phoneNumberId = String(body?.phone_number_id ?? '').trim();
   const accessToken   = String(body?.access_token ?? '').trim() || null;
   const wabaId        = String(body?.waba_id ?? '').trim() || null;
+  const appSecret     = String(body?.app_secret ?? '').trim() || null;
 
   if (!label) return new NextResponse('Falta el label', { status: 400 });
   if (!/^\d+$/.test(phoneNumberId)) {
     return new NextResponse('phone_number_id inválido: debe ser el ID numérico del número en Meta', { status: 400 });
   }
-  // Si hay token, exigimos la clave de cifrado (fail-closed en la ESCRITURA: no
-  // guardamos un token nuevo en texto plano). La lectura sigue siendo fail-open.
-  if (accessToken && !isSecretEncryptionConfigured()) {
+  // Fail-closed en la ESCRITURA de secretos: no guardamos secretos nuevos en plano.
+  if ((accessToken || appSecret) && !isSecretEncryptionConfigured()) {
     return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
   }
 
-  // Duplicado: la unique constraint también lo frena, pero así el error es claro.
+  // Duplicado global (la unique constraint también lo frena; acá el error es claro).
   const { data: dup } = await supabaseAdmin
     .from('whatsapp_numbers').select('id').eq('phone_number_id', phoneNumberId).maybeSingle();
   if (dup) return new NextResponse('Ese phone_number_id ya está registrado', { status: 409 });
 
-  // Cupo por cliente: TODAS las filas (activas + inactivas) contra
-  // max_whatsapp_numbers. El primer número del tenant queda como default.
-  const quota = await numbersQuota(session.tenant_id);
+  // Cupo del tenant destino (misma regla que el alta self-service).
+  const quota = await numbersQuota(tenantId);
   if (quota.full) {
     return new NextResponse(`Cupo de números alcanzado (${quota.max}). Subilo en Membresía.`, { status: 409 });
   }
@@ -84,12 +74,14 @@ export async function POST(request: Request) {
   const { data, error: insErr } = await supabaseAdmin
     .from('whatsapp_numbers')
     .insert({
-      tenant_id:        session.tenant_id,
+      tenant_id:        tenantId,
       label,
       phone_number_id:  phoneNumberId,
-      // Token cifrado; la columna plana queda null en las altas nuevas.
+      // Secretos cifrados; las columnas planas quedan null en las altas nuevas.
       access_token:     null,
       access_token_enc: accessToken ? encryptSecret(accessToken) : null,
+      app_secret:       null,
+      app_secret_enc:   appSecret ? encryptSecret(appSecret) : null,
       waba_id:          wabaId,
       active:           true,
       is_default:       quota.count === 0,
@@ -101,9 +93,11 @@ export async function POST(request: Request) {
   return NextResponse.json(sanitize(data));
 }
 
-export async function PATCH(request: Request) {
-  const { session, error } = await requireAdminOrAgent();
-  if (error) return error;
+// PATCH: editar un número del tenant del path. Admite label, waba_id, access_token,
+// app_secret, active y make_default (admin tiene control total sobre la línea).
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await requireAdmin())) return new NextResponse('Requiere rol admin', { status: 403 });
+  const { id: tenantId } = await params;
 
   const body = await request.json().catch(() => null);
   const id = body?.id as string | undefined;
@@ -111,28 +105,20 @@ export async function PATCH(request: Request) {
 
   const { data: num } = await supabaseAdmin
     .from('whatsapp_numbers')
-    .select(FIELDS)
+    .select('id, is_default, active')
     .eq('id', id)
-    .eq('tenant_id', session.tenant_id)
+    .eq('tenant_id', tenantId)
     .maybeSingle();
   if (!num) return new NextResponse('Número no encontrado', { status: 404 });
 
-  // PR4: el agent (panel del cliente) solo puede editar label y marcar default.
-  // Token, WABA y estado (activar/desactivar) son admin-only.
-  const isAdmin = session.role === 'admin';
-  if (!isAdmin && (body?.access_token !== undefined || body?.waba_id !== undefined || body?.active !== undefined)) {
-    return new NextResponse('Solo un administrador puede cambiar el token, la WABA o el estado del número.', { status: 403 });
-  }
-
-  // Marcar default: desmarcar el anterior ANTES de marcar este (el índice único
-  // parcial idx_whatsapp_numbers_default exige ese orden). Debe estar activo:
-  // resolveCreds solo considera defaults activos.
+  // Marcar default: desmarcar el anterior ANTES (índice único parcial). Debe estar
+  // activo (resolveCreds solo considera defaults activos).
   if (body?.make_default === true && !num.is_default) {
     if (!num.active) {
       return new NextResponse('Activá el número antes de marcarlo como default', { status: 409 });
     }
     const { error: e1 } = await supabaseAdmin.from('whatsapp_numbers')
-      .update({ is_default: false }).eq('tenant_id', session.tenant_id).eq('is_default', true);
+      .update({ is_default: false }).eq('tenant_id', tenantId).eq('is_default', true);
     if (e1) return new NextResponse(e1.message, { status: 500 });
     const { error: e2 } = await supabaseAdmin.from('whatsapp_numbers')
       .update({ is_default: true }).eq('id', id);
@@ -150,24 +136,29 @@ export async function PATCH(request: Request) {
     if (t && !isSecretEncryptionConfigured()) {
       return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
     }
-    // Token nuevo → cifrado; vacío → se limpia. En ambos casos la columna plana
-    // queda null (dejamos de escribir texto plano).
     updates.access_token     = null;
     updates.access_token_enc = t ? encryptSecret(t) : null;
   }
-  if (body?.waba_id !== undefined)      updates.waba_id      = String(body.waba_id).trim() || null;
+  if (body?.app_secret !== undefined) {
+    const s = String(body.app_secret).trim();
+    if (s && !isSecretEncryptionConfigured()) {
+      return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
+    }
+    updates.app_secret     = null;
+    updates.app_secret_enc = s ? encryptSecret(s) : null;
+  }
+  if (body?.waba_id !== undefined) updates.waba_id = String(body.waba_id).trim() || null;
 
   if (body?.active !== undefined) {
     const active = !!body.active;
     if (!active) {
-      // El default no se desactiva (mover el default primero) y el último
-      // activo tampoco (dejaría al tenant sin números para enviar).
+      // El default no se desactiva (mover el default primero) y el último activo tampoco.
       if (num.is_default) {
         return new NextResponse('El número default no se puede desactivar: marcá otro como default primero', { status: 409 });
       }
       const { count } = await supabaseAdmin.from('whatsapp_numbers')
         .select('id', { count: 'exact', head: true })
-        .eq('tenant_id', session.tenant_id).eq('active', true);
+        .eq('tenant_id', tenantId).eq('active', true);
       if ((count ?? 0) <= 1) {
         return new NextResponse('No se puede desactivar el único número activo', { status: 409 });
       }
@@ -177,7 +168,7 @@ export async function PATCH(request: Request) {
 
   if (Object.keys(updates).length > 0) {
     const { error: upErr } = await supabaseAdmin.from('whatsapp_numbers')
-      .update(updates).eq('id', id).eq('tenant_id', session.tenant_id);
+      .update(updates).eq('id', id).eq('tenant_id', tenantId);
     if (upErr) return new NextResponse(upErr.message, { status: 500 });
   }
 
@@ -187,13 +178,11 @@ export async function PATCH(request: Request) {
   return NextResponse.json(sanitize(fresh));
 }
 
-// DELETE: borra una línea del tenant. Mismas guardas que el "desactivar" del
-// PATCH: no se puede borrar el número default (mover el default primero) ni el
-// único número activo (dejaría al tenant sin números para enviar).
-export async function DELETE(request: Request) {
-  // PR4: eliminar una línea es admin-only (el panel del cliente no lo ofrece).
-  const { session, error } = await requireAdmin();
-  if (error) return error;
+// DELETE: borra una línea del tenant del path. Mismas guardas que el desactivar:
+// no se puede borrar el default ni el único número activo.
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await requireAdmin())) return new NextResponse('Requiere rol admin', { status: 403 });
+  const { id: tenantId } = await params;
 
   const body = await request.json().catch(() => null);
   const id = body?.id as string | undefined;
@@ -203,7 +192,7 @@ export async function DELETE(request: Request) {
     .from('whatsapp_numbers')
     .select('id, is_default, active')
     .eq('id', id)
-    .eq('tenant_id', session.tenant_id)
+    .eq('tenant_id', tenantId)
     .maybeSingle();
   if (!num) return new NextResponse('Número no encontrado', { status: 404 });
 
@@ -213,14 +202,14 @@ export async function DELETE(request: Request) {
   if (num.active) {
     const { count } = await supabaseAdmin.from('whatsapp_numbers')
       .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', session.tenant_id).eq('active', true);
+      .eq('tenant_id', tenantId).eq('active', true);
     if ((count ?? 0) <= 1) {
       return new NextResponse('No se puede eliminar el único número activo', { status: 400 });
     }
   }
 
   const { error: delErr } = await supabaseAdmin.from('whatsapp_numbers')
-    .delete().eq('id', id).eq('tenant_id', session.tenant_id);
+    .delete().eq('id', id).eq('tenant_id', tenantId);
   if (delErr) return new NextResponse(delErr.message, { status: 500 });
 
   return NextResponse.json({ ok: true });

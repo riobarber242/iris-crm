@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/current-agent';
 
 const TENANT_FIELDS =
   'id, name, whatsapp_phone_id, whatsapp_access_token, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
-  'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes';
+  'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes, max_whatsapp_numbers';
 
 // GET incluye el username del agente (rol='agent') y el system_prompt (settings)
 // para que el listado muestre el usuario y el modal de edición traiga todo.
