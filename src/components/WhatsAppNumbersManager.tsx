@@ -44,6 +44,10 @@ const smallBtn: React.CSSProperties = {
 export default function WhatsAppNumbersManager() {
   const { agent } = useAuth();
   const canManageNumbers = agent?.role === 'admin' || agent?.role === 'agent';
+  // PR4: el agent solo VE sus números y edita label / hace default / verifica.
+  // Agregar, eliminar, activar/desactivar y editar token/WABA son admin-only
+  // (acá se ocultan; la API además lo rechaza server-side).
+  const isAdmin = agent?.role === 'admin';
 
   const [numbers, setNumbers] = useState<WaNumber[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,11 +149,15 @@ export default function WhatsAppNumbersManager() {
   }
 
   async function handleSaveEdit(n: WaNumber) {
-    const payload: Record<string, unknown> = { label: editLabel, waba_id: editWaba };
-    // Token: solo se manda si se escribió uno nuevo o se pidió volver al global
-    // (mandar siempre vaciaría el token propio sin querer).
-    if (clearToken) payload.access_token = '';
-    else if (editToken.trim()) payload.access_token = editToken.trim();
+    // El agent solo edita label. Admin además edita WABA y token.
+    const payload: Record<string, unknown> = { label: editLabel };
+    if (isAdmin) {
+      payload.waba_id = editWaba;
+      // Token: solo se manda si se escribió uno nuevo o se pidió volver al global
+      // (mandar siempre vaciaría el token propio sin querer).
+      if (clearToken) payload.access_token = '';
+      else if (editToken.trim()) payload.access_token = editToken.trim();
+    }
     setSaving(true);
     const ok = await patchNumber(n.id, payload);
     setSaving(false);
@@ -239,9 +247,15 @@ export default function WhatsAppNumbersManager() {
                     </p>
                   )}
                   <p style={{ fontSize: '11px', color: '#aaa', margin: '3px 0 0 0' }}>
-                    Token: {n.has_token ? 'propio' : 'global (env)'}
-                    {n.waba_id && <> · WABA: {n.waba_id}</>}
-                    {' · '}Alta: {new Date(n.created_at).toLocaleDateString('es-AR')}
+                    {/* Token/WABA es detalle de infra: solo el admin lo ve. */}
+                    {isAdmin && (
+                      <>
+                        Token: {n.has_token ? 'propio' : 'global (env)'}
+                        {n.waba_id && <> · WABA: {n.waba_id}</>}
+                        {' · '}
+                      </>
+                    )}
+                    Alta: {new Date(n.created_at).toLocaleDateString('es-AR')}
                   </p>
                 </div>
 
@@ -260,9 +274,9 @@ export default function WhatsAppNumbersManager() {
                       Hacer default
                     </button>
                   )}
-                  {/* El default no se desactiva y el único activo tampoco (la API
-                      también lo rechaza; acá directamente no se ofrece). */}
-                  {!(n.active && (n.is_default || activos <= 1)) && (
+                  {/* Activar/desactivar es admin-only. El default no se desactiva y el
+                      único activo tampoco (la API también lo rechaza). */}
+                  {isAdmin && !(n.active && (n.is_default || activos <= 1)) && (
                     <button
                       onClick={() => patchNumber(n.id, { active: !n.active })}
                       style={{
@@ -275,7 +289,8 @@ export default function WhatsAppNumbersManager() {
                       {n.active ? 'Desactivar' : 'Activar'}
                     </button>
                   )}
-                  {!n.is_default && (
+                  {/* Eliminar es admin-only. */}
+                  {isAdmin && !n.is_default && (
                     <button
                       onClick={() => setConfirmDeleteId(n.id)}
                       title="Eliminar línea"
@@ -317,28 +332,33 @@ export default function WhatsAppNumbersManager() {
                       <label style={labelStyle}>Label</label>
                       <input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} style={inputStyle} />
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '160px' }}>
-                      <label style={labelStyle}>WABA ID</label>
-                      <input value={editWaba} onChange={(e) => setEditWaba(e.target.value)} placeholder="(vacío = global)" style={inputStyle} />
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={labelStyle}>Access token</label>
-                    <input
-                      type="password"
-                      value={editToken}
-                      onChange={(e) => { setEditToken(e.target.value); setClearToken(false); }}
-                      placeholder={n.has_token ? '•••••• (dejar vacío para no cambiarlo)' : '(vacío = usa el token global)'}
-                      style={inputStyle}
-                      disabled={clearToken}
-                    />
-                    {n.has_token && (
-                      <label style={{ fontSize: '12px', color: '#888', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} />
-                        Quitar el token propio y volver al global (env)
-                      </label>
+                    {/* WABA y token: admin-only (infra). El agent solo edita el label. */}
+                    {isAdmin && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '160px' }}>
+                        <label style={labelStyle}>WABA ID</label>
+                        <input value={editWaba} onChange={(e) => setEditWaba(e.target.value)} placeholder="(vacío = global)" style={inputStyle} />
+                      </div>
                     )}
                   </div>
+                  {isAdmin && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={labelStyle}>Access token</label>
+                      <input
+                        type="password"
+                        value={editToken}
+                        onChange={(e) => { setEditToken(e.target.value); setClearToken(false); }}
+                        placeholder={n.has_token ? '•••••• (dejar vacío para no cambiarlo)' : '(vacío = usa el token global)'}
+                        style={inputStyle}
+                        disabled={clearToken}
+                      />
+                      {n.has_token && (
+                        <label style={{ fontSize: '12px', color: '#888', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} />
+                          Quitar el token propio y volver al global (env)
+                        </label>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={() => handleSaveEdit(n)}
                     disabled={saving}
@@ -354,7 +374,9 @@ export default function WhatsAppNumbersManager() {
 
         {error && <p style={{ fontSize: '13px', color: '#E53935', fontWeight: 600, margin: 0 }}>{error}</p>}
 
-        {!showForm ? (
+        {/* Alta: admin-only. Al agent no se le muestra ningún botón ni casillero
+            que sugiera que puede agregar un número. */}
+        {!isAdmin ? null : !showForm ? (
           <button
             onClick={() => { setShowForm(true); setError(''); }}
             style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '12px', padding: '10px 20px', cursor: 'pointer', alignSelf: 'flex-start' }}

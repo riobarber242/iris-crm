@@ -5,7 +5,7 @@ import { hashPassword } from '@/lib/auth';
 
 const TENANT_FIELDS =
   'id, name, whatsapp_phone_id, whatsapp_access_token, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
-  'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes';
+  'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes, max_whatsapp_numbers';
 
 const MAX_PROMPT = 4000;
 
@@ -75,6 +75,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   if (body.notes !== undefined) {
     updates.notes = String(body.notes).trim() || null;
+  }
+  if (body.max_whatsapp_numbers !== undefined) {
+    const n = Math.trunc(Number(body.max_whatsapp_numbers));
+    if (!Number.isFinite(n) || n < 1) {
+      return NextResponse.json({ error: 'El cupo de números debe ser un entero ≥ 1' }, { status: 400 });
+    }
+    updates.max_whatsapp_numbers = n;
   }
 
   // ── 2. system_prompt (tabla settings, por tenant) ─────────────────────────
