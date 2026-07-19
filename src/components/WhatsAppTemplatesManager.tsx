@@ -216,7 +216,7 @@ export default function WhatsAppTemplatesManager() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
         <p style={{ fontSize: '13px', color: '#555', background: '#FFFBEA', border: '1px solid #FCE8A6', borderRadius: '10px', padding: '10px 14px', margin: 0, lineHeight: 1.5 }}>
-          💡 Sin verificación de negocio en Meta podés crear hasta 250 plantillas y enviarlas a hasta 250 contactos por semana. Una vez que verifiques tu negocio en Meta Business Manager ese límite desaparece.
+          💡 Sin verificación de negocio en Meta podés iniciar hasta 250 conversaciones nuevas por número en una ventana móvil de 24 horas. Desde octubre de 2025 ese cupo se comparte entre todos los números del mismo Business Manager (no se suma por número). Una vez que verifiques tu negocio en Meta Business Manager ese límite desaparece.
         </p>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
