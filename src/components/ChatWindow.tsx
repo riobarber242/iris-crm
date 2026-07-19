@@ -123,12 +123,24 @@ type MediaContent = {
   mime?: string | null;
   lat?: number; lng?: number; name?: string | null; address?: string | null; // location
   contacts?: SharedContact[];  // contacts
+  pending?: boolean;           // media entrante que aún no se pudo descargar de Meta (se reintenta)
+  failed?: boolean;            // media que ya no se pudo recuperar (Meta la purgó)
+  media_id?: string;           // id del media en Meta, para el reintento
+};
+
+// Etiqueta corta por tipo de media (para los estados procesando / no disponible).
+const MEDIA_LABEL: Record<string, string> = {
+  image: '🖼️ Imagen', document: '📄 Documento', audio: '🎤 Audio', sticker: '🌟 Sticker', video: '🎬 Video',
 };
 
 function parseMedia(raw: string): MediaContent | null {
   try {
     const p = JSON.parse(raw);
-    if (['image', 'audio', 'sticker', 'document', 'video'].includes(p?._type) && typeof p.url === 'string') return p;
+    const isMediaType = ['image', 'audio', 'sticker', 'document', 'video'].includes(p?._type);
+    if (isMediaType && typeof p.url === 'string') return p;
+    // Media pendiente/fallida (sin url todavía): la reconocemos para renderizar el
+    // estado "procesando…/no disponible" en vez del JSON crudo o un placeholder muerto.
+    if (isMediaType && (p?.pending === true || p?.failed === true)) return { ...p, url: '' };
     if (p?._type === 'location' && typeof p.lat === 'number' && typeof p.lng === 'number') return p;
     if (p?._type === 'contacts' && Array.isArray(p.contacts)) return p;
   } catch {}
@@ -964,8 +976,9 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           //   saliente del staff (role 'human', operador/agente) → Pagos
           // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
           // un pago lo origina una imagen que mandó una persona del equipo.
-          const hasImage   = media?._type === 'image' || body.kind === 'image';
-          const isPdfDoc   = media?._type === 'document' && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
+          // pending/failed no tienen url: no aplican el estilo de burbuja de media.
+          const hasImage   = (media?._type === 'image' && !!media.url) || body.kind === 'image';
+          const isPdfDoc   = media?._type === 'document' && !!media.url && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
           const canVerify  = (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
           const verifSent  = !!m.id && verifSentIds.has(m.id);
           const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
@@ -1036,6 +1049,14 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                     <button type="button" onClick={saveEdit} disabled={savingEdit} style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 800, cursor: savingEdit ? 'wait' : 'pointer' }}>{savingEdit ? 'Guardando…' : 'Guardar'}</button>
                   </div>
                 </div>
+              ) : media?.pending ? (
+                <span style={{ fontSize: '14px', opacity: 0.85 }}>
+                  {MEDIA_LABEL[media._type] ?? '📎 Archivo'} · procesando…
+                </span>
+              ) : media?.failed ? (
+                <span style={{ fontSize: '14px', opacity: 0.7, fontStyle: 'italic' }}>
+                  {MEDIA_LABEL[media._type] ?? '📎 Archivo'} no disponible
+                </span>
               ) : media?._type === 'image' ? (
                 <div>
                   <img

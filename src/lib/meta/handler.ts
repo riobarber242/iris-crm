@@ -16,6 +16,8 @@ import { makeThumb, thumbPathFor } from '../thumb-generate';
 // Tenant principal (fallback cuando no se puede resolver por whatsapp_phone_id).
 const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 // Resuelve tenant + número a partir del phone_number_id que llega en el webhook.
 //  1. whatsapp_numbers (multi-número por tenant).
 //  2. Compat: tenants.whatsapp_phone_id (números aún no migrados a la tabla).
@@ -149,7 +151,7 @@ const ALREADY_CLIENT_RE = /ya teng|ya ten[eé]s|tengo (una )?cuenta|tengo usuari
 // Step 3: Upload buffer to Supabase Storage (service role)   → stored file
 // Step 4: Construct permanent public URL manually             → saved to DB
 
-async function saveComprobanteImage(mediaId: string, contactId: string, waToken: string | null): Promise<string | null> {
+export async function saveComprobanteImage(mediaId: string, contactId: string, waToken: string | null): Promise<string | null> {
   const supaUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
   if (!waToken) {
@@ -222,9 +224,18 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
 
   console.log(`[saveComprobanteImage] Step3 uploading → comprobantes/${filePath}`);
 
-  const { error: uploadError } = await supabaseAdmin.storage
-    .from(COMPROBANTES_BUCKET)
-    .upload(filePath, buffer, { contentType, upsert: true });
+  // Reintento del upload: Storage puede tener blips transitorios. Step1/2 ya
+  // reintentan (withTransientRetry); este era el único paso sin retry.
+  let uploadError: { message: string } | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error } = await supabaseAdmin.storage
+      .from(COMPROBANTES_BUCKET)
+      .upload(filePath, buffer, { contentType, upsert: true });
+    uploadError = error;
+    if (!error) break;
+    console.warn(`[saveComprobanteImage] Step3 intento ${attempt}/3 falló: ${error.message}`);
+    if (attempt < 3) await sleep(1000 * attempt);
+  }
 
   if (uploadError) {
     console.error(`[saveComprobanteImage] Step3 ✗ Supabase Storage error: ${uploadError.message}`);
@@ -268,7 +279,7 @@ async function saveComprobanteImage(mediaId: string, contactId: string, waToken:
 // ahora nada entra solo a la bandeja de Cargas: el operador decide qué imágenes
 // mandar a verificar con el botón "Enviar a verificar" desde la conversación
 // (ver POST /api/comprobantes). Acá solo persistimos la imagen.
-async function saveInboundImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<string | null> {
+async function saveInboundImage(message: any, contactId: string, tenantId: string, numberId: string | null): Promise<{ url: string | null; mediaId: string | null }> {
   const mediaId = message.image?.id ?? message.document?.id ?? message.sticker?.id
                 ?? message.audio?.id ?? message.voice?.id ?? message.video?.id ?? null;
   // El media solo puede descargarse con el token del número que lo recibió.
@@ -280,12 +291,51 @@ async function saveInboundImage(message: any, contactId: string, tenantId: strin
       console.error('[saveInboundImage] No se pudo resolver token de WhatsApp:', err);
     }
   }
-  const supabaseImageUrl = mediaId ? await saveComprobanteImage(mediaId, contactId, waToken) : null;
+  const url = mediaId ? await saveComprobanteImage(mediaId, contactId, waToken) : null;
 
-  if (!mediaId)          console.warn('[image] Sin mediaId en el payload');
-  if (!supabaseImageUrl) console.warn('[image] Upload falló — la imagen no se pudo guardar');
+  if (!mediaId)        console.warn('[image] Sin mediaId en el payload');
+  // Descarga fallida (p.ej. Meta caído): NO perdemos la referencia. Devolvemos el
+  // media_id para guardarlo como pending y que el cron de reintento lo recupere.
+  if (mediaId && !url) console.warn(`[image] Descarga/subida falló (media_id=${mediaId}) — se guarda pending para reintento`);
 
-  return supabaseImageUrl;
+  return { url, mediaId };
+}
+
+// _type usado en el JSON del chat según el tipo de media entrante (null = no es media).
+function mediaJsonType(type: string): 'image' | 'sticker' | 'audio' | 'video' | 'document' | null {
+  if (type === 'image')    return 'image';
+  if (type === 'sticker')  return 'sticker';
+  if (type === 'audio' || type === 'voice') return 'audio';
+  if (type === 'video')    return 'video';
+  if (type === 'document') return 'document';
+  return null;
+}
+
+// JSON del mensaje de media DESCARGADA OK (misma forma de siempre, por tipo).
+function successMediaJson(mType: string, url: string, message: any): any {
+  switch (mType) {
+    case 'image':    return { _type: 'image', url, caption: (message.image?.caption ?? '').trim() };
+    case 'sticker':  return { _type: 'sticker', url };
+    case 'audio':    return { _type: 'audio', url };
+    case 'video':    return { _type: 'video', url, caption: (message.video?.caption ?? '').trim() };
+    case 'document': return { _type: 'document', url, filename: (message.document?.filename ?? '').trim() || null, mime: message.document?.mime_type ?? null, caption: (message.document?.caption ?? '').trim() };
+    default:         return { _type: mType, url };
+  }
+}
+
+// JSON del mensaje de media que NO se pudo descargar. Guarda el media_id (para que
+// el cron de reintento la recupere) en vez de perder la referencia guardando el
+// literal "image". pending:true → el chat lo muestra como "procesando…".
+function pendingMediaJson(mType: string, mediaId: string, message: any): any {
+  const base: any = { _type: mType, pending: true, media_id: mediaId };
+  if (mType === 'image') base.caption = (message.image?.caption ?? '').trim();
+  if (mType === 'video') base.caption = (message.video?.caption ?? '').trim();
+  if (mType === 'document') {
+    base.filename = (message.document?.filename ?? '').trim() || null;
+    base.mime     = message.document?.mime_type ?? null;
+    base.caption  = (message.document?.caption ?? '').trim();
+  }
+  return base;
 }
 
 // Vista previa corta de un mensaje citado (reply-to), para mostrar arriba de la
@@ -582,8 +632,11 @@ async function processMessage(
   //    y se renderice como imagen en el chat del CRM. Etapa 4a: NO se crea
   //    comprobante automático; el operador lo manda a verificar con el botón.
   let inboundMediaUrl: string | null = null;
+  let inboundMediaId: string | null = null;
   if (['image', 'document', 'sticker', 'audio', 'voice', 'video'].includes(type)) {
-    inboundMediaUrl = await saveInboundImage(message, contact.id, tenantId, numberId);
+    const r = await saveInboundImage(message, contact.id, tenantId, numberId);
+    inboundMediaUrl = r.url;
+    inboundMediaId  = r.mediaId;
   }
 
   // Ubicación y contactos compartidos no son "media" (no se descargan), pero los
@@ -609,13 +662,14 @@ async function processMessage(
 
   // Contenido del mensaje del usuario. Media (imagen/sticker/audio/doc/video) se
   // guarda como JSON para que el chat del CRM lo renderice en vez de un placeholder.
+  // Media descargada OK → JSON con la url. Media que falló la descarga (Meta caído,
+  // etc.) → JSON pending con el media_id (recuperable por el cron), NO el literal
+  // "image" (que se perdía sin referencia y rompía el chat).
+  const mType = mediaJsonType(type);
   const userContent =
-    type === 'text'                            ? text
-    : (type === 'image' && inboundMediaUrl)    ? JSON.stringify({ _type: 'image', url: inboundMediaUrl, caption: (message.image?.caption ?? '').trim() })
-    : (type === 'sticker' && inboundMediaUrl)  ? JSON.stringify({ _type: 'sticker', url: inboundMediaUrl })
-    : (['audio', 'voice'].includes(type) && inboundMediaUrl) ? JSON.stringify({ _type: 'audio', url: inboundMediaUrl })
-    : (type === 'video' && inboundMediaUrl)    ? JSON.stringify({ _type: 'video', url: inboundMediaUrl, caption: (message.video?.caption ?? '').trim() })
-    : (type === 'document' && inboundMediaUrl) ? JSON.stringify({ _type: 'document', url: inboundMediaUrl, filename: (message.document?.filename ?? '').trim() || null, mime: message.document?.mime_type ?? null, caption: (message.document?.caption ?? '').trim() })
+    type === 'text'              ? text
+    : (mType && inboundMediaUrl) ? JSON.stringify(successMediaJson(mType, inboundMediaUrl, message))
+    : (mType && inboundMediaId)  ? JSON.stringify(pendingMediaJson(mType, inboundMediaId, message))
     : locationJson ?? contactsJson ?? type;
 
   // ── Reply-to (respuesta citada) ─────────────────────────────────────────────
