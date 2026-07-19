@@ -11,6 +11,33 @@ import { useAuth } from '@/components/AuthProvider';
 // toda la app y diferencia naranja/rojo). Acá ya no se emite beep para no
 // duplicarlo.
 
+// Texto corto del último mensaje para la lista: media → etiqueta con emoji (no el
+// JSON crudo). Refleja pending ("procesando…") y failed ("no disponible"), y cubre
+// los literales viejos ('image', etc.). Alineado con previewOf/classifyBody.
+function previewText(content: string | null | undefined): string {
+  const c = (content ?? '').trim();
+  if (!c) return '';
+  const state = (p: any) => (p.pending ? ' · procesando…' : p.failed ? ' no disponible' : '');
+  try {
+    const p = JSON.parse(c);
+    if (p?._type === 'image')    return `📷 Imagen${state(p)}`;
+    if (p?._type === 'sticker')  return `🌟 Sticker${state(p)}`;
+    if (p?._type === 'audio')    return `🎤 Audio${state(p)}`;
+    if (p?._type === 'video')    return `🎬 Video${state(p)}`;
+    if (p?._type === 'document') return p.pending || p.failed ? `📄 Documento${state(p)}` : `📄 ${p.filename || 'Documento'}`;
+    if (p?._type === 'location') return '📍 Ubicación';
+    if (p?._type === 'contacts') return '👤 Contacto';
+    if (p?._type === 'campaign_event') return p.text || 'Interacción de campaña';
+  } catch { /* texto plano o literal viejo */ }
+  if (c === 'image')                  return '📷 Imagen';
+  if (c === 'document')               return '📄 Documento';
+  if (c === 'audio' || c === 'voice') return '🎤 Audio';
+  if (c === 'sticker')                return '🌟 Sticker';
+  if (c === 'video')                  return '🎬 Video';
+  if (c === 'unsupported')            return '⚠️ Mensaje no compatible';
+  return c;
+}
+
 export default function ConversationsClient() {
   const [conversations,  setConversations]  = useState<any[]>([]);
   const [activeFilter,   setActiveFilter]   = useState<'todos' | 'nuevo' | 'cliente_activo' | 'inactivo' | 'bloqueado'>('todos');
@@ -483,7 +510,7 @@ export default function ConversationsClient() {
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                   }}>
-                    {lastMessage.content}
+                    {previewText(lastMessage.content)}
                   </p>
                   <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0' }} title={new Date(lastMessage.created_at).toLocaleString('es-AR')}>
                     {formatRelativeTime(lastMessage.created_at)}

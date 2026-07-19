@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/resume-campaigns",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/retry-media",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
