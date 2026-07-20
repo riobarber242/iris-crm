@@ -1,14 +1,31 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent, requireAgentOrAdmin } from '@/lib/current-agent';
+import { resolveWaba, listTenantWabas } from '@/lib/waba';
 
 // CRUD de plantillas de WhatsApp del tenant (tabla whatsapp_templates).
 // El scope es SIEMPRE el tenant del usuario autenticado.
 //  - GET: lista (cualquier sesión del tenant).
 //  - POST/PUT/DELETE: solo admin y agent (operator → 403).
 // service-role / sin RLS, como el resto del proyecto.
+//
+// Cada plantilla pertenece a UNA WABA (waba_id): es donde Meta la tiene aprobada.
+// null = legacy (anterior a la migración de WABA): se muestra para cualquier línea.
 
-const FIELDS = 'id, name, language, body, buttons, created_at';
+const FIELDS = 'id, name, language, body, buttons, created_at, waba_id, approval_status, meta_template_id, status_synced_at';
+
+// WABA con la que se guarda una plantilla nueva. Si el cliente mandó una, se
+// valida que sea una WABA REAL del tenant (no se acepta un id arbitrario); si no
+// mandó ninguna, se usa la del número default. Así el waba_id nunca depende de
+// una carga manual: sale solo del alta.
+async function resolveTemplateWaba(tenantId: string, requested: unknown): Promise<string | null> {
+  const asked = String(requested ?? '').trim();
+  if (asked) {
+    const wabas = await listTenantWabas(tenantId);
+    if (wabas.some((w) => w.wabaId === asked)) return asked;
+  }
+  return resolveWaba(tenantId);
+}
 
 // Normaliza los botones de respuesta rápida: array de hasta 2 textos no vacíos.
 function parseButtons(raw: unknown): string[] {
@@ -48,9 +65,13 @@ export async function POST(request: Request) {
   if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 });
   if (!text) return NextResponse.json({ error: 'El cuerpo es requerido' }, { status: 400 });
 
+  // La plantilla nace atada a una WABA (la elegida en el panel o la del número
+  // default). Sin esto el selector de campañas no puede filtrarla por línea.
+  const wabaId = await resolveTemplateWaba(session.tenant_id, body?.waba_id);
+
   const { data, error } = await supabaseAdmin
     .from('whatsapp_templates')
-    .insert({ tenant_id: session.tenant_id, name, language, body: text, buttons })
+    .insert({ tenant_id: session.tenant_id, name, language, body: text, buttons, waba_id: wabaId })
     .select(FIELDS)
     .single();
 
@@ -75,9 +96,21 @@ export async function PUT(request: Request) {
   if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 });
   if (!text) return NextResponse.json({ error: 'El cuerpo es requerido' }, { status: 400 });
 
+  // Renombrar o cambiar el idioma convierte esto en OTRA plantilla para Meta: la
+  // aprobación anterior deja de aplicar, así que el estado vuelve a "desconocido"
+  // (punto gris) hasta la próxima sincronización.
+  const { data: prev } = await supabaseAdmin
+    .from('whatsapp_templates')
+    .select('name, language').eq('id', id).eq('tenant_id', session.tenant_id).maybeSingle();
+  const identityChanged = !!prev && (prev.name !== name || (prev.language || '') !== language);
+
   const { data, error } = await supabaseAdmin
     .from('whatsapp_templates')
-    .update({ name, language, body: text, buttons })
+    .update({
+      name, language, body: text, buttons,
+      ...(body?.waba_id !== undefined ? { waba_id: await resolveTemplateWaba(session.tenant_id, body?.waba_id) } : {}),
+      ...(identityChanged ? { approval_status: null, meta_template_id: null, status_synced_at: null } : {}),
+    })
     .eq('id', id)
     .eq('tenant_id', session.tenant_id)
     .select(FIELDS)

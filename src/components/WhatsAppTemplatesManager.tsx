@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { TemplateStatusDot } from '@/components/ui/TemplateStatusDot';
 
 type Template = {
   id: string;
@@ -11,7 +12,15 @@ type Template = {
   body: string;
   buttons?: string[];
   created_at: string;
+  // WABA dueña de la plantilla (null = legacy, anterior a la migración por WABA)
+  // y estado de aprobación que reporta Meta.
+  waba_id?: string | null;
+  approval_status?: string | null;
+  status_synced_at?: string | null;
 };
+
+// Línea de WhatsApp del tenant, para saber a qué WABA pertenece cada plantilla.
+type WaLine = { id: string; label: string | null; waba_id: string | null; active: boolean; is_default: boolean };
 
 const inputStyle: React.CSSProperties = {
   background: '#F5F5F5', border: 'none', borderRadius: '10px',
@@ -52,6 +61,16 @@ export default function WhatsAppTemplatesManager() {
   const [language, setLanguage] = useState('es');
   const [body, setBody] = useState('');
   const [buttons, setButtons] = useState<string[]>(['', '']);
+  // WABA con la que se da de alta. Solo se elige si el tenant tiene líneas en más
+  // de una WABA; con una sola, el server la resuelve solo (número default).
+  const [newWaba, setNewWaba] = useState('');
+
+  // Líneas del tenant → de acá salen las WABAs disponibles y sus nombres.
+  const [lines, setLines] = useState<WaLine[]>([]);
+
+  // Sincronización del estado de aprobación contra Meta.
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
 
   // Edición inline
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -59,6 +78,9 @@ export default function WhatsAppTemplatesManager() {
   const [editLanguage, setEditLanguage] = useState('es');
   const [editBody, setEditBody] = useState('');
   const [editButtons, setEditButtons] = useState<string[]>(['', '']);
+  // WABA de la plantilla en edición. Editable para poder corregir una mal asignada
+  // (si no, quedaría invisible en campañas y solo se arreglaría por SQL).
+  const [editWaba, setEditWaba] = useState('');
 
   // Envío a Meta (estado por fila).
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -79,9 +101,61 @@ export default function WhatsAppTemplatesManager() {
     finally { setLoading(false); }
   }
 
+  // Sincroniza contra Meta y deja la lista ya actualizada. Es la carga por defecto
+  // de la pantalla (1 llamada a la Graph API por WABA): así el punto de estado está
+  // fresco sin que nadie tenga que apretar nada. Si Meta falla, el endpoint igual
+  // devuelve la lista local, y como último recurso caemos al GET de siempre.
+  async function syncTemplates(manual = false) {
+    setSyncing(true);
+    if (manual) setSyncMsg('');
+    try {
+      const res = await fetch('/api/whatsapp-templates/sync', { method: 'POST' });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d) {
+        setTemplates(Array.isArray(d.templates) ? d.templates : []);
+        const errs: string[] = Array.isArray(d.errors) ? d.errors : [];
+        setSyncMsg(errs.length > 0
+          ? `No se pudo leer el estado desde Meta: ${errs[0]}`
+          : manual ? `Estado actualizado (${d.wabas} WABA${d.wabas === 1 ? '' : 's'}).` : '');
+      } else {
+        await fetchTemplates();
+      }
+    } catch {
+      await fetchTemplates();
+    } finally {
+      setSyncing(false);
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    if (canManage) fetchTemplates();
+    if (!canManage) return;
+    syncTemplates();
+    fetch('/api/whatsapp-numbers')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setLines(Array.isArray(d) ? d : []))
+      .catch(() => {});
   }, [canManage]);
+
+  // WABAs distintas del tenant (de sus líneas activas con waba_id). Con una sola,
+  // el selector de WABA no hace falta: el alta la resuelve el server.
+  const wabaOptions = React.useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const l of lines) {
+      if (!l.active || !l.waba_id) continue;
+      const labels = map.get(l.waba_id) ?? [];
+      labels.push(l.label ?? l.id);
+      map.set(l.waba_id, labels);
+    }
+    return Array.from(map, ([wabaId, labels]) => ({ wabaId, labels }));
+  }, [lines]);
+
+  // Nombre lindo de una WABA para mostrar en la fila de la plantilla.
+  function wabaLabel(wabaId: string | null | undefined): string {
+    if (!wabaId) return 'sin WABA';
+    const opt = wabaOptions.find((w) => w.wabaId === wabaId);
+    return opt ? opt.labels.join(' · ') : `WABA ${wabaId}`;
+  }
 
   // localStorage da el valor inmediato (sin parpadeo); el servidor es la fuente
   // de verdad por tenant y su valor SIEMPRE gana (sube o baja el checkbox).
@@ -119,13 +193,15 @@ export default function WhatsAppTemplatesManager() {
     try {
       const res = await fetch('/api/whatsapp-templates', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), language: language.trim() || 'es', body: body.trim(), buttons: buttons.map((b) => b.trim()).filter(Boolean) }),
+        // waba_id: la WABA donde va a vivir la plantilla. Si el tenant tiene una
+        // sola, no se manda y el server usa la del número default.
+        body: JSON.stringify({ name: name.trim(), language: language.trim() || 'es', body: body.trim(), buttons: buttons.map((b) => b.trim()).filter(Boolean), waba_id: newWaba || undefined }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => null);
         setError(d?.error ?? 'Error al crear la plantilla.');
       } else {
-        setName(''); setLanguage('es'); setBody(''); setButtons(['', '']);
+        setName(''); setLanguage('es'); setBody(''); setButtons(['', '']); setNewWaba('');
         setShowForm(false);
         await fetchTemplates();
       }
@@ -141,6 +217,7 @@ export default function WhatsAppTemplatesManager() {
     setEditLanguage(t.language || 'es');
     setEditBody(t.body);
     setEditButtons([t.buttons?.[0] ?? '', t.buttons?.[1] ?? '']);
+    setEditWaba(t.waba_id ?? '');
     setError('');
   }
 
@@ -152,7 +229,7 @@ export default function WhatsAppTemplatesManager() {
     try {
       const res = await fetch('/api/whatsapp-templates', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: t.id, name: editName.trim(), language: editLanguage.trim() || 'es', body: editBody.trim(), buttons: editButtons.map((b) => b.trim()).filter(Boolean) }),
+        body: JSON.stringify({ id: t.id, name: editName.trim(), language: editLanguage.trim() || 'es', body: editBody.trim(), buttons: editButtons.map((b) => b.trim()).filter(Boolean), waba_id: editWaba }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => null);
@@ -235,6 +312,27 @@ export default function WhatsAppTemplatesManager() {
           </label>
         </div>
 
+        {/* Estado de aprobación en Meta: se sincroniza solo al abrir la pantalla y a
+            demanda con el botón. Sin aprobar, una plantilla NO se puede usar en
+            campañas (Meta la rechaza en silencio). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => syncTemplates(true)}
+            disabled={syncing}
+            style={{ ...smallBtn, cursor: syncing ? 'default' : 'pointer', opacity: syncing ? 0.6 : 1 }}
+          >
+            {syncing ? 'Sincronizando…' : '↻ Sincronizar estado con Meta'}
+          </button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', color: '#888', flexWrap: 'wrap' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#1a7a3a' }} /> Aprobada</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#F2994A' }} /> En revisión</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#E53935' }} /> Rechazada</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: '#bbb' }} /> Sin sincronizar</span>
+          </span>
+        </div>
+        {syncMsg && <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>{syncMsg}</p>}
+
         {loading && <p style={{ color: '#999', fontSize: '13px', margin: 0 }}>Cargando plantillas...</p>}
 
         {!loading && templates.length === 0 && (
@@ -248,8 +346,13 @@ export default function WhatsAppTemplatesManager() {
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: '200px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <TemplateStatusDot status={t.approval_status} />
                     <code style={{ fontSize: '13px', fontWeight: 800, color: '#000', background: '#fff', borderRadius: '6px', padding: '2px 8px' }}>{t.name}</code>
                     <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
+                    {/* La WABA solo aporta información si el tenant tiene más de una. */}
+                    {wabaOptions.length > 1 && (
+                      <span style={{ fontSize: '11px', color: '#aaa' }}>· {wabaLabel(t.waba_id)}</span>
+                    )}
                   </div>
                   {!isEditing && (
                     <>
@@ -301,6 +404,18 @@ export default function WhatsAppTemplatesManager() {
                       <input value={editLanguage} onChange={(e) => setEditLanguage(e.target.value)} placeholder="es" style={inputStyle} />
                     </div>
                   </div>
+
+                  {wabaOptions.length > 1 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={labelStyle}>Cuenta de WhatsApp (WABA)</label>
+                      <select value={editWaba} onChange={(e) => setEditWaba(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                        <option value="">Cuenta principal (número default)</option>
+                        {wabaOptions.map((w) => (
+                          <option key={w.wabaId} value={w.wabaId}>{w.labels.join(' · ')}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <label style={labelStyle}>Cuerpo</label>
                     <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
@@ -353,6 +468,23 @@ export default function WhatsAppTemplatesManager() {
                 <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="es" style={inputStyle} />
               </div>
             </div>
+
+            {/* Con más de una WABA hay que decir en cuál se registra: una plantilla
+                aprobada en la WABA A no existe en la B. Con una sola, se resuelve solo. */}
+            {wabaOptions.length > 1 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={labelStyle}>Cuenta de WhatsApp (WABA)</label>
+                <select value={newWaba} onChange={(e) => setNewWaba(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                  <option value="">Cuenta principal (número default)</option>
+                  {wabaOptions.map((w) => (
+                    <option key={w.wabaId} value={w.wabaId}>{w.labels.join(' · ')}</option>
+                  ))}
+                </select>
+                <p style={{ fontSize: '11px', color: '#bbb', margin: 0 }}>
+                  La plantilla queda asociada a esta cuenta y solo se va a poder usar en campañas con sus líneas.
+                </p>
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={labelStyle}>Cuerpo</label>
               <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Texto de la plantilla. Usá {{1}}, {{2}} para variables." style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />

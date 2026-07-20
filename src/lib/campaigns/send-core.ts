@@ -155,13 +155,15 @@ export async function campaignSentSince(campaignId: string, sinceISO: string): P
   return count ?? 0;
 }
 
-async function resolveContacts(filter: string, tenantId: string, targetNumberId: string | null) {
+async function resolveContacts(filter: string, tenantId: string, targetNumberIds: string[]) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
-  // Campaña segmentada por línea: solo contactos asignados a ese número.
-  if (targetNumberId) base = base.eq('whatsapp_number_id', targetNumberId);
+  // Campaña segmentada por línea: solo contactos asignados a esos números. Lista
+  // vacía = sin segmentar (todas las líneas), que es el comportamiento de siempre.
+  if (targetNumberIds.length === 1) base = base.eq('whatsapp_number_id', targetNumberIds[0]);
+  else if (targetNumberIds.length > 1) base = base.in('whatsapp_number_id', targetNumberIds);
 
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
@@ -271,7 +273,13 @@ export async function runCampaignBatch(
       contacts.push(...(data ?? []));
     }
   } else {
-    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, campaign.target_number_id ?? null);
+    // Líneas destino: la lista nueva (multi-línea, misma WABA) tiene prioridad; si
+    // está vacía/null se usa el target_number_id de siempre. Así las campañas
+    // creadas antes de esta migración se resuelven exactamente igual que antes.
+    const targetNumberIds: string[] = Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
+      ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
+      : (campaign.target_number_id ? [campaign.target_number_id] : []);
+    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, targetNumberIds);
   }
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las

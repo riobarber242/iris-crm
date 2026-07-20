@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { TemplateStatusDot } from '@/components/ui/TemplateStatusDot';
+import { templateStatus } from '@/lib/template-status';
 
 type Campaign = {
   id: string;
@@ -11,6 +13,9 @@ type Campaign = {
   template_variables: string[] | null;
   target_filter: string;
   target_number_id: string | null;
+  // Líneas destino (multi-línea, todas de la misma WABA). null/vacío = usar
+  // target_number_id, que es como quedaron las campañas anteriores a este cambio.
+  target_number_ids: string[] | null;
   status: 'borrador' | 'enviando' | 'completada' | 'pausada' | 'cancelada';
   sent_count: number;
   created_at: string;
@@ -36,10 +41,17 @@ type Campaign = {
   btn2_count: number | null;
 };
 
-type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean };
+// waba_id: cuenta de WhatsApp Business a la que pertenece la línea. Sin ella no
+// hay plantillas asociadas, así que la línea no se puede usar en una campaña.
+type WaLine = { id: string; label: string | null; active: boolean; is_default: boolean; waba_id: string | null };
 
 // Plantilla guardada en Iris (tabla whatsapp_templates), con sus botones.
-type IrisTemplate = { id: string; name: string; language: string; body: string; buttons: string[] };
+// waba_id null = legacy: se muestra para cualquier línea (no sabemos de qué WABA es).
+// approval_status = estado en Meta; solo las aprobadas (o legacy sin estado) se eligen.
+type IrisTemplate = {
+  id: string; name: string; language: string; body: string; buttons: string[];
+  waba_id: string | null; approval_status: string | null;
+};
 
 // Contacto seleccionable en el modo "elegir contactos" (agendados con usuario).
 type PickContact = { id: string; name: string | null; phone: string; casino_username: string | null };
@@ -145,7 +157,10 @@ const HISTORY_RANGES = [
   { value: '1y',  label: '1 año',   days: 365 },
 ];
 
-const STEPS = ['Plantilla', 'Destinatarios', 'Configuración', 'Confirmar'];
+// La línea va PRIMERO: las plantillas viven en la WABA de la línea, así que hasta
+// no saber por dónde sale la campaña no se puede mostrar qué plantillas hay.
+const STEPS = ['Línea', 'Plantilla', 'Destinatarios', 'Configuración', 'Confirmar'];
+const LAST_STEP = STEPS.length;
 
 const inputStyle: React.CSSProperties = {
   background: '#F5F5F5', border: 'none', borderRadius: '10px',
@@ -192,7 +207,14 @@ export default function CampanasClient() {
 
   const [filter,       setFilter]       = useState('todos');
   const [inactiveDays, setInactiveDays] = useState(30);
-  const [lineFilter,   setLineFilter]   = useState('todas');
+  // ── Paso 1: líneas de la campaña ────────────────────────────────────────────
+  // 'todas' = sin segmentar por línea (comportamiento histórico: incluye también
+  // los contactos que todavía no tienen línea asignada). Solo se ofrece si TODAS
+  // las líneas activas comparten WABA; si no, habría que mezclar plantillas de
+  // dos WABAs y Meta rechazaría la mitad de los envíos en silencio.
+  // 'elegidas' = una o varias líneas, siempre de la misma WABA.
+  const [lineMode,        setLineMode]        = useState<'todas' | 'elegidas'>('todas');
+  const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
   const [recipientCount, setRecipientCount] = useState<number | null>(null);
   const [countLoading,   setCountLoading]   = useState(false);
 
@@ -259,6 +281,34 @@ export default function CampanasClient() {
   // Activas = en vuelo o borrador. Las terminales (completada/cancelada) van al Historial.
   const activeCampaigns = campaigns.filter((c) => c.status !== 'completada' && c.status !== 'cancelada');
 
+  // ── WABA de la campaña, derivada de las líneas elegidas ─────────────────────
+  // Una línea sin waba_id no se puede usar: sin WABA no tiene plantillas asociadas.
+  const activeLines     = lines.filter((l) => l.active);
+  const selectableLines = activeLines.filter((l) => !!l.waba_id);
+  const allWabas        = Array.from(new Set(selectableLines.map((l) => l.waba_id as string)));
+
+  // "Todas las líneas" se ofrece mientras no haya DOS WABAs en juego. Ojo: no se
+  // exige que todas las líneas tengan waba_id — un tenant sin ninguna WABA cargada
+  // (o con una línea a medio configurar) tiene que poder seguir armando campañas
+  // igual que antes de este cambio; con una sola WABA en juego no hay nada que
+  // mezclar. Es el caso de hoy (17Star y Derki tienen una WABA cada uno).
+  const canUseAllLines = allWabas.length <= 1;
+
+  // WABA vigente: con 'todas' es la única que hay; con 'elegidas', la de las
+  // líneas tildadas (la UI garantiza que todas compartan WABA).
+  const selectedWaba: string | null = lineMode === 'todas'
+    ? (allWabas[0] ?? null)
+    : (selectableLines.find((l) => selectedLineIds.includes(l.id))?.waba_id ?? null);
+
+  // Lo que se manda al backend: [] = sin segmentar (todas las líneas).
+  const targetLineIds = lineMode === 'todas' ? [] : selectedLineIds;
+
+  // Plantillas que corresponden a la WABA elegida. Las legacy (waba_id null) se
+  // muestran siempre: no sabemos de qué WABA son y hoy se usan sin problema.
+  const visibleTemplates = templates.filter(
+    (t) => !t.waba_id || !selectedWaba || t.waba_id === selectedWaba,
+  );
+
   async function fetchCampaigns() {
     try {
       // no-store: el poll debe ver siempre el estado fresco (evita cualquier respuesta
@@ -298,9 +348,23 @@ export default function CampanasClient() {
     return () => clearInterval(t);
   }, []);
 
+  // Al abrir el asistente sincronizamos el estado de aprobación contra Meta (1
+  // llamada a la Graph API por WABA) para no ofrecer plantillas que Meta todavía
+  // no aprobó — se enviarían y fallarían en silencio (132001). Si el sync falla,
+  // caemos al listado local de siempre.
   async function fetchTemplates() {
     setTplLoading(true); setTplError('');
     try {
+      const synced = await fetch('/api/whatsapp-templates/sync', { method: 'POST' });
+      if (synced.ok) {
+        const d = await synced.json().catch(() => null);
+        if (d && Array.isArray(d.templates)) {
+          setTemplates(d.templates);
+          setTplLoading(false); setTplLoaded(true);
+          return;
+        }
+      }
+
       const res = await fetch('/api/whatsapp-templates');
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -322,6 +386,29 @@ export default function CampanasClient() {
     if (showWizard && !tplLoaded && !tplLoading) fetchTemplates();
   }, [showWizard, tplLoaded, tplLoading]);
 
+  // Si cambian las líneas (y con ellas la WABA), la plantilla ya elegida puede
+  // dejar de pertenecer a esa cuenta: la limpiamos para no arrastrar una que Meta
+  // rechazaría en silencio. Solo corre con las plantillas ya cargadas, para no
+  // pisar la precarga del modo edición (que las aplica de forma asíncrona).
+  useEffect(() => {
+    if (!showWizard || !tplLoaded || !templateName) return;
+    // En modo edición no limpiamos: la plantilla la precarga otro effect de forma
+    // asíncrona y, si `lines` llega después, este correría con el nombre ya puesto
+    // y lo borraría. El backend igual revalida plantilla vs WABA al relanzar.
+    if (pendingEdit) return;
+    const sigueValida = templates.some(
+      (t) => t.name === templateName
+        && (!t.waba_id || !selectedWaba || t.waba_id === selectedWaba)
+        && templateStatus(t.approval_status).usable,
+    );
+    if (!sigueValida) {
+      setTemplateName(''); setTemplateBody(''); setTemplateButtons([]); setTemplateVars([]);
+    }
+    // Deliberadamente sin `templateName` en las deps: solo reaccionamos al cambio
+    // de WABA, no a que el operador elija otra plantilla.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWaba, tplLoaded, showWizard]);
+
   function selectTemplate(t: IrisTemplate) {
     setTemplateName(t.name);
     setTemplateLang(t.language || 'es');
@@ -332,12 +419,13 @@ export default function CampanasClient() {
     setError('');
   }
 
-  async function fetchRecipientCount(f: string, line: string) {
+  // lineIds vacío = todas las líneas (sin filtro), igual que antes.
+  async function fetchRecipientCount(f: string, lineIds: string[]) {
     setCountLoading(true); setRecipientCount(null);
     try {
       const isInactivoDays = /^inactivo_\d+d$/.test(f);
       const param = isInactivoDays ? `?status=inactivo` : f === 'todos' ? '?all=true' : `?status=${f}`;
-      const lineParam = line !== 'todas' ? `&number=${line}` : '';
+      const lineParam = lineIds.length > 0 ? `&numbers=${lineIds.join(',')}` : '';
       const res = await fetch(`/api/contacts${param}${lineParam}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -353,10 +441,14 @@ export default function CampanasClient() {
   // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango),
   // el mismo endpoint que la pantalla de Contactos (?limit=). Reemplaza la ruta
   // legacy que traía TODOS los agendados sin límite.
-  const fetchContactsPage = useCallback(async (q: string, offset: number): Promise<PickContact[] | null> => {
+  // lineIds acota el picker a las líneas elegidas en el paso 1: si no, el operador
+  // podría elegir contactos de OTRA WABA y la plantilla no existiría en su línea
+  // (Meta la rechazaría en silencio). Vacío = todas, como siempre.
+  const fetchContactsPage = useCallback(async (q: string, offset: number, lineIds: string[] = []): Promise<PickContact[] | null> => {
     const params = new URLSearchParams({ limit: String(PICKER_PAGE_SIZE), offset: String(offset), sort: 'az' });
     const term = q.trim();
     if (term) params.set('q', term);
+    if (lineIds.length > 0) params.set('numbers', lineIds.join(','));
     try {
       const res = await fetch(`/api/contacts?${params.toString()}`);
       if (!res.ok) return null;
@@ -366,9 +458,9 @@ export default function CampanasClient() {
   }, []);
 
   // Primera página (reset) con la búsqueda actual.
-  const loadPickerFirst = useCallback(async (q: string) => {
+  const loadPickerFirst = useCallback(async (q: string, lineIds: string[] = []) => {
     setContactsLoading(true);
-    const rows = await fetchContactsPage(q, 0);
+    const rows = await fetchContactsPage(q, 0, lineIds);
     setContactsList(rows ?? []);
     setPickerHasMore((rows?.length ?? 0) === PICKER_PAGE_SIZE);
     pickerOffsetRef.current = rows?.length ?? 0;
@@ -380,7 +472,7 @@ export default function CampanasClient() {
   async function loadPickerMore() {
     if (pickerLoadingMoreRef.current || !pickerHasMore) return;
     pickerLoadingMoreRef.current = true; setPickerLoadingMore(true);
-    const rows = await fetchContactsPage(contactSearch, pickerOffsetRef.current);
+    const rows = await fetchContactsPage(contactSearch, pickerOffsetRef.current, targetLineIds);
     if (rows) {
       pickerOffsetRef.current += rows.length;
       setContactsList((prev) => {
@@ -397,7 +489,7 @@ export default function CampanasClient() {
   // "category" no hace nada.
   useEffect(() => {
     if (targetMode !== 'individual') return;
-    const t = setTimeout(() => { loadPickerFirst(contactSearch); }, contactSearch ? 300 : 0);
+    const t = setTimeout(() => { loadPickerFirst(contactSearch, targetLineIds); }, contactSearch ? 300 : 0);
     return () => clearTimeout(t);
   }, [targetMode, contactSearch, loadPickerFirst]);
 
@@ -412,22 +504,54 @@ export default function CampanasClient() {
 
   function handleFilterChange(f: string) {
     setFilter(f);
-    fetchRecipientCount(effectiveFilter(f, inactiveDays), lineFilter);
+    fetchRecipientCount(effectiveFilter(f, inactiveDays), targetLineIds);
   }
   function handleDaysChange(value: string) {
     const days = Math.min(365, Math.max(1, Number(value) || 1));
     setInactiveDays(days);
-    if (filter === 'inactivo_dias') fetchRecipientCount(effectiveFilter('inactivo_dias', days), lineFilter);
+    if (filter === 'inactivo_dias') fetchRecipientCount(effectiveFilter('inactivo_dias', days), targetLineIds);
   }
-  function handleLineChange(l: string) {
-    setLineFilter(l);
-    fetchRecipientCount(effectiveFilter(filter, inactiveDays), l);
+
+  // ── Paso 1: elección de líneas ──────────────────────────────────────────────
+  // Tildar/destildar una línea. Solo se puede combinar con líneas de la MISMA
+  // WABA: si la que se tilda es de otra, se bloquea con un aviso en vez de
+  // dejar armar una campaña que Meta rechazaría a la mitad.
+  function toggleLine(line: WaLine) {
+    if (!line.waba_id) return;  // sin WABA no hay plantillas: no seleccionable
+
+    const yaEstaba = selectedLineIds.includes(line.id);
+    if (!yaEstaba) {
+      const wabaActual = selectableLines.find((l) => selectedLineIds.includes(l.id))?.waba_id ?? null;
+      if (wabaActual && wabaActual !== line.waba_id) {
+        setError('Esa línea es de otra cuenta de WhatsApp (WABA). Una campaña solo puede usar líneas de una misma WABA: destildá las otras primero.');
+        return;
+      }
+    }
+
+    const proximas = yaEstaba
+      ? selectedLineIds.filter((x) => x !== line.id)
+      : [...selectedLineIds, line.id];
+
+    setError('');
+    setSelectedLineIds(proximas);
+    // El estimado de destinatarios depende de las líneas: hay que recalcularlo acá
+    // (antes lo hacía el select de línea del paso Destinatarios, que ya no está).
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas);
+    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas);
+  }
+
+  function handleLineModeChange(mode: 'todas' | 'elegidas') {
+    setLineMode(mode);
+    setError('');
+    if (mode === 'todas') setSelectedLineIds([]);
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), mode === 'todas' ? [] : selectedLineIds);
   }
 
   function resetWizard() {
     setStep(1); setName('');
     setTemplateName(''); setTemplateLang('es'); setTemplateBody(''); setTemplateButtons([]); setTemplateVars([]);
-    setFilter('todos'); setInactiveDays(30); setLineFilter('todas'); setRecipientCount(null);
+    setFilter('todos'); setInactiveDays(30); setRecipientCount(null);
+    setLineMode('todas'); setSelectedLineIds([]);
     setTargetMode('category'); setSelectedIds([]); setContactSearch('');
     setSendLimit(''); setIntervalMin('1'); setIntervalMax('3'); setPauseEvery(''); setPauseSeconds('');
     setExcludePrevious(false); setExcludeCampaignIds([]);
@@ -440,7 +564,7 @@ export default function CampanasClient() {
 
   function openWizard() {
     resetWizard(); setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
-    fetchRecipientCount('todos', 'todas');
+    fetchRecipientCount('todos', []);
     fetchMetaLimit();
   }
   function closeWizard() { resetWizard(); setShowWizard(false); }
@@ -467,7 +591,23 @@ export default function CampanasClient() {
       else if (c.target_filter && c.target_filter !== 'seleccion') setFilter(c.target_filter);
     }
 
-    setLineFilter(c.target_number_id ?? 'todas');
+    // Líneas: la lista nueva si la campaña la tiene; si no, el target_number_id de
+    // siempre (campañas anteriores a este cambio); si tampoco, 'todas'.
+    const guardadas = Array.isArray(c.target_number_ids) && c.target_number_ids.length > 0
+      ? c.target_number_ids
+      : (c.target_number_id ? [c.target_number_id] : []);
+
+    // Saneo: una línea que desde entonces se desactivó o se quedó sin WABA no se
+    // puede mostrar en el paso 1, y dejarla tildada trabaría el relanzamiento con
+    // una selección invisible. Si `lines` todavía no cargó, se respeta lo guardado
+    // tal cual (nunca ensanchamos la audiencia por una carrera de red).
+    const savedLines = lines.length === 0
+      ? guardadas
+      : guardadas.filter((id) => selectableLines.some((l) => l.id === id));
+
+    setLineMode(savedLines.length > 0 ? 'elegidas' : 'todas');
+    setSelectedLineIds(savedLines);
+
     setIntervalMin(String(c.interval_min_sec ?? 1));
     setIntervalMax(String(c.interval_max_sec ?? 3));
     setPauseEvery(c.pause_every != null ? String(c.pause_every) : '');
@@ -484,7 +624,7 @@ export default function CampanasClient() {
     }
 
     setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
-    fetchRecipientCount(c.target_filter || 'todos', c.target_number_id ?? 'todas');
+    fetchRecipientCount(c.target_filter || 'todos', savedLines);
     fetchMetaLimit();
   }
 
@@ -514,28 +654,51 @@ export default function CampanasClient() {
     editMarginApplied.current = true;
   }, [pendingEdit, metaInfo]);
 
-  function canAdvance(): boolean {
-    if (step === 1) return !!name.trim() && !!templateName.trim();
-    if (step === 2) return targetMode === 'individual' ? selectedIds.length > 0 : true;
-    if (step === 3) {
-      const lo = Number(intervalMin), hi = Number(intervalMax);
-      return !isNaN(lo) && !isNaN(hi) && lo >= 0 && hi >= lo;
+  // Qué le falta a un paso para estar completo ('' = está OK). Es la fuente única
+  // de la validación del asistente: deshabilita "Siguiente", explica el motivo en
+  // el propio paso y, al confirmar, impide lanzar una campaña a medio armar.
+  function stepBlocker(s: number): string {
+    if (s === 1) {
+      // 'todas' es el default y nunca depende de que las líneas tengan WABA: es el
+      // camino que preserva el comportamiento anterior a este cambio.
+      if (lineMode === 'todas') {
+        return canUseAllLines ? '' : 'Tus líneas son de WABAs distintas: no se pueden usar todas juntas. Elegí una o varias de una sola WABA.';
+      }
+      if (lines.length > 0 && selectableLines.length === 0) {
+        return 'Ninguna de tus líneas tiene cargada su cuenta de WhatsApp (WABA), así que no se pueden elegir por separado. Usá "Todas las líneas", o pedile al admin que complete la WABA en Configuración → Números de WhatsApp.';
+      }
+      return selectedLineIds.length === 0 ? 'Elegí al menos una línea para la campaña.' : '';
     }
-    return true;
+    if (s === 2) {
+      if (!name.trim()) return 'Poné un nombre a la campaña.';
+      if (!templateName.trim()) return 'Elegí una plantilla.';
+      return '';
+    }
+    if (s === 3) return targetMode === 'individual' && selectedIds.length === 0 ? 'Elegí al menos un contacto.' : '';
+    if (s === 4) {
+      const lo = Number(intervalMin), hi = Number(intervalMax);
+      return (!isNaN(lo) && !isNaN(hi) && lo >= 0 && hi >= lo) ? '' : 'El intervalo mínimo no puede ser mayor que el máximo.';
+    }
+    return '';
   }
 
+  function canAdvance(): boolean { return stepBlocker(step) === ''; }
+
   function next() {
-    if (!canAdvance()) {
-      if (step === 1) setError('Completá el nombre y elegí una plantilla.');
-      else if (step === 2) setError('Elegí al menos un contacto.');
-      else if (step === 3) setError('El intervalo mínimo no puede ser mayor que el máximo.');
-      return;
-    }
-    setError(''); setStep((s) => Math.min(4, s + 1));
+    const blocker = stepBlocker(step);
+    if (blocker) { setError(blocker); return; }
+    setError(''); setStep((s) => Math.min(LAST_STEP, s + 1));
   }
   function back() { setError(''); setStep((s) => Math.max(1, s - 1)); }
 
   async function launch() {
+    // Guard final: ningún paso puede quedar incompleto. Si alguno lo está, se
+    // vuelve a ESE paso con el motivo, en vez de crear una campaña a medias.
+    for (let s = 1; s < LAST_STEP; s++) {
+      const blocker = stepBlocker(s);
+      if (blocker) { setStep(s); setError(blocker); return; }
+    }
+
     setLaunching(true); setError(''); setLaunchProgress('');
     try {
       const isIndividual = targetMode === 'individual';
@@ -562,7 +725,14 @@ export default function CampanasClient() {
         // En individual: sin límite/exclusión y sin filtro de línea (cada contacto
         // sale por su propio número). recipient_ids manda la lista elegida.
         send_limit: isIndividual ? null : (sendLimit ? Number(sendLimit) : null),
-        target_number_id: isIndividual ? null : (lineFilter !== 'todas' ? lineFilter : null),
+        // Líneas elegidas en el paso 1 (todas de la misma WABA). El backend
+        // revalida la homogeneidad de WABA antes de crear.
+        //
+        // También se mandan en modo individual: ahí no segmentan nada (manda
+        // recipient_ids, que tiene prioridad en el envío), pero le dan al backend
+        // el contexto de WABA para validar que la plantilla exista en esa cuenta.
+        target_number_ids: targetLineIds,
+        target_number_id:  isIndividual ? null : (targetLineIds.length === 1 ? targetLineIds[0] : null),
         exclude_campaign_ids: isIndividual ? [] : (excludePrevious ? excludeCampaignIds : []),
         recipient_ids: isIndividual ? selectedIds : [],
         interval_min_sec: Number(intervalMin) || 0,
@@ -838,8 +1008,94 @@ export default function CampanasClient() {
             </div>
           )}
 
-          {/* ── PASO 1: Plantilla ── */}
+          {/* ── PASO 1: Línea ──
+              Va antes que la plantilla porque las plantillas viven en la WABA de
+              la línea: recién sabiendo por dónde sale la campaña se puede mostrar
+              qué plantillas existen (y cuáles Meta aprobó). */}
           {step === 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label style={labelStyle}>¿Por qué línea sale la campaña?</label>
+
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {([['todas', 'Todas las líneas'], ['elegidas', 'Elegir líneas']] as const).map(([mode, lbl]) => {
+                  const disabled = mode === 'todas' && !canUseAllLines;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      disabled={disabled}
+                      title={disabled ? 'Tus líneas son de WABAs distintas: no se pueden usar todas juntas.' : undefined}
+                      onClick={() => handleLineModeChange(mode)}
+                      style={{
+                        flex: 1, padding: '9px 12px', fontSize: '13px', fontWeight: 700,
+                        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1,
+                        borderRadius: '10px', border: lineMode === mode ? '2px solid #1a7a3a' : '2px solid #e0e0e0',
+                        background: lineMode === mode ? '#f0fff4' : '#fff', color: lineMode === mode ? '#1a7a3a' : '#888',
+                      }}
+                    >
+                      {lbl}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {lineMode === 'todas' && (
+                <p style={{ fontSize: '12px', color: '#777', margin: 0, lineHeight: 1.5 }}>
+                  La campaña sale por todas tus líneas: cada contacto recibe por el número con el que viene hablando.
+                </p>
+              )}
+
+              {lineMode === 'elegidas' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {lines.length === 0 && (
+                    <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No hay líneas cargadas en esta cuenta.</p>
+                  )}
+                  {lines.filter((l) => l.active).map((l) => {
+                    const checked  = selectedLineIds.includes(l.id);
+                    // Sin WABA no hay plantillas asociadas → no se puede elegir.
+                    // Y si ya hay líneas tildadas, solo se suman las de esa misma WABA.
+                    const sinWaba  = !l.waba_id;
+                    const otraWaba = !!selectedWaba && !!l.waba_id && l.waba_id !== selectedWaba;
+                    const disabled = sinWaba || (otraWaba && !checked);
+                    return (
+                      <label
+                        key={l.id}
+                        title={sinWaba ? 'Esta línea no tiene cargada su cuenta de WhatsApp (WABA), así que no tiene plantillas asociadas.'
+                             : otraWaba ? 'Es de otra WABA: una campaña solo puede usar líneas de una misma WABA.' : undefined}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px',
+                          borderRadius: '10px', border: checked ? '2px solid #1a7a3a' : '2px solid #e0e0e0',
+                          background: checked ? '#f0fff4' : disabled ? '#FAFAFA' : '#fff',
+                          cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={() => toggleLine(l)}
+                          style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+                        />
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#1a1a1a' }}>
+                          {l.label ?? l.id}{l.is_default ? ' (default)' : ''}
+                        </span>
+                        {sinWaba
+                          ? <span style={{ fontSize: '11px', color: '#E53935', fontWeight: 700 }}>sin WABA</span>
+                          : allWabas.length > 1 && <span style={{ fontSize: '11px', color: '#aaa' }}>WABA …{String(l.waba_id).slice(-4)}</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {stepBlocker(1) && (
+                <p style={{ fontSize: '12px', color: '#c0392b', fontWeight: 600, margin: 0, lineHeight: 1.5 }}>{stepBlocker(1)}</p>
+              )}
+            </div>
+          )}
+
+          {/* ── PASO 2: Plantilla ── */}
+          {step === 2 && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <label style={labelStyle}>Nombre de la campaña</label>
@@ -855,28 +1111,42 @@ export default function CampanasClient() {
 
               {tplLoading && <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>Cargando plantillas…</p>}
               {!tplLoading && tplError && <p style={{ fontSize: '13px', color: '#c0392b', margin: 0, fontWeight: 600 }}>{tplError}</p>}
-              {!tplLoading && !tplError && templates.length === 0 && (
-                <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No hay plantillas guardadas. Creá una en Configuración → Plantillas de WhatsApp.</p>
+              {!tplLoading && !tplError && visibleTemplates.length === 0 && (
+                <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>
+                  {templates.length === 0
+                    ? 'No hay plantillas guardadas. Creá una en Configuración → Plantillas de WhatsApp.'
+                    : 'Las líneas elegidas no tienen plantillas asociadas. Creá una para esa cuenta en Configuración → Plantillas de WhatsApp.'}
+                </p>
               )}
 
-              {!tplLoading && templates.length > 0 && (
+              {!tplLoading && visibleTemplates.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {templates.map((t) => {
+                  {visibleTemplates.map((t) => {
                     const selected = templateName === t.name;
+                    // Sin aprobación de Meta la plantilla no se puede mandar: se
+                    // muestra con su punto pero no es clickeable.
+                    const st       = templateStatus(t.approval_status);
+                    const disabled = !st.usable;
                     return (
                       <button
                         key={t.id}
                         type="button"
+                        disabled={disabled}
+                        title={disabled ? st.label : undefined}
                         onClick={() => selectTemplate(t)}
                         style={{
-                          textAlign: 'left', cursor: 'pointer', borderRadius: '12px', padding: '12px 14px',
+                          textAlign: 'left', cursor: disabled ? 'not-allowed' : 'pointer', borderRadius: '12px', padding: '12px 14px',
                           border: selected ? '2px solid #1a7a3a' : '2px solid #e0e0e0',
-                          background: selected ? '#f0fff4' : '#fff', display: 'flex', flexDirection: 'column', gap: '6px',
+                          background: selected ? '#f0fff4' : disabled ? '#FAFAFA' : '#fff',
+                          opacity: disabled ? 0.6 : 1,
+                          display: 'flex', flexDirection: 'column', gap: '6px',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <TemplateStatusDot status={t.approval_status} />
                           <code style={{ fontSize: '13px', fontWeight: 800, color: '#000', background: '#F5F5F5', borderRadius: '6px', padding: '2px 8px' }}>{t.name}</code>
                           <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
+                          {disabled && <span style={{ fontSize: '11px', color: '#F2994A', fontWeight: 800 }}>{st.label}</span>}
                           {selected && <span style={{ fontSize: '11px', color: '#1a7a3a', fontWeight: 800 }}>✓ Seleccionada</span>}
                         </div>
                         {t.body && <p style={{ fontSize: '12px', color: '#777', margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{t.body}</p>}
@@ -924,8 +1194,8 @@ export default function CampanasClient() {
             </>
           )}
 
-          {/* ── PASO 2: Destinatarios ── */}
-          {step === 2 && (
+          {/* ── PASO 3: Destinatarios ── */}
+          {step === 3 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {/* Toggle de modo: por categoría vs elegir contactos */}
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -961,18 +1231,15 @@ export default function CampanasClient() {
                     </>
                   )}
 
+                  {/* La línea se elige en el paso 1 (define qué plantillas hay). Acá
+                      solo se recuerda, para no tener dos lugares donde cambiarla. */}
                   {lines.length > 0 && (
-                    <>
-                      <label style={{ ...labelStyle, marginTop: '4px' }}>Línea</label>
-                      <select value={lineFilter} onChange={(e) => handleLineChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                        <option value="todas">Todas las líneas</option>
-                        {lines.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {(l.label ?? l.id)}{l.is_default ? ' (default)' : ''}{!l.active ? ' — inactiva' : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </>
+                    <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0' }}>
+                      Línea: {lineMode === 'todas'
+                        ? 'todas'
+                        : selectedLineIds.map((id) => lines.find((l) => l.id === id)?.label ?? id).join(' · ') || '—'}
+                      {' '}(se cambia en el paso 1)
+                    </p>
                   )}
 
                   {(countLoading || recipientCount !== null) && (
@@ -1064,8 +1331,8 @@ export default function CampanasClient() {
             </div>
           )}
 
-          {/* ── PASO 3: Configuración ── */}
-          {step === 3 && (
+          {/* ── PASO 4: Configuración ── */}
+          {step === 4 && (
             <>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
@@ -1126,8 +1393,8 @@ export default function CampanasClient() {
             </>
           )}
 
-          {/* ── PASO 4: Confirmar ── */}
-          {step === 4 && (
+          {/* ── PASO 5: Confirmar ── */}
+          {step === 5 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <p style={{ fontSize: '15px', fontWeight: 800, color: '#000', margin: 0 }}>Revisá antes de lanzar</p>
               <div style={{ background: '#F8F8F8', borderRadius: '12px', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', color: '#333' }}>
@@ -1143,7 +1410,14 @@ export default function CampanasClient() {
                 <div><strong>Destinatarios:</strong> {targetMode === 'individual'
                   ? `${selectedIds.length} contacto${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}`
                   : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
-                {targetMode === 'category' && lineFilter !== 'todas' && <div><strong>Línea:</strong> {lines.find((l) => l.id === lineFilter)?.label ?? lineFilter}</div>}
+                {targetMode === 'category' && (
+                  <div>
+                    <strong>{targetLineIds.length > 1 ? 'Líneas:' : 'Línea:'}</strong>{' '}
+                    {targetLineIds.length === 0
+                      ? 'todas'
+                      : targetLineIds.map((id) => lines.find((l) => l.id === id)?.label ?? id).join(' · ')}
+                  </div>
+                )}
                 <div><strong>Ritmo:</strong> {intervalMin}–{intervalMax}s entre mensajes{pauseEvery && pauseSeconds ? ` · pausa de ${pauseSeconds}s cada ${pauseEvery}` : ''}</div>
                 <div><strong>Horario:</strong> {windowFrom}–{windowTo === '00:00' ? 'medianoche' : windowTo} (hora AR)</div>
                 {rampEnabled && <div><strong>Cronograma:</strong> {rampWeeks.map((n, i) => `S${i + 1} ${n}/día`).join(' · ')} (luego {rampWeeks[rampWeeks.length - 1]}/día)</div>}
@@ -1306,8 +1580,20 @@ export default function CampanasClient() {
             >
               ← Atrás
             </button>
-            {step < 4 ? (
-              <button type="button" onClick={next} style={{ background: '#1a1a1a', color: '#C8FF00', fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '10px 22px', cursor: 'pointer' }}>
+            {step < LAST_STEP ? (
+              // Deshabilitado mientras el paso esté incompleto: el motivo se ve en
+              // el propio paso (y en el tooltip), así no se avanza a ciegas.
+              <button
+                type="button"
+                onClick={next}
+                disabled={!canAdvance()}
+                title={stepBlocker(step) || undefined}
+                style={{
+                  background: canAdvance() ? '#1a1a1a' : '#e0e0e0', color: canAdvance() ? '#C8FF00' : '#999',
+                  fontWeight: 800, fontSize: '13px', border: 'none', borderRadius: '10px', padding: '10px 22px',
+                  cursor: canAdvance() ? 'pointer' : 'not-allowed',
+                }}
+              >
                 Siguiente →
               </button>
             ) : (

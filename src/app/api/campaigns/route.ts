@@ -24,6 +24,113 @@ function rampCols(schedule: unknown): { ramp_schedule: number[] | null; ramp_anc
   return { ramp_schedule: clean, ramp_anchor: arMondayOf(new Date()) };
 }
 
+// Líneas destino de la campaña. El asistente permite elegir VARIAS, pero solo si
+// pertenecen a la MISMA WABA: las plantillas viven en la WABA, así que una campaña
+// que mezcle líneas de dos WABAs mandaría una plantilla inexistente por la mitad de
+// los contactos y Meta la rechazaría en silencio (132001). Se valida server-side,
+// no solo en la UI.
+//
+// Compatibilidad: si no viene la lista, se cae al target_number_id de siempre y
+// target_number_ids queda null → las campañas existentes no cambian de semántica.
+async function targetNumberCols(
+  tenantId: string,
+  singular: unknown,
+  plural: unknown,
+): Promise<{ cols: { target_number_id: string | null; target_number_ids: string[] | null } } | { error: string }> {
+  const ids = Array.isArray(plural)
+    ? Array.from(new Set(plural.filter((x: unknown): x is string => typeof x === 'string' && !!x)))
+    : [];
+
+  if (ids.length === 0) {
+    if (!singular) return { cols: { target_number_id: null, target_number_ids: null } };
+    const { data: num } = await supabaseAdmin
+      .from('whatsapp_numbers').select('id')
+      .eq('id', singular).eq('tenant_id', tenantId).maybeSingle();
+    if (!num) return { error: 'Línea inválida' };
+    return { cols: { target_number_id: num.id, target_number_ids: null } };
+  }
+
+  const { data } = await supabaseAdmin
+    .from('whatsapp_numbers').select('id, label, waba_id')
+    .eq('tenant_id', tenantId).in('id', ids);
+  const nums = (data ?? []) as { id: string; label: string | null; waba_id: string | null }[];
+
+  if (nums.length !== ids.length) return { error: 'Alguna de las líneas elegidas no pertenece a esta cuenta.' };
+
+  // Una línea sin WABA solo es un problema cuando se combina con otras: ahí no
+  // podemos garantizar que la plantilla exista en todas. Con UNA sola línea no hay
+  // nada que mezclar, y rechazarla rompería el relanzamiento de campañas viejas
+  // apuntadas a una línea que nunca tuvo la WABA cargada.
+  const sinWaba = nums.filter((n) => !n.waba_id);
+  if (sinWaba.length > 0 && nums.length > 1) {
+    return { error: `Sin WABA cargada no hay plantillas asociadas: ${sinWaba.map((n) => n.label ?? n.id).join(', ')}.` };
+  }
+
+  const wabas = new Set(nums.map((n) => n.waba_id));
+  if (wabas.size > 1) {
+    return { error: 'Las líneas elegidas son de WABAs distintas. Una campaña solo puede usar líneas de una misma WABA.' };
+  }
+
+  // Con una sola línea también completamos el singular: así lo siguen leyendo el
+  // resto de las pantallas (historial, precarga del wizard) sin cambios.
+  return { cols: { target_number_id: ids.length === 1 ? ids[0] : null, target_number_ids: ids } };
+}
+
+// Backstop server-side: la plantilla elegida tiene que existir en la WABA por la
+// que va a salir la campaña, y estar aprobada. Si no, Meta la rechaza en silencio
+// (132001) y el intento se pierde sin aviso — que es justo el bug que esto ataja.
+//
+// Fail-open a propósito en dos casos, para no romper lo que hoy funciona:
+//  · plantilla legacy sin waba_id → no sabemos de qué WABA es, se deja pasar.
+//  · approval_status null (nunca sincronizada) → se deja pasar; solo bloqueamos
+//    cuando Meta dijo explícitamente que NO está aprobada.
+async function validateTemplate(
+  tenantId: string,
+  templateName: string,
+  numberIds: string[],
+): Promise<string | null> {
+  // El mismo nombre puede existir en dos WABAs (o en dos idiomas): la tabla no
+  // tiene unique por (tenant, name), así que traemos TODAS las filas. Con
+  // maybeSingle() un homónimo hacía fallar la query y la validación se saltaba
+  // entera, justo en el escenario multi-WABA para el que se escribió.
+  const { data: rows } = await supabaseAdmin
+    .from('whatsapp_templates')
+    .select('waba_id, approval_status')
+    .eq('tenant_id', tenantId).eq('name', templateName);
+  const tpls = (rows ?? []) as { waba_id: string | null; approval_status: string | null }[];
+  if (tpls.length === 0) return null;   // no está en Iris (cargada a mano en Meta): no opinamos
+
+  // WABAs por las que va a salir la campaña ([] = todas las líneas → no acotamos).
+  let wabasDestino = new Set<string>();
+  if (numberIds.length > 0) {
+    const { data: nums } = await supabaseAdmin
+      .from('whatsapp_numbers').select('waba_id').eq('tenant_id', tenantId).in('id', numberIds);
+    wabasDestino = new Set((nums ?? []).map((n: any) => n.waba_id).filter(Boolean) as string[]);
+  }
+
+  // Candidatas: las que viven en la WABA de destino, más las legacy sin waba_id
+  // (no sabemos de cuál son, así que no las descartamos).
+  const candidatas = wabasDestino.size === 0
+    ? tpls
+    : tpls.filter((t) => !t.waba_id || wabasDestino.has(t.waba_id));
+
+  if (candidatas.length === 0) {
+    return `La plantilla "${templateName}" pertenece a otra cuenta de WhatsApp (WABA) y no existe en la línea elegida.`;
+  }
+
+  // Alcanza con que UNA candidata esté usable: aprobada, o sin estado conocido
+  // (legacy nunca sincronizada) — bloquear por "no sé" rompería lo que hoy anda.
+  const usable = candidatas.some((t) => {
+    const s = String(t.approval_status ?? '').toUpperCase();
+    return !s || s === 'APPROVED';
+  });
+  if (!usable) {
+    const estado = String(candidatas[0].approval_status ?? '').toUpperCase();
+    return `La plantilla "${templateName}" no está aprobada por Meta (${estado}). Esperá la aprobación antes de usarla en una campaña.`;
+  }
+  return null;
+}
+
 export async function GET() {
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
@@ -63,7 +170,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -78,15 +185,9 @@ export async function POST(request: Request) {
     ? recipient_ids.filter((x: unknown) => typeof x === 'string')
     : [];
 
-  // Línea destino (opcional): debe ser un número del tenant. null = todas.
-  let targetNumberId: string | null = null;
-  if (target_number_id) {
-    const { data: num } = await supabaseAdmin
-      .from('whatsapp_numbers').select('id')
-      .eq('id', target_number_id).eq('tenant_id', session.tenant_id).maybeSingle();
-    if (!num) return new NextResponse('Línea inválida', { status: 400 });
-    targetNumberId = num.id;
-  }
+  // Líneas destino (opcional): una, varias de la misma WABA, o ninguna = todas.
+  const target = await targetNumberCols(session.tenant_id, target_number_id, target_number_ids);
+  if ('error' in target) return new NextResponse(target.error, { status: 400 });
 
   const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
 
@@ -96,12 +197,16 @@ export async function POST(request: Request) {
   if (campaignType === 'template_meta' && !template_name?.trim()) {
     return new NextResponse('Falta nombre de template', { status: 400 });
   }
+  if (campaignType === 'template_meta') {
+    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    if (tplErr) return new NextResponse(tplErr, { status: 400 });
+  }
 
   const baseRow = {
     name,
     message:            campaignType === 'texto_libre' ? message : null,
     target_filter:      target_filter ?? 'todos',
-    target_number_id:   targetNumberId,
+    target_number_id:   target.cols.target_number_id,
     status:             'borrador',
     type:               campaignType,
     template_name:      campaignType === 'template_meta' ? template_name.trim() : null,
@@ -118,6 +223,10 @@ export async function POST(request: Request) {
     interval_max_sec: interval_max_sec != null ? Number(interval_max_sec) : 3,
     pause_every:      pause_every ? Number(pause_every) : null,
     pause_seconds:    pause_seconds ? Number(pause_seconds) : null,
+    // Multi-línea (todas de la misma WABA). Va en configRow y no en baseRow para
+    // que, si la columna todavía no está migrada, el reintento la descarte y la
+    // campaña se cree igual con el target_number_id de siempre.
+    target_number_ids: target.cols.target_number_ids,
     // Techo diario de Meta elegido en el wizard (absoluto). null = sin tope.
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     // Ventana horaria (minutos AR desde medianoche). Solo mismo día: si no es
@@ -155,7 +264,7 @@ export async function PUT(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
@@ -174,18 +283,16 @@ export async function PUT(request: Request) {
   const recipientIds: string[] = Array.isArray(recipient_ids)
     ? recipient_ids.filter((x: unknown) => typeof x === 'string') : [];
 
-  let targetNumberId: string | null = null;
-  if (target_number_id) {
-    const { data: num } = await supabaseAdmin
-      .from('whatsapp_numbers').select('id')
-      .eq('id', target_number_id).eq('tenant_id', session.tenant_id).maybeSingle();
-    if (!num) return new NextResponse('Línea inválida', { status: 400 });
-    targetNumberId = num.id;
-  }
+  const target = await targetNumberCols(session.tenant_id, target_number_id, target_number_ids);
+  if ('error' in target) return new NextResponse(target.error, { status: 400 });
 
   const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
   if (campaignType === 'texto_libre' && !message?.trim()) return new NextResponse('Falta mensaje', { status: 400 });
   if (campaignType === 'template_meta' && !template_name?.trim()) return new NextResponse('Falta nombre de template', { status: 400 });
+  if (campaignType === 'template_meta') {
+    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    if (tplErr) return new NextResponse(tplErr, { status: 400 });
+  }
 
   // Campos base + config, espejando el POST. Al relanzar la dejamos en 'borrador' y sin
   // pausa; re-anclamos el ramp a HOY (si no, un relanzamiento días después caería en
@@ -195,7 +302,7 @@ export async function PUT(request: Request) {
     name,
     message:            campaignType === 'texto_libre' ? message : null,
     target_filter:      target_filter ?? 'todos',
-    target_number_id:   targetNumberId,
+    target_number_id:   target.cols.target_number_id,
     status:             'borrador',
     type:               campaignType,
     template_name:      campaignType === 'template_meta' ? template_name.trim() : null,
@@ -208,6 +315,10 @@ export async function PUT(request: Request) {
     interval_max_sec: interval_max_sec != null ? Number(interval_max_sec) : 3,
     pause_every:      pause_every ? Number(pause_every) : null,
     pause_seconds:    pause_seconds ? Number(pause_seconds) : null,
+    // Multi-línea (todas de la misma WABA). Va en configRow y no en baseRow para
+    // que, si la columna todavía no está migrada, el reintento la descarte y la
+    // campaña se cree igual con el target_number_id de siempre.
+    target_number_ids: target.cols.target_number_ids,
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     paused_reason:    null,
     paused_at:        null,
