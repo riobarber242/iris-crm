@@ -2,21 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
 import { resolveCreds, createMessageTemplate } from '@/lib/meta/client';
-
-// Resuelve el WABA del tenant con la misma prioridad que el resto del proyecto:
-// número default activo → columna legacy del tenant → env global.
-async function resolveWaba(tenantId: string): Promise<string | null> {
-  const { data: num } = await supabaseAdmin
-    .from('whatsapp_numbers').select('waba_id')
-    .eq('tenant_id', tenantId).eq('is_default', true).eq('active', true).maybeSingle();
-  if (num?.waba_id) return num.waba_id;
-
-  const { data: t } = await supabaseAdmin
-    .from('tenants').select('whatsapp_waba_id').eq('id', tenantId).maybeSingle();
-  if (t?.whatsapp_waba_id) return t.whatsapp_waba_id;
-
-  return process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ?? process.env.WHATSAPP_WABA_ID ?? null;
-}
+import { resolveWaba, listTenantWabas } from '@/lib/waba';
 
 // POST /api/whatsapp-templates/submit-to-meta  { templateId }
 // Registra una plantilla guardada en Iris en Meta (queda pendiente de aprobación).
@@ -35,14 +21,24 @@ export async function POST(request: Request) {
 
   const { data: tpl } = await supabaseAdmin
     .from('whatsapp_templates')
-    .select('id, name, language, body, buttons')
+    .select('id, name, language, body, buttons, waba_id')
     .eq('id', templateId).eq('tenant_id', session.tenant_id).maybeSingle();
   if (!tpl) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 });
 
   const tenantId = session.tenant_id;
-  const creds = await resolveCreds(tenantId);
-  const wabaId = await resolveWaba(tenantId);
+
+  // La plantilla se registra en SU WABA (la que tiene guardada), no en la del
+  // número default: si no, una plantilla de la línea B terminaría aprobada en la
+  // WABA A y Meta la rechazaría al enviarla (132001). Fallback a la WABA
+  // principal solo para las legacy que todavía no tienen waba_id.
+  const wabas  = await listTenantWabas(tenantId);
+  const wabaId = tpl.waba_id ?? (await resolveWaba(tenantId));
   if (!wabaId) return NextResponse.json({ error: 'No hay WABA configurado para este tenant.' }, { status: 400 });
+
+  // Token de la línea que pertenece a esa WABA (el token del default no sirve para
+  // registrar en una WABA ajena). Si no la encontramos, caemos al default de antes.
+  const owner = wabas.find((w) => w.wabaId === wabaId);
+  const creds = owner ? { token: owner.token } : await resolveCreds(tenantId);
 
   try {
     const res = await createMessageTemplate(
@@ -55,7 +51,24 @@ export async function POST(request: Request) {
       },
       { token: creds.token, wabaId },
     );
-    return NextResponse.json({ ok: true, meta_id: res?.id ?? null, status: res?.status ?? 'PENDING' });
+
+    // Persistimos lo que devolvió Meta: la WABA donde quedó registrada (así una
+    // plantilla legacy sin waba_id queda atada desde ya), el id y el estado
+    // inicial. El punto de la UI arranca en naranja y pasa a verde al aprobarse
+    // (lo detecta la sincronización).
+    const status = String(res?.status ?? 'PENDING').toUpperCase();
+    const { error: upErr } = await supabaseAdmin
+      .from('whatsapp_templates')
+      .update({
+        waba_id:          wabaId,
+        meta_template_id: res?.id ? String(res.id) : null,
+        approval_status:  status,
+        status_synced_at: new Date().toISOString(),
+      })
+      .eq('id', tpl.id).eq('tenant_id', tenantId);
+    if (upErr) console.warn('[submit-to-meta] No se pudo guardar el estado de la plantilla:', upErr.message);
+
+    return NextResponse.json({ ok: true, meta_id: res?.id ?? null, status });
   } catch (err: any) {
     const metaErr = err?.response?.data?.error;
     return NextResponse.json(

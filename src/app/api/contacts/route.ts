@@ -23,6 +23,10 @@ export async function GET(request: Request) {
   const status   = url.searchParams.get('status');
   const all      = url.searchParams.get('all') === 'true';
   const numberId = url.searchParams.get('number'); // filtro por línea de WhatsApp
+  // ?numbers=id1,id2 → varias líneas (campañas multi-línea de la misma WABA).
+  // Tiene prioridad sobre ?number; vacío = sin filtro por línea, como siempre.
+  const numberIds = (url.searchParams.get('numbers') ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
 
   // ?all=true o ?status=X → modo CONTEO (estimación de destinatarios de campaña).
   // Agregado en SQL con head:true (cuenta sin traer filas). Antes devolvía TODOS
@@ -33,8 +37,10 @@ export async function GET(request: Request) {
       .select('id', { count: 'exact', head: true })
       .eq('tenant_id', session.tenant_id)
       .neq('blocked', true);
-    if (status)   query = query.eq('status', status);
-    if (numberId) query = query.eq('whatsapp_number_id', numberId);
+    if (status) query = query.eq('status', status);
+    if (numberIds.length > 1)       query = query.in('whatsapp_number_id', numberIds);
+    else if (numberIds.length === 1) query = query.eq('whatsapp_number_id', numberIds[0]);
+    else if (numberId)               query = query.eq('whatsapp_number_id', numberId);
     const { count, error } = await query;
     if (error) return new NextResponse(error.message, { status: 500 });
     return NextResponse.json({ count: count ?? 0 });
@@ -67,6 +73,9 @@ export async function GET(request: Request) {
   if (search) {
     query = query.or(`casino_username.ilike.*${search}*,name.ilike.*${search}*,phone.ilike.*${search}*`);
   }
+  // Filtro por línea (picker de campañas multi-línea). Sin ?numbers no cambia nada.
+  if (numberIds.length > 1)        query = query.in('whatsapp_number_id', numberIds);
+  else if (numberIds.length === 1) query = query.eq('whatsapp_number_id', numberIds[0]);
   // Orden alfabético por casino_username (lo que muestra la lista) + id como
   // desempate estable, para que la paginación no repita ni saltee filas con igual
   // usuario. `.range()` acota el egress a una página.

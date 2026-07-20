@@ -366,6 +366,47 @@ export async function createMessageTemplate(def: {
   }
 }
 
+// Estado de una plantilla tal como lo reporta Meta. `status` es el approval_status:
+// APPROVED / PENDING / IN_APPEAL / REJECTED / PAUSED / DISABLED.
+export type MetaTemplateInfo = { id: string; name: string; language: string; status: string; category: string | null };
+
+// Lista las plantillas registradas en UNA WABA. Es la fuente de verdad del estado
+// de aprobación: Iris guarda una copia local (whatsapp_templates.approval_status)
+// para no pegarle a la Graph API en cada render.
+export async function listMessageTemplates(wabaId: string, token: string): Promise<MetaTemplateInfo[]> {
+  const headers = { Authorization: `Bearer ${token}` };
+  const out: MetaTemplateInfo[] = [];
+
+  // Paginado: la primera llamada lleva params; las siguientes usan la URL `next`
+  // que ya viene con la query completa (por eso params queda undefined). El tope
+  // de páginas es un backstop ante un cursor que no termine nunca.
+  let url: string | null = `${BASE_URL}/${wabaId}/message_templates`;
+  let params: Record<string, unknown> | undefined = { fields: 'id,name,language,status,category', limit: 200 };
+
+  try {
+    for (let page = 0; page < 10 && url; page++) {
+      const res: any = await axios.get(url, { headers, params });
+      for (const t of res.data?.data ?? []) {
+        if (!t?.name) continue;
+        out.push({
+          id:       String(t.id ?? ''),
+          name:     String(t.name),
+          language: String(t.language ?? ''),
+          status:   String(t.status ?? '').toUpperCase(),
+          category: t.category ? String(t.category) : null,
+        });
+      }
+      url = res.data?.paging?.next ?? null;
+      params = undefined;
+    }
+  } catch (err: any) {
+    logApiError('listMessageTemplates', err);
+    throw err;
+  }
+
+  return out;
+}
+
 // El media de un mensaje entrante solo se puede leer con el token del número
 // que lo recibió — por eso acepta tenantId/numberId como los senders.
 export async function fetchWhatsAppMediaUrl(mediaId: string, tenantId?: string, numberId?: string | null): Promise<string> {
