@@ -33,6 +33,11 @@ const CODIGOS: Record<number, string> = {
   132016: 'La plantilla fue deshabilitada por baja calidad.',
 
   // Cuenta
+  // 130497 visto en producción el 21/07/2026 (derqui17star): la cuenta tenía
+  // restringido el envío a Brasil, y fallaba SOLO el único destinatario con
+  // número +55 mientras el resto recibía normal. Es una restricción de la
+  // cuenta por país: no se arregla reintentando ni cambiando el mensaje.
+  130497: 'Meta restringe el envío a este país desde esta cuenta. No es un problema del mensaje: hay que habilitar el país en la cuenta de WhatsApp Business.',
   368:    'La cuenta está temporalmente bloqueada por violar las políticas de Meta.',
   131031: 'La cuenta de WhatsApp fue restringida o dada de baja.',
 };

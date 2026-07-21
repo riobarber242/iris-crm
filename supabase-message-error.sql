@@ -11,7 +11,10 @@
 --
 -- Caso real que motivó esto (21/07/2026, tenant derqui17star): 8 mensajes
 -- salientes seguidos en 'failed' con la ventana de 24h abierta, y no había forma
--- de saber por qué sin abrir los logs de runtime.
+-- de saber por qué sin abrir los logs de runtime. El código resultó ser 130497
+-- ("Business account is restricted from messaging users in this country"): la
+-- cuenta tiene restringido el envío a Brasil y el destinatario era el único +55.
+-- Con estas columnas, ese diagnóstico se ve en la burbuja del chat.
 --
 -- Mismos nombres que en campaign_message_status, a propósito, para que las dos
 -- tablas se lean igual.
