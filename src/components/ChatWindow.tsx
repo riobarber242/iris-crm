@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
+import { motivoDeFallo } from '@/lib/meta-error';
 import { thumbUrl, fallbackToOriginal } from '@/lib/thumb';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabase-browser';
@@ -30,6 +31,11 @@ type Message = {
   content: string;
   created_at?: string;
   status?: string;
+  // Motivo del rechazo de Meta cuando status='failed' (ver supabase-message-error.sql).
+  // null en los fallos anteriores a esa migración.
+  error_code?: number | null;
+  error_title?: string | null;
+  error_message?: string | null;
   agent_name?: string | null;
   agent_role?: string | null;
   agent_avatar?: string | null;
@@ -104,8 +110,8 @@ function classifyBody(content: string): { kind: 'text' | 'image' | 'image-missin
 }
 
 // Ticks de estado para mensajes salientes (estilo WhatsApp).
-function Ticks({ status }: { status?: string }) {
-  if (status === 'failed')  return <span title="Meta rechazó el envío — el mensaje NO llegó" style={{ color: '#E53935', fontSize: '11px', fontWeight: 700 }}>⚠ No entregado</span>;
+function Ticks({ status, motivo }: { status?: string; motivo?: string | null }) {
+  if (status === 'failed')  return <span title={motivo ?? 'Meta rechazó el envío — el mensaje NO llegó'} style={{ color: '#E53935', fontSize: '11px', fontWeight: 700 }}>⚠ No entregado</span>;
   if (status === 'sending') return <span title="Enviando"    style={{ fontSize: '11px', opacity: 0.6 }}>🕓</span>;
   if (status === 'read')      return <span title="Leído"      style={{ color: '#34B7F1', fontSize: '11px', fontWeight: 700 }}>✓✓</span>;
   if (status === 'delivered') return <span title="Entregado"  style={{ color: '#888',    fontSize: '11px', fontWeight: 700 }}>✓✓</span>;
@@ -971,6 +977,11 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           // `media`, `body`, `rel`, `fullDate`, `text` vienen precomputados (useMemo).
           // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
           const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
+          // Motivo por el que Meta rechazó el envío. null en los fallos viejos
+          // (anteriores a las columnas error_*) → se muestra el aviso genérico.
+          const motivoFallo = m.status === 'failed'
+            ? motivoDeFallo(m.error_code, m.error_title, m.error_message)
+            : null;
           // "Enviar a verificar": solo en mensajes con imagen ya guardados (con id).
           //   entrante (cliente, role 'user')  → Cargas
           //   saliente del staff (role 'human', operador/agente) → Pagos
@@ -1195,7 +1206,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-end' : 'flex-start' }}
                  title={fullDate}>
                 {m.created_at && <span>{rel}</span>}
-                {(isBot || isHuman) && <Ticks status={m.status} />}
+                {(isBot || isHuman) && <Ticks status={m.status} motivo={motivoFallo} />}
                 {/* Acciones de mensaje fallido: reintentar texto libre o usar plantilla. */}
                 {isHuman && m.status === 'failed' && (
                   <>
@@ -1243,6 +1254,21 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                   </button>
                 )}
               </p>
+
+              {/* Motivo del rechazo de Meta, en texto. Antes el operador veía
+                  "⚠ No entregado" y no tenía forma de saber por qué (el detalle
+                  moría en los logs de Vercel). Solo en salientes fallidos y solo
+                  si Meta mandó un motivo. */}
+              {(isBot || isHuman) && m.status === 'failed' && motivoFallo && (
+                <span style={{
+                  display: 'block', margin: '4px 0 0 0', fontSize: '11px', lineHeight: 1.45,
+                  color: '#C62828', background: '#FDECEA', border: '1px solid #F5C6C2',
+                  borderRadius: '8px', padding: '6px 9px', maxWidth: '340px',
+                  textAlign: 'left', whiteSpace: 'normal',
+                }}>
+                  {motivoFallo}
+                </span>
+              )}
 
               {/* Firma de quién envió el mensaje manual (operador/agente/admin),
                   con su avatar (foto o iniciales). Solo si hay autor guardado;
