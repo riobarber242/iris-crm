@@ -155,19 +155,44 @@ export async function campaignSentSince(campaignId: string, sinceISO: string): P
   return count ?? 0;
 }
 
-async function resolveContacts(filter: string, tenantId: string, targetNumberIds: string[]) {
+// Alcance de destinatarios de una campaña.
+//   'libre'  → todos los contactos del tenant, sin mirar líneas.
+//   'suelto' → SOLO los que no tienen línea asignada (whatsapp_number_id null).
+//   resto    → los asignados a las líneas emisoras MÁS los sueltos.
+//
+// Por qué los sueltos se suman siempre: una base importada (ej. Derki, 54.432 de
+// 54.460 contactos sin línea) nunca habló con ninguna línea, así que exigir
+// coincidencia dejaría la campaña en 28 destinatarios. El operador no tiene que
+// hacer nada extra: entran solos.
+function applyScope(query: any, filter: string, lineIds: string[]) {
+  if (filter === 'libre') return query;
+  if (filter === 'suelto') return query.is('whatsapp_number_id', null);
+  if (lineIds.length === 0) return query;   // sin líneas elegidas (legacy) = sin recorte
+  return query.or(`whatsapp_number_id.in.(${lineIds.join(',')}),whatsapp_number_id.is.null`);
+}
+
+// 'libre' y 'suelto' acotan por LÍNEA, no por estado del contacto: no se traducen
+// a un .eq('status', ...) como 'nuevo' o 'inactivo'.
+const FILTROS_DE_ALCANCE = new Set(['libre', 'suelto']);
+
+async function resolveContacts(filter: string, tenantId: string, lineIds: string[]) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
-  // Campaña segmentada por línea: solo contactos asignados a esos números. Lista
-  // vacía = sin segmentar (todas las líneas), que es el comportamiento de siempre.
-  if (targetNumberIds.length === 1) base = base.eq('whatsapp_number_id', targetNumberIds[0]);
-  else if (targetNumberIds.length > 1) base = base.in('whatsapp_number_id', targetNumberIds);
-
+  // Envío a UN teléfono puntual: el destinatario es explícito, así que el alcance
+  // por línea no aplica (recortarlo podría dejar la campaña en cero).
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
     const { data } = await base.eq('phone', phone);
+    return data ?? [];
+  }
+
+  base = applyScope(base, filter, lineIds);
+
+  // Categorías de alcance: ya quedaron aplicadas arriba, sin filtro de estado.
+  if (FILTROS_DE_ALCANCE.has(filter)) {
+    const { data } = await base;
     return data ?? [];
   }
 
@@ -248,6 +273,13 @@ export async function runCampaignBatch(
     .update({ status: 'enviando', paused_reason: null, paused_at: null })
     .eq('id', campaignId).eq('tenant_id', tenantId);
 
+  // ── Línea(s) EMISORA(s) de la campaña ───────────────────────────────────────
+  // Vacío = modo legacy: cada contacto recibe por SU línea habitual, que es como
+  // se comportaban todas las campañas antes de separar emisor y filtro.
+  const senderNumberIds: string[] = Array.isArray(campaign.sender_number_ids)
+    ? campaign.sender_number_ids.filter((x: unknown): x is string => typeof x === 'string')
+    : [];
+
   // Selección individual (por id) tiene prioridad sobre el filtro por categoría.
   // Se re-valida contra el tenant y se respeta `blocked`.
   const explicitIds: string[] = Array.isArray(campaign.recipient_ids)
@@ -273,13 +305,18 @@ export async function runCampaignBatch(
       contacts.push(...(data ?? []));
     }
   } else {
-    // Líneas destino: la lista nueva (multi-línea, misma WABA) tiene prioridad; si
-    // está vacía/null se usa el target_number_id de siempre. Así las campañas
-    // creadas antes de esta migración se resuelven exactamente igual que antes.
-    const targetNumberIds: string[] = Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
-      ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
-      : (campaign.target_number_id ? [campaign.target_number_id] : []);
-    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, targetNumberIds);
+    // Líneas que acotan el universo. Prioridad:
+    //   1. sender_number_ids  → campañas nuevas: el alcance se define por la(s)
+    //      línea(s) EMISORA(s) elegidas, más los contactos sueltos.
+    //   2. target_number_ids / target_number_id → campañas anteriores a este
+    //      cambio, donde la línea era un filtro de destinatarios. Se siguen
+    //      resolviendo igual que siempre.
+    const scopeIds: string[] = senderNumberIds.length > 0
+      ? senderNumberIds
+      : (Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
+          ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
+          : (campaign.target_number_id ? [campaign.target_number_id] : []));
+    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, scopeIds);
   }
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las
@@ -424,8 +461,18 @@ export async function runCampaignBatch(
         v.trim().toLowerCase() === '{{nombre}}' ? (contact.name ?? contact.phone) : v
       );
 
-      // Cada contacto recibe por SU número (el último por el que habló);
-      // sin número asignado, resolveCreds cae al default del tenant.
+      // Número EMISOR de este mensaje:
+      //   · sin emisoras elegidas (legacy) → la línea habitual del contacto; sin
+      //     línea asignada, resolveCreds cae al default del tenant.
+      //   · el contacto ya venía por una de las emisoras → esa misma, para no
+      //     cambiarle el número que conoce.
+      //   · si no (otra línea, o suelto) → la primera emisora elegida.
+      const senderId = senderNumberIds.length === 0
+        ? contact.whatsapp_number_id
+        : (contact.whatsapp_number_id && senderNumberIds.includes(contact.whatsapp_number_id)
+            ? contact.whatsapp_number_id
+            : senderNumberIds[0]);
+
       let wamid: string | null = null;
       if (isTemplate) {
         wamid = await sendWhatsAppTemplate(
@@ -435,11 +482,11 @@ export async function runCampaignBatch(
           resolvedVars,
           undefined,
           tenantId,
-          contact.whatsapp_number_id,
+          senderId,
           buttons,
         );
       } else {
-        await sendWhatsAppText(contact.phone, campaign.message, tenantId, contact.whatsapp_number_id);
+        await sendWhatsAppText(contact.phone, campaign.message, tenantId, senderId);
       }
 
       // Persistimos el texto REAL renderizado (lo que ve el panel). Si no tenemos el

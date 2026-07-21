@@ -24,6 +24,44 @@ function rampCols(schedule: unknown): { ramp_schedule: number[] | null; ramp_anc
   return { ramp_schedule: clean, ramp_anchor: arMondayOf(new Date()) };
 }
 
+// Líneas EMISORAS: desde qué número(s) sale la campaña. Elección libre del
+// operador (ya no depende de a qué línea estaba asignado cada contacto), pero
+// todas tienen que compartir WABA: las plantillas viven en la WABA, así que
+// mezclar dos haría que Meta rechace en silencio la mitad de los envíos (132001).
+// Vacío = modo legacy (cada contacto por su línea habitual).
+async function senderNumberCols(
+  tenantId: string,
+  raw: unknown,
+): Promise<{ ids: string[] } | { error: string }> {
+  const ids = Array.isArray(raw)
+    ? Array.from(new Set(raw.filter((x: unknown): x is string => typeof x === 'string' && !!x)))
+    : [];
+  if (ids.length === 0) return { ids: [] };
+
+  const { data } = await supabaseAdmin
+    .from('whatsapp_numbers').select('id, label, waba_id, active')
+    .eq('tenant_id', tenantId).in('id', ids);
+  const nums = (data ?? []) as { id: string; label: string | null; waba_id: string | null; active: boolean }[];
+
+  if (nums.length !== ids.length) return { error: 'Alguna de las líneas emisoras elegidas no pertenece a esta cuenta.' };
+
+  const inactivas = nums.filter((n) => !n.active);
+  if (inactivas.length > 0) {
+    return { error: `No se puede enviar desde una línea inactiva: ${inactivas.map((n) => n.label ?? n.id).join(', ')}.` };
+  }
+
+  const sinWaba = nums.filter((n) => !n.waba_id);
+  if (sinWaba.length > 0) {
+    return { error: `Sin WABA cargada no hay plantillas asociadas: ${sinWaba.map((n) => n.label ?? n.id).join(', ')}.` };
+  }
+
+  if (new Set(nums.map((n) => n.waba_id)).size > 1) {
+    return { error: 'Las líneas emisoras son de WABAs distintas. Una campaña solo puede salir desde líneas de una misma WABA.' };
+  }
+
+  return { ids };
+}
+
 // Líneas destino de la campaña. El asistente permite elegir VARIAS, pero solo si
 // pertenecen a la MISMA WABA: las plantillas viven en la WABA, así que una campaña
 // que mezcle líneas de dos WABAs mandaría una plantilla inexistente por la mitad de
@@ -170,7 +208,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -189,6 +227,9 @@ export async function POST(request: Request) {
   const target = await targetNumberCols(session.tenant_id, target_number_id, target_number_ids);
   if ('error' in target) return new NextResponse(target.error, { status: 400 });
 
+  const sender = await senderNumberCols(session.tenant_id, sender_number_ids);
+  if ('error' in sender) return new NextResponse(sender.error, { status: 400 });
+
   const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
 
   if (campaignType === 'texto_libre' && !message?.trim()) {
@@ -198,7 +239,13 @@ export async function POST(request: Request) {
     return new NextResponse('Falta nombre de template', { status: 400 });
   }
   if (campaignType === 'template_meta') {
-    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    // La plantilla tiene que existir en la WABA por la que SALE la campaña. Con
+    // emisoras elegidas son esas; sin ellas (modo legacy) caemos a las líneas
+    // destino de siempre, que es como se validaban las campañas anteriores.
+    const wabaScope = sender.ids.length > 0
+      ? sender.ids
+      : (target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), wabaScope);
     if (tplErr) return new NextResponse(tplErr, { status: 400 });
   }
 
@@ -227,6 +274,9 @@ export async function POST(request: Request) {
     // que, si la columna todavía no está migrada, el reintento la descarte y la
     // campaña se cree igual con el target_number_id de siempre.
     target_number_ids: target.cols.target_number_ids,
+    // Línea(s) emisora(s) de la campaña. Vacío → null = modo legacy (cada
+    // contacto recibe por su línea habitual, como antes de este cambio).
+    sender_number_ids: sender.ids.length > 0 ? sender.ids : null,
     // Techo diario de Meta elegido en el wizard (absoluto). null = sin tope.
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     // Ventana horaria (minutos AR desde medianoche). Solo mismo día: si no es
@@ -264,7 +314,7 @@ export async function PUT(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
@@ -286,11 +336,20 @@ export async function PUT(request: Request) {
   const target = await targetNumberCols(session.tenant_id, target_number_id, target_number_ids);
   if ('error' in target) return new NextResponse(target.error, { status: 400 });
 
+  const sender = await senderNumberCols(session.tenant_id, sender_number_ids);
+  if ('error' in sender) return new NextResponse(sender.error, { status: 400 });
+
   const campaignType = type === 'template_meta' ? 'template_meta' : 'texto_libre';
   if (campaignType === 'texto_libre' && !message?.trim()) return new NextResponse('Falta mensaje', { status: 400 });
   if (campaignType === 'template_meta' && !template_name?.trim()) return new NextResponse('Falta nombre de template', { status: 400 });
   if (campaignType === 'template_meta') {
-    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    // La plantilla tiene que existir en la WABA por la que SALE la campaña. Con
+    // emisoras elegidas son esas; sin ellas (modo legacy) caemos a las líneas
+    // destino de siempre, que es como se validaban las campañas anteriores.
+    const wabaScope = sender.ids.length > 0
+      ? sender.ids
+      : (target.cols.target_number_ids ?? (target.cols.target_number_id ? [target.cols.target_number_id] : []));
+    const tplErr = await validateTemplate(session.tenant_id, template_name.trim(), wabaScope);
     if (tplErr) return new NextResponse(tplErr, { status: 400 });
   }
 
@@ -319,6 +378,9 @@ export async function PUT(request: Request) {
     // que, si la columna todavía no está migrada, el reintento la descarte y la
     // campaña se cree igual con el target_number_id de siempre.
     target_number_ids: target.cols.target_number_ids,
+    // Línea(s) emisora(s) de la campaña. Vacío → null = modo legacy (cada
+    // contacto recibe por su línea habitual, como antes de este cambio).
+    sender_number_ids: sender.ids.length > 0 ? sender.ids : null,
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     paused_reason:    null,
     paused_at:        null,
