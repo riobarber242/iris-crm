@@ -164,31 +164,40 @@ export async function campaignSentSince(campaignId: string, sinceISO: string): P
 // 54.460 contactos sin línea) nunca habló con ninguna línea, así que exigir
 // coincidencia dejaría la campaña en 28 destinatarios. El operador no tiene que
 // hacer nada extra: entran solos.
-function applyScope(query: any, filter: string, lineIds: string[]) {
-  if (filter === 'libre') return query;
+// `senderIds` = líneas EMISORAS (campañas nuevas). `legacyIds` = filtro de línea
+// de las campañas anteriores a este cambio, que se aplica ESTRICTO como siempre:
+// meterlas en la unión les agregaría de golpe toda la base de sueltos, en
+// campañas que nadie editó y que el cron puede reanudar solo.
+function applyScope(query: any, filter: string, senderIds: string[], legacyIds: string[]) {
+  if (filter === 'libre')  return query;                              // sin recorte
   if (filter === 'suelto') return query.is('whatsapp_number_id', null);
-  if (lineIds.length === 0) return query;   // sin líneas elegidas (legacy) = sin recorte
-  return query.or(`whatsapp_number_id.in.(${lineIds.join(',')}),whatsapp_number_id.is.null`);
+
+  if (senderIds.length > 0) {
+    return query.or(`whatsapp_number_id.in.(${senderIds.join(',')}),whatsapp_number_id.is.null`);
+  }
+
+  // Camino legacy: exactamente el .eq/.in de antes de este cambio.
+  if (legacyIds.length === 1) return query.eq('whatsapp_number_id', legacyIds[0]);
+  if (legacyIds.length > 1)   return query.in('whatsapp_number_id', legacyIds);
+  return query;
 }
 
 // 'libre' y 'suelto' acotan por LÍNEA, no por estado del contacto: no se traducen
 // a un .eq('status', ...) como 'nuevo' o 'inactivo'.
 const FILTROS_DE_ALCANCE = new Set(['libre', 'suelto']);
 
-async function resolveContacts(filter: string, tenantId: string, lineIds: string[]) {
+async function resolveContacts(filter: string, tenantId: string, senderIds: string[], legacyIds: string[]) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
-  // Envío a UN teléfono puntual: el destinatario es explícito, así que el alcance
-  // por línea no aplica (recortarlo podría dejar la campaña en cero).
+  base = applyScope(base, filter, senderIds, legacyIds);
+
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
     const { data } = await base.eq('phone', phone);
     return data ?? [];
   }
-
-  base = applyScope(base, filter, lineIds);
 
   // Categorías de alcance: ya quedaron aplicadas arriba, sin filtro de estado.
   if (FILTROS_DE_ALCANCE.has(filter)) {
@@ -305,18 +314,13 @@ export async function runCampaignBatch(
       contacts.push(...(data ?? []));
     }
   } else {
-    // Líneas que acotan el universo. Prioridad:
-    //   1. sender_number_ids  → campañas nuevas: el alcance se define por la(s)
-    //      línea(s) EMISORA(s) elegidas, más los contactos sueltos.
-    //   2. target_number_ids / target_number_id → campañas anteriores a este
-    //      cambio, donde la línea era un filtro de destinatarios. Se siguen
-    //      resolviendo igual que siempre.
-    const scopeIds: string[] = senderNumberIds.length > 0
-      ? senderNumberIds
-      : (Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
-          ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
-          : (campaign.target_number_id ? [campaign.target_number_id] : []));
-    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, scopeIds);
+    // Filtro de línea LEGACY (campañas anteriores a separar emisor y filtro). Se
+    // aplica estricto y solo cuando NO hay emisoras: así una campaña vieja que el
+    // cron reanude resuelve exactamente el mismo universo que antes.
+    const legacyIds: string[] = Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
+      ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
+      : (campaign.target_number_id ? [campaign.target_number_id] : []);
+    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, senderNumberIds, legacyIds);
   }
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las

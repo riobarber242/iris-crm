@@ -295,7 +295,20 @@ export async function POST(request: Request) {
     .select('*').single();
 
   if (error) {
-    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin ellas:', error.message);
+    // Reintento ESCALONADO. El fallback directo a baseRow tira por la borda TODA
+    // la config (techo diario, ventana horaria, ramp, ritmo, exclusiones): una
+    // campaña creada así sale sin ninguno de los frenos que eligió el operador.
+    // Por eso primero probamos solo sin la columna más nueva, que es la única que
+    // puede faltar si la migración de sender_number_ids no se corrió todavía.
+    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin sender_number_ids:', error.message);
+    const { sender_number_ids: _drop, ...configSinSender } = configRow as Record<string, unknown>;
+    const { data: retry1, error: r1 } = await supabaseAdmin
+      .from('campaigns')
+      .insert({ ...baseRow, ...configSinSender, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
+      .select('*').single();
+    if (!r1) return NextResponse.json(retry1);
+
+    console.warn('[campaigns] Reintento sin config completa:', r1.message);
     const { data: retry, error: rErr } = await supabaseAdmin
       .from('campaigns').insert(baseRow).select('*').single();
     if (rErr) return new NextResponse(rErr.message, { status: 500 });

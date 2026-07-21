@@ -240,7 +240,11 @@ export default function CampanasClient() {
   //                viven en la WABA).
   const [senderMode,    setSenderMode]    = useState<'habitual' | 'elegidas'>('habitual');
   const [senderLineIds, setSenderLineIds] = useState<string[]>([]);
+  // Aviso al relanzar una campaña creada con el filtro por línea anterior: su
+  // audiencia cambia al pasar al modelo nuevo. '' = sin aviso.
+  const [avisoConversion, setAvisoConversion] = useState('');
   const [recipientCount, setRecipientCount] = useState<number | null>(null);
+  const countSeqRef = useRef(0);   // descarta respuestas de conteo fuera de orden
   const [countLoading,   setCountLoading]   = useState(false);
 
   // Modo de destinatarios: por categoría (filtro) o selección individual (ids).
@@ -442,6 +446,10 @@ export default function CampanasClient() {
   // Conteo estimado de destinatarios. `lineIds` son las líneas EMISORAS: acotan
   // el universo a sus contactos + los sueltos (misma regla que el envío real).
   async function fetchRecipientCount(f: string, lineIds: string[]) {
+    // Solo la respuesta de la ÚLTIMA llamada pisa el contador: tildar varias
+    // líneas rápido dispara varias y podrían llegar desordenadas, dejando en
+    // pantalla un total que no corresponde a la selección actual.
+    const seq = ++countSeqRef.current;
     setCountLoading(true); setRecipientCount(null);
     try {
       const isInactivoDays = /^inactivo_\d+d$/.test(f);
@@ -450,15 +458,16 @@ export default function CampanasClient() {
         ? '?all=true'
         : isInactivoDays ? `?status=inactivo` : f === 'todos' ? '?all=true' : `?status=${f}`;
       const res = await fetch(`/api/contacts${param}${scopeParams(f, lineIds)}`);
-      if (!res.ok) return;
+      if (!res.ok || seq !== countSeqRef.current) return;
       const data = await res.json();
+      if (seq !== countSeqRef.current) return;   // llegó tarde: la ganó otra llamada
       // El endpoint ahora devuelve { count } (conteo agregado en SQL). Fallback al
       // array por compatibilidad si algún deploy viejo respondiera la lista.
       setRecipientCount(
         typeof data?.count === 'number' ? data.count : Array.isArray(data) ? data.length : null,
       );
     } catch {}
-    setCountLoading(false);
+    if (seq === countSeqRef.current) setCountLoading(false);
   }
 
   // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango),
@@ -566,8 +575,15 @@ export default function CampanasClient() {
   function handleSenderModeChange(mode: 'habitual' | 'elegidas') {
     setSenderMode(mode);
     setError('');
+    // Al volver a 'habitual' se destildan las líneas: si no, quedarían guardadas y
+    // reaparecerían tildadas al volver a 'elegidas' sin que el operador las elija.
+    const proximas = mode === 'habitual' ? [] : senderLineIds;
     if (mode === 'habitual') setSenderLineIds([]);
-    fetchRecipientCount(effectiveFilter(filter, inactiveDays), mode === 'habitual' ? [] : senderLineIds);
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas);
+    // El picker individual muestra el mismo universo que el envío: si cambia el
+    // alcance hay que recargarlo, o queda una lista que ya no se corresponde con
+    // el "~N contactos" de al lado.
+    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas);
   }
 
   function resetWizard() {
@@ -581,6 +597,7 @@ export default function CampanasClient() {
     setMarginPct(80);
     setWindowFrom('08:00'); setWindowTo('20:00');
     setRampEnabled(false); setRampWeeks([20, 20, 30, 50]);
+    setAvisoConversion('');
     setEditingId(null); setPendingEdit(null);
     setError('');
   }
@@ -632,8 +649,26 @@ export default function CampanasClient() {
       ? guardadas
       : guardadas.filter((id) => selectableLines.some((l) => l.id === id));
 
-    setSenderMode(savedLines.length > 0 ? 'elegidas' : 'habitual');
+    // Si la campaña tenía línea y el saneo la descartó (se desactivó o perdió la
+    // WABA), NO caemos a 'habitual': eso sacaría toda restricción de línea y el
+    // relanzamiento saldría a la base entera. Dejamos 'elegidas' sin nada tildado,
+    // así stepBlocker(1) obliga a elegir emisora a mano.
+    const emisoraDescartada = guardadas.length > 0 && savedLines.length === 0;
+    setSenderMode(savedLines.length > 0 || emisoraDescartada ? 'elegidas' : 'habitual');
     setSenderLineIds(savedLines);
+
+    // Aviso de conversión: la campaña usaba el filtro por línea viejo y al
+    // relanzarla pasa al modelo nuevo (emisora + sueltos), que es un universo
+    // más amplio. Que no cambie la audiencia por sorpresa.
+    const eraLegacy = !(Array.isArray(c.sender_number_ids) && c.sender_number_ids.length > 0)
+      && (Array.isArray(c.target_number_ids) ? c.target_number_ids.length > 0 : !!c.target_number_id);
+    setAvisoConversion(
+      emisoraDescartada
+        ? 'La línea que usaba esta campaña ya no está disponible (inactiva o sin WABA). Elegí desde qué línea la relanzás.'
+        : eraLegacy
+          ? 'Esta campaña usaba el filtro por línea anterior. Al relanzarla pasa al modo nuevo: además de los contactos de esa línea se suman los que no tienen línea asignada. Revisá el total en el paso Destinatarios.'
+          : '',
+    );
 
     setIntervalMin(String(c.interval_min_sec ?? 1));
     setIntervalMax(String(c.interval_max_sec ?? 3));
@@ -686,10 +721,16 @@ export default function CampanasClient() {
   // el propio paso y, al confirmar, impide lanzar una campaña a medio armar.
   function stepBlocker(s: number): string {
     if (s === 1) {
-      // El modo habitual es el default y NUNCA se bloquea: es el camino que
-      // reproduce el comportamiento anterior a separar emisor y filtro, así que
-      // no puede depender de que las líneas tengan la WABA cargada.
-      if (senderMode === 'habitual') return '';
+      // Modo habitual: no depende de que las líneas tengan WABA cargada (es el
+      // camino que reproduce el comportamiento anterior). PERO con dos WABAs en
+      // juego no se puede: cada contacto saldría por su línea y no hay una
+      // plantilla que exista en las dos → Meta rechazaría media campaña en
+      // silencio (132001). Ahí hay que elegir emisora sí o sí.
+      if (senderMode === 'habitual') {
+        return allWabas.length > 1
+          ? 'Tus líneas son de WABAs distintas: no hay una plantilla que sirva para todas. Elegí desde qué línea sale la campaña.'
+          : '';
+      }
       if (lines.length > 0 && selectableLines.length === 0) {
         return 'Ninguna de tus líneas tiene cargada su cuenta de WhatsApp (WABA), así que no se puede elegir emisora. Usá "Cada contacto por su línea habitual", o pedile al admin que complete la WABA en Configuración → Números de WhatsApp.';
       }
@@ -1042,6 +1083,11 @@ export default function CampanasClient() {
               qué plantillas existen (y cuáles Meta aprobó). */}
           {step === 1 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {avisoConversion && (
+                <p style={{ fontSize: '12px', color: '#8a6d1f', background: '#FFFBEA', border: '1px solid #FCE8A6', borderRadius: '10px', padding: '10px 14px', margin: 0, lineHeight: 1.5 }}>
+                  ⚠ {avisoConversion}
+                </p>
+              )}
               <label style={labelStyle}>¿Desde qué número sale la campaña?</label>
 
               <div style={{ display: 'flex', gap: '6px' }}>
