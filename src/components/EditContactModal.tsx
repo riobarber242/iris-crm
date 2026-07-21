@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { InfoCategorias } from '@/components/ui/InfoCategorias';
 
 // Modal de edición de un contacto existente. Permite editar usuario de casino,
 // nombre, teléfono y estado. Postea a PATCH /api/contacts; el backend valida y
@@ -132,9 +133,12 @@ export default function EditContactModal({ contact, onClose, onSaved }: {
           />
         </div>
 
-        {/* Estado */}
+        {/* Estado. El ⓘ explica que la categoría la calcula el sistema solo y que
+            un cambio manual se revierte — justo la duda que aparece acá. */}
         <div>
-          <p style={label}>Estado</p>
+          <p style={{ ...label, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Estado <InfoCategorias />
+          </p>
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...input, cursor: 'pointer' }}>
             {STATUS_OPTIONS.map((s) => (
               <option key={s.value} value={s.value}>{s.label}</option>

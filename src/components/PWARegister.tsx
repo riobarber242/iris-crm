@@ -1,8 +1,15 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
+
+// Páginas PÚBLICAS (sin login) que se comparten fuera del equipo: la política de
+// privacidad que revisa Meta y las páginas informativas que se le mandan al
+// cliente. Este componente vive en el layout raíz, así que sin este filtro el
+// banner interno de "Activá las notificaciones" les aparecía a ellos.
+const RUTAS_PUBLICAS = ['/privacidad', '/info', '/login'];
 
 // Convierte la VAPID public key (base64url) a Uint8Array para pushManager.subscribe.
 function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
@@ -122,6 +129,7 @@ type PushPrompt = null | 'prompt' | 'ios-install';
 // (requisito de Safari; Chrome/Firefox lo aceptan igual).
 export default function PWARegister() {
   const { agent } = useAuth();
+  const pathname = usePathname();
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [pushPrompt, setPushPrompt] = useState<PushPrompt>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -301,8 +309,13 @@ export default function PWARegister() {
     setWaitingWorker(null);
   }
 
+  // En las páginas públicas no mostramos NADA de la UI interna (ni el banner de
+  // notificaciones ni el de "hay una versión nueva"): las ve gente de afuera.
+  // El registro del service worker de arriba sí sigue corriendo, no molesta.
+  const esPublica = RUTAS_PUBLICAS.some((r) => pathname === r || pathname?.startsWith(r + '/'));
+
   const showPush = pushPrompt !== null && !dismissed;
-  if (!waitingWorker && !showPush) return null;
+  if (esPublica || (!waitingWorker && !showPush)) return null;
 
   return (
     <>
