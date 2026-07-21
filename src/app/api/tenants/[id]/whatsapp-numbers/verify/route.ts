@@ -17,14 +17,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const { data: num } = await supabaseAdmin
     .from('whatsapp_numbers')
-    .select('id, phone_number_id, access_token, access_token_enc')
+    .select('id, phone_number_id, access_token_enc')
     .eq('id', id)
     .eq('tenant_id', tenantId)
     .maybeSingle();
   if (!num) return new NextResponse('Número no encontrado', { status: 404 });
 
-  // Lectura dual (cifrado → plano); sin token propio → token global de env.
-  const token = readWaSecret(num.access_token_enc, num.access_token, 'access_token', num.id) || process.env.WHATSAPP_ACCESS_TOKEN;
+  // Sin token propio → token global de env. Si la línea TIENE token cifrado y
+  // no abre, readWaSecret tira: acá lo convertimos en un resultado legible,
+  // porque esta pantalla existe justamente para diagnosticar la línea.
+  let token: string | undefined;
+  try {
+    token = readWaSecret(num.access_token_enc, 'access_token', num.id) || process.env.WHATSAPP_ACCESS_TOKEN;
+  } catch (err: any) {
+    return NextResponse.json({ ok: false, error: `No se pudo descifrar el token de esta línea: ${err?.message ?? err}` });
+  }
   if (!token) {
     return NextResponse.json({ ok: false, error: 'Sin access token (ni propio ni global en env)' });
   }

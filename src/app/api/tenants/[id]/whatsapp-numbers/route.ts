@@ -19,8 +19,8 @@ function sanitize(row: any) {
   const { access_token, access_token_enc, app_secret, app_secret_enc, ...rest } = row;
   return {
     ...rest,
-    has_token:      !!(access_token || access_token_enc),
-    has_app_secret: !!(app_secret || app_secret_enc),
+    has_token:      !!access_token_enc,
+    has_app_secret: !!app_secret_enc,
   };
 }
 

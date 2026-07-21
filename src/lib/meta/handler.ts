@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { verifyMetaSignature } from './verify';
 import { sendWhatsAppText, resolveCreds, withTransientRetry } from './client';
-import { readWaSecret } from './wa-secrets';
+import { readWaSecret, WaSecretUnreadableError } from './wa-secrets';
 import { getOfflineMsg } from '../bot-config';
 import { supabaseAdmin } from '../db';
 import { irisSystemPrompt } from '../system-prompt';
@@ -63,12 +63,21 @@ async function resolveAppSecret(phoneNumberId: string | undefined): Promise<stri
   if (!phoneNumberId) return globalSecret;
   try {
     const { data } = await supabaseAdmin
-      .from('whatsapp_numbers').select('id, app_secret, app_secret_enc')
+      .from('whatsapp_numbers').select('id, app_secret_enc')
       .eq('phone_number_id', phoneNumberId).maybeSingle();
-    // Lectura dual (cifrado → plano) del app_secret propio del número.
-    const perNumber = (readWaSecret(data?.app_secret_enc, data?.app_secret, 'app_secret', data?.id) ?? '').trim();
-    return perNumber || globalSecret;   // fila sin secret propio → global
+    // null = la línea no tiene secret propio → global (legítimo, ej. 17Star).
+    const perNumber = (readWaSecret(data?.app_secret_enc, 'app_secret', data?.id) ?? '').trim();
+    return perNumber || globalSecret;
   } catch (err) {
+    // FAIL-CLOSED (PR5): la línea TIENE su propio app_secret y no lo pudimos
+    // descifrar. Validar con el global rechazaría igual (firmas distintas), pero
+    // con un motivo engañoso: devolvemos undefined para que el log diga
+    // "sin app secret" y quede claro que es un problema de credenciales, no una
+    // firma inválida de Meta.
+    if (err instanceof WaSecretUnreadableError) {
+      console.error(`[webhook] ${err.message} — se rechaza el webhook (fail-closed)`);
+      return undefined;
+    }
     console.warn('[webhook] resolveAppSecret falló, uso secret global:', err);
     return globalSecret;
   }

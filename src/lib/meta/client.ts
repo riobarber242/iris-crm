@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { supabaseAdmin } from '../db';
-import { readWaSecret } from './wa-secrets';
+import { readWaSecret, WaSecretUnreadableError } from './wa-secrets';
 
 const BASE_URL = 'https://graph.facebook.com/v21.0';
 
@@ -40,8 +40,9 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
         .eq('id', numberId)
         .maybeSingle();
       if (data?.phone_number_id) {
-        // Lectura dual (cifrado → plano). null = sin token propio → token global.
-        const token = readWaSecret(data.access_token_enc, data.access_token, 'access_token', data.id) || getToken();
+        // null = la línea no tiene token propio → token global (legítimo).
+        // Si tiene cifrado y no abre, readWaSecret TIRA y no se degrada.
+        const token = readWaSecret(data.access_token_enc, 'access_token', data.id) || getToken();
         return { token, phoneId: data.phone_number_id };
       }
     }
@@ -54,7 +55,7 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
         .eq('active', true)
         .maybeSingle();
       if (def?.phone_number_id) {
-        const token = readWaSecret(def.access_token_enc, def.access_token, 'access_token', def.id) || getToken();
+        const token = readWaSecret(def.access_token_enc, 'access_token', def.id) || getToken();
         return { token, phoneId: def.phone_number_id };
       }
       const { data } = await supabaseAdmin
@@ -67,6 +68,10 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
       }
     }
   } catch (err) {
+    // FAIL-CLOSED (PR5): si la línea TIENE token propio y no lo pudimos descifrar,
+    // NO degradamos al token global — sería salir a enviar con la identidad de otro
+    // tenant (WABA equivocada). Rompemos, que es recuperable; lo otro no.
+    if (err instanceof WaSecretUnreadableError) throw err;
     console.warn('[WhatsApp] resolveCreds falló, uso env globales:', err);
   }
   // Fallback: credenciales globales de env (tenant Principal / sin creds propias).
