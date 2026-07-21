@@ -426,6 +426,19 @@ async function processStatus(status: any) {
   if (error) console.warn(`[status] No se pudo actualizar status=${newStat} wamid=${wamid}:`, error.message);
   else       console.log(`[status] wamid=${wamid} → ${newStat}`);
 
+  // Motivo del fallo en la fila del mensaje (columnas nuevas: ver
+  // supabase-message-error.sql). Va en un update APARTE y best-effort, igual que
+  // en campaign_message_status: si las columnas todavía no están migradas, falla
+  // solo esto y el tick de arriba queda igual. Sin esto el operador ve "no
+  // entregado" sin ninguna razón, y el motivo solo vivía en los logs de Vercel.
+  if (newStat === 'failed' && metaErr) {
+    const { error: errUpd } = await supabaseAdmin
+      .from('messages')
+      .update({ error_code: errCode, error_title: errTitle, error_message: errMsg })
+      .eq('whatsapp_message_id', wamid);
+    if (errUpd) console.warn('[status] No se guardó el detalle del error en messages (¿columnas error_* migradas?):', errUpd.message);
+  }
+
   // ── Tracking de campañas ────────────────────────────────────────────────────
   // Si este wamid pertenece a un envío de campaña, refleja el tick en
   // campaign_message_status e incrementa el contador de la campaña UNA sola vez
