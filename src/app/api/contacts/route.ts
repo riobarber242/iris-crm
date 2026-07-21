@@ -23,10 +23,31 @@ export async function GET(request: Request) {
   const status   = url.searchParams.get('status');
   const all      = url.searchParams.get('all') === 'true';
   const numberId = url.searchParams.get('number'); // filtro por línea de WhatsApp
-  // ?numbers=id1,id2 → varias líneas (campañas multi-línea de la misma WABA).
-  // Tiene prioridad sobre ?number; vacío = sin filtro por línea, como siempre.
+  // ?numbers=id1,id2 → líneas EMISORAS de una campaña. Tiene prioridad sobre
+  // ?number; vacío = sin filtro por línea, como siempre.
   const numberIds = (url.searchParams.get('numbers') ?? '')
     .split(',').map((s) => s.trim()).filter(Boolean);
+  // ?scope=lineas|suelto|libre — alcance de destinatarios de una campaña:
+  //   lineas → asignados a ?numbers MÁS los que no tienen línea (sueltos)
+  //   suelto → solo los sueltos
+  //   libre  → todos, sin mirar líneas
+  // Ausente = comportamiento histórico (solo ?number/?numbers, sin unión).
+  const scope = url.searchParams.get('scope');
+
+  // Aplica el alcance por línea. Devuelve la query tal cual si no corresponde.
+  const applyScope = (q: any) => {
+    if (scope === 'libre')  return q;
+    if (scope === 'suelto') return q.is('whatsapp_number_id', null);
+    if (scope === 'lineas') {
+      // Sin líneas elegidas no hay nada que unir: sin recorte.
+      if (numberIds.length === 0) return q;
+      return q.or(`whatsapp_number_id.in.(${numberIds.join(',')}),whatsapp_number_id.is.null`);
+    }
+    if (numberIds.length > 1)        return q.in('whatsapp_number_id', numberIds);
+    if (numberIds.length === 1)      return q.eq('whatsapp_number_id', numberIds[0]);
+    if (numberId)                    return q.eq('whatsapp_number_id', numberId);
+    return q;
+  };
 
   // ?all=true o ?status=X → modo CONTEO (estimación de destinatarios de campaña).
   // Agregado en SQL con head:true (cuenta sin traer filas). Antes devolvía TODOS
@@ -38,9 +59,7 @@ export async function GET(request: Request) {
       .eq('tenant_id', session.tenant_id)
       .neq('blocked', true);
     if (status) query = query.eq('status', status);
-    if (numberIds.length > 1)       query = query.in('whatsapp_number_id', numberIds);
-    else if (numberIds.length === 1) query = query.eq('whatsapp_number_id', numberIds[0]);
-    else if (numberId)               query = query.eq('whatsapp_number_id', numberId);
+    query = applyScope(query);
     const { count, error } = await query;
     if (error) return new NextResponse(error.message, { status: 500 });
     return NextResponse.json({ count: count ?? 0 });
@@ -73,9 +92,9 @@ export async function GET(request: Request) {
   if (search) {
     query = query.or(`casino_username.ilike.*${search}*,name.ilike.*${search}*,phone.ilike.*${search}*`);
   }
-  // Filtro por línea (picker de campañas multi-línea). Sin ?numbers no cambia nada.
-  if (numberIds.length > 1)        query = query.in('whatsapp_number_id', numberIds);
-  else if (numberIds.length === 1) query = query.eq('whatsapp_number_id', numberIds[0]);
+  // Alcance por línea (picker del asistente de campañas). Sin ?scope ni ?numbers
+  // no cambia nada respecto del comportamiento histórico.
+  query = applyScope(query);
   // Orden alfabético por casino_username (lo que muestra la lista) + id como
   // desempate estable, para que la paginación no repita ni saltee filas con igual
   // usuario. `.range()` acota el egress a una página.
