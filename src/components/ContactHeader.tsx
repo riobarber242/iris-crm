@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './AuthProvider';
+import { InfoCategorias } from '@/components/ui/InfoCategorias';
 import CasinoCreateUserModal from './CasinoCreateUserModal';
 
 type AgentOption = { id: string; name: string; active: boolean };
@@ -305,6 +306,10 @@ export default function ContactHeader({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+
+        {/* La categoría la calcula el sistema y un cambio manual acá se revierte:
+            el ⓘ lleva a la página que lo explica. */}
+        <InfoCategorias />
 
         {/* Notas: botón 📝 + panel flotante (anclado a este wrapper relativo). */}
         <div ref={notesRef} style={{ position: 'relative', flexShrink: 0 }}>
