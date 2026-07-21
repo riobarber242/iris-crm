@@ -303,11 +303,11 @@ export async function POST(request: Request) {
     // campaña creada así sale sin ninguno de los frenos que eligió el operador.
     // Por eso primero probamos solo sin la columna más nueva, que es la única que
     // puede faltar si la migración de sender_number_ids no se corrió todavía.
-    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin sender_number_ids:', error.message);
-    const { sender_number_ids: _drop, ...configSinSender } = configRow as Record<string, unknown>;
+    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin las columnas nuevas:', error.message);
+    const { sender_number_ids: _s, target_scope: _t, ...configSinNuevas } = configRow as Record<string, unknown>;
     const { data: retry1, error: r1 } = await supabaseAdmin
       .from('campaigns')
-      .insert({ ...baseRow, ...configSinSender, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
+      .insert({ ...baseRow, ...configSinNuevas, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
       .select('*').single();
     if (!r1) return NextResponse.json(retry1);
 
