@@ -208,7 +208,7 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, target_scope, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
 
@@ -277,6 +277,9 @@ export async function POST(request: Request) {
     // Línea(s) emisora(s) de la campaña. Vacío → null = modo legacy (cada
     // contacto recibe por su línea habitual, como antes de este cambio).
     sender_number_ids: sender.ids.length > 0 ? sender.ids : null,
+    // Alcance por línea de los destinatarios, independiente de la categoría.
+    // Valor desconocido → null = 'lineas' (el default de siempre).
+    target_scope: ['lineas', 'suelto', 'libre'].includes(String(target_scope)) ? String(target_scope) : null,
     // Techo diario de Meta elegido en el wizard (absoluto). null = sin tope.
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     // Ventana horaria (minutos AR desde medianoche). Solo mismo día: si no es
@@ -300,11 +303,11 @@ export async function POST(request: Request) {
     // campaña creada así sale sin ninguno de los frenos que eligió el operador.
     // Por eso primero probamos solo sin la columna más nueva, que es la única que
     // puede faltar si la migración de sender_number_ids no se corrió todavía.
-    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin sender_number_ids:', error.message);
-    const { sender_number_ids: _drop, ...configSinSender } = configRow as Record<string, unknown>;
+    console.warn('[campaigns] Insert con columnas opcionales falló, reintento sin las columnas nuevas:', error.message);
+    const { sender_number_ids: _s, target_scope: _t, ...configSinNuevas } = configRow as Record<string, unknown>;
     const { data: retry1, error: r1 } = await supabaseAdmin
       .from('campaigns')
-      .insert({ ...baseRow, ...configSinSender, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
+      .insert({ ...baseRow, ...configSinNuevas, exclude_campaign_ids: excludeIds, recipient_ids: recipientIds })
       .select('*').single();
     if (!r1) return NextResponse.json(retry1);
 
@@ -327,7 +330,7 @@ export async function PUT(request: Request) {
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
   const body = await request.json();
-  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
+  const { campaignId, name, message, target_filter, type, template_name, template_language, template_variables, send_limit, target_number_id, target_number_ids, sender_number_ids, target_scope, exclude_campaign_ids, interval_min_sec, interval_max_sec, pause_every, pause_seconds, recipient_ids, daily_cap, window_start_min, window_end_min, ramp_schedule } = body;
 
   if (!campaignId) return new NextResponse('Falta campaignId', { status: 400 });
   if (!name) return new NextResponse('Falta nombre', { status: 400 });
@@ -394,6 +397,9 @@ export async function PUT(request: Request) {
     // Línea(s) emisora(s) de la campaña. Vacío → null = modo legacy (cada
     // contacto recibe por su línea habitual, como antes de este cambio).
     sender_number_ids: sender.ids.length > 0 ? sender.ids : null,
+    // Alcance por línea de los destinatarios, independiente de la categoría.
+    // Valor desconocido → null = 'lineas' (el default de siempre).
+    target_scope: ['lineas', 'suelto', 'libre'].includes(String(target_scope)) ? String(target_scope) : null,
     daily_cap:        daily_cap != null && Number.isFinite(Number(daily_cap)) ? Number(daily_cap) : null,
     paused_reason:    null,
     paused_at:        null,
