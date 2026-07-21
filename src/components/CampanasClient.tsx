@@ -16,6 +16,8 @@ type Campaign = {
   target_number_id: string | null;
   // Filtro de destinatarios LEGACY (antes de separar emisor y filtro).
   target_number_ids: string[] | null;
+  // Alcance por línea de los destinatarios. null = 'lineas' (default).
+  target_scope: string | null;
   // Línea(s) EMISORA(s): desde qué número sale la campaña. null/vacío = modo
   // habitual (cada contacto recibe por su propia línea), que es el comportamiento
   // de todas las campañas anteriores a este cambio.
@@ -130,36 +132,43 @@ function countTemplateVars(body: string): number {
   return Math.max(0, ...nums);
 }
 
-// Categorías de destinatarios. Las cuatro primeras filtran por ESTADO del contacto
-// y quedan acotadas a las líneas emisoras elegidas + los contactos sueltos.
-// Las dos últimas no miran el estado, sino el alcance por línea:
-//   suelto → SOLO los que no tienen línea asignada
-//   libre  → absolutamente todos, sin mirar líneas
+// Los destinatarios se eligen con DOS dimensiones independientes, que se
+// combinan libremente (ej: alcance "toda la base" + categoría "Inactivo" =
+// todos los inactivos, sin importar su línea).
+//
+// 1) CATEGORÍA: por estado del contacto.
 const FILTERS = [
   { value: 'todos',          label: 'Todos los contactos' },
   { value: 'cliente_activo', label: 'Cliente activo' },
   { value: 'inactivo',       label: 'Inactivo' },
   { value: 'inactivo_dias',  label: 'Inactivo sin recargar X días' },
   { value: 'nuevo',          label: 'Nuevo' },
-  { value: 'suelto',         label: 'Contacto suelto (sin línea asignada)' },
-  { value: 'libre',          label: 'Libre (cualquier contacto)' },
 ];
 
-// Categorías que acotan por LÍNEA en vez de por estado del contacto.
-const FILTROS_DE_ALCANCE = new Set(['suelto', 'libre']);
+// 2) ALCANCE: por línea. 'lineas' es el default y el comportamiento histórico.
+const SCOPES = [
+  { value: 'lineas', label: 'Líneas emisoras + contactos sin línea',
+    hint: 'Los contactos de la(s) línea(s) elegida(s) en el paso 1, más los que nunca hablaron con ninguna línea.' },
+  { value: 'suelto', label: 'Solo contactos sin línea',
+    hint: 'Únicamente los que nunca hablaron con ninguna línea (típicamente, los importados).' },
+  { value: 'libre',  label: 'Toda la base (ignorar líneas)',
+    hint: 'Todos los contactos de la cuenta, sin importar por qué línea entraron.' },
+] as const;
+
+type Scope = typeof SCOPES[number]['value'];
 
 // 'inactivo_dias' es un sentinel de UI: el filtro real es inactivo_Xd.
 function effectiveFilter(f: string, days: number): string {
   return f === 'inactivo_dias' ? `inactivo_${days}d` : f;
 }
 
-// Query string de alcance para /api/contacts, según la categoría elegida y las
-// líneas emisoras. Es la MISMA regla que aplica send-core al enviar, así que el
-// "~N contactos" del asistente coincide con lo que realmente sale.
-function scopeParams(filter: string, senderIds: string[]): string {
-  if (filter === 'libre')  return '&scope=libre';
-  if (filter === 'suelto') return '&scope=suelto';
-  if (senderIds.length === 0) return '';   // modo habitual: sin recorte por línea
+// Query string de alcance para /api/contacts. Es la MISMA regla que aplica
+// send-core al enviar, así que el "~N contactos" del asistente coincide con lo
+// que realmente sale.
+function scopeParams(scope: Scope, senderIds: string[]): string {
+  if (scope === 'libre')  return '&scope=libre';
+  if (scope === 'suelto') return '&scope=suelto';
+  if (senderIds.length === 0) return '';   // emisor habitual: sin recorte por línea
   return `&scope=lineas&numbers=${senderIds.join(',')}`;
 }
 
@@ -231,6 +240,8 @@ export default function CampanasClient() {
 
   const [filter,       setFilter]       = useState('todos');
   const [inactiveDays, setInactiveDays] = useState(30);
+  // Alcance por línea, independiente de la categoría de arriba.
+  const [scope,        setScope]        = useState<Scope>('lineas');
   // ── Paso 1: línea EMISORA ───────────────────────────────────────────────────
   // Desde qué número sale la campaña, independiente de a qué línea estaba
   // asignado cada contacto.
@@ -444,9 +455,9 @@ export default function CampanasClient() {
     setError('');
   }
 
-  // Conteo estimado de destinatarios. `lineIds` son las líneas EMISORAS: acotan
-  // el universo a sus contactos + los sueltos (misma regla que el envío real).
-  async function fetchRecipientCount(f: string, lineIds: string[]) {
+  // Conteo estimado de destinatarios: categoría (`f`) × alcance (`sc`) × líneas
+  // emisoras (`lineIds`). Misma regla que el envío real, así que el "~N" coincide.
+  async function fetchRecipientCount(f: string, lineIds: string[], sc: Scope) {
     // Solo la respuesta de la ÚLTIMA llamada pisa el contador: tildar varias
     // líneas rápido dispara varias y podrían llegar desordenadas, dejando en
     // pantalla un total que no corresponde a la selección actual.
@@ -454,11 +465,8 @@ export default function CampanasClient() {
     setCountLoading(true); setRecipientCount(null);
     try {
       const isInactivoDays = /^inactivo_\d+d$/.test(f);
-      // 'suelto' y 'libre' no son estados del contacto: el recorte lo hace el scope.
-      const param = FILTROS_DE_ALCANCE.has(f)
-        ? '?all=true'
-        : isInactivoDays ? `?status=inactivo` : f === 'todos' ? '?all=true' : `?status=${f}`;
-      const res = await fetch(`/api/contacts${param}${scopeParams(f, lineIds)}`);
+      const param = isInactivoDays ? `?status=inactivo` : f === 'todos' ? '?all=true' : `?status=${f}`;
+      const res = await fetch(`/api/contacts${param}${scopeParams(sc, lineIds)}`);
       if (!res.ok || seq !== countSeqRef.current) return;
       const data = await res.json();
       if (seq !== countSeqRef.current) return;   // llegó tarde: la ganó otra llamada
@@ -477,11 +485,12 @@ export default function CampanasClient() {
   // El picker ofrece el MISMO universo que va a recibir la campaña: contactos de
   // las líneas emisoras + los sueltos. Así el operador no puede elegir a mano a
   // alguien que después el envío descartaría. Vacío = modo habitual, sin recorte.
-  const fetchContactsPage = useCallback(async (q: string, offset: number, lineIds: string[] = []): Promise<PickContact[] | null> => {
+  const fetchContactsPage = useCallback(async (q: string, offset: number, lineIds: string[] = [], sc: Scope = 'lineas'): Promise<PickContact[] | null> => {
     const params = new URLSearchParams({ limit: String(PICKER_PAGE_SIZE), offset: String(offset), sort: 'az' });
     const term = q.trim();
     if (term) params.set('q', term);
-    if (lineIds.length > 0) { params.set('scope', 'lineas'); params.set('numbers', lineIds.join(',')); }
+    if (sc === 'libre' || sc === 'suelto') params.set('scope', sc);
+    else if (lineIds.length > 0) { params.set('scope', 'lineas'); params.set('numbers', lineIds.join(',')); }
     try {
       const res = await fetch(`/api/contacts?${params.toString()}`);
       if (!res.ok) return null;
@@ -491,9 +500,9 @@ export default function CampanasClient() {
   }, []);
 
   // Primera página (reset) con la búsqueda actual.
-  const loadPickerFirst = useCallback(async (q: string, lineIds: string[] = []) => {
+  const loadPickerFirst = useCallback(async (q: string, lineIds: string[] = [], sc: Scope = 'lineas') => {
     setContactsLoading(true);
-    const rows = await fetchContactsPage(q, 0, lineIds);
+    const rows = await fetchContactsPage(q, 0, lineIds, sc);
     setContactsList(rows ?? []);
     setPickerHasMore((rows?.length ?? 0) === PICKER_PAGE_SIZE);
     pickerOffsetRef.current = rows?.length ?? 0;
@@ -505,7 +514,7 @@ export default function CampanasClient() {
   async function loadPickerMore() {
     if (pickerLoadingMoreRef.current || !pickerHasMore) return;
     pickerLoadingMoreRef.current = true; setPickerLoadingMore(true);
-    const rows = await fetchContactsPage(contactSearch, pickerOffsetRef.current, senderIds);
+    const rows = await fetchContactsPage(contactSearch, pickerOffsetRef.current, senderIds, scope);
     if (rows) {
       pickerOffsetRef.current += rows.length;
       setContactsList((prev) => {
@@ -522,7 +531,7 @@ export default function CampanasClient() {
   // "category" no hace nada.
   useEffect(() => {
     if (targetMode !== 'individual') return;
-    const t = setTimeout(() => { loadPickerFirst(contactSearch, senderIds); }, contactSearch ? 300 : 0);
+    const t = setTimeout(() => { loadPickerFirst(contactSearch, senderIds, scope); }, contactSearch ? 300 : 0);
     return () => clearTimeout(t);
   }, [targetMode, contactSearch, loadPickerFirst]);
 
@@ -537,12 +546,21 @@ export default function CampanasClient() {
 
   function handleFilterChange(f: string) {
     setFilter(f);
-    fetchRecipientCount(effectiveFilter(f, inactiveDays), senderIds);
+    fetchRecipientCount(effectiveFilter(f, inactiveDays), senderIds, scope);
   }
+  function handleScopeChange(sc: Scope) {
+    setScope(sc);
+    setError('');
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), senderIds, sc);
+    // El picker individual ofrece el mismo universo que el envío: si cambia el
+    // alcance, la lista visible tiene que cambiar con él.
+    if (targetMode === 'individual') loadPickerFirst(contactSearch, senderIds, sc);
+  }
+
   function handleDaysChange(value: string) {
     const days = Math.min(365, Math.max(1, Number(value) || 1));
     setInactiveDays(days);
-    if (filter === 'inactivo_dias') fetchRecipientCount(effectiveFilter('inactivo_dias', days), senderIds);
+    if (filter === 'inactivo_dias') fetchRecipientCount(effectiveFilter('inactivo_dias', days), senderIds, scope);
   }
 
   // ── Paso 1: elección de líneas ──────────────────────────────────────────────
@@ -569,8 +587,8 @@ export default function CampanasClient() {
     setSenderLineIds(proximas);
     // El estimado de destinatarios depende de las líneas: hay que recalcularlo acá
     // (antes lo hacía el select de línea del paso Destinatarios, que ya no está).
-    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas);
-    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas);
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas, scope);
+    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas, scope);
   }
 
   function handleSenderModeChange(mode: 'habitual' | 'elegidas') {
@@ -580,17 +598,17 @@ export default function CampanasClient() {
     // reaparecerían tildadas al volver a 'elegidas' sin que el operador las elija.
     const proximas = mode === 'habitual' ? [] : senderLineIds;
     if (mode === 'habitual') setSenderLineIds([]);
-    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas);
+    fetchRecipientCount(effectiveFilter(filter, inactiveDays), proximas, scope);
     // El picker individual muestra el mismo universo que el envío: si cambia el
     // alcance hay que recargarlo, o queda una lista que ya no se corresponde con
     // el "~N contactos" de al lado.
-    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas);
+    if (targetMode === 'individual') loadPickerFirst(contactSearch, proximas, scope);
   }
 
   function resetWizard() {
     setStep(1); setName('');
     setTemplateName(''); setTemplateLang('es'); setTemplateBody(''); setTemplateButtons([]); setTemplateVars([]);
-    setFilter('todos'); setInactiveDays(30); setRecipientCount(null);
+    setFilter('todos'); setInactiveDays(30); setRecipientCount(null); setScope('lineas');
     setSenderMode('habitual'); setSenderLineIds([]);
     setTargetMode('category'); setSelectedIds([]); setContactSearch('');
     setSendLimit(''); setIntervalMin('1'); setIntervalMax('3'); setPauseEvery(''); setPauseSeconds('');
@@ -605,7 +623,7 @@ export default function CampanasClient() {
 
   function openWizard() {
     resetWizard(); setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
-    fetchRecipientCount('todos', []);
+    fetchRecipientCount('todos', [], 'lineas');
     fetchMetaLimit();
   }
   function closeWizard() { resetWizard(); setShowWizard(false); }
@@ -687,7 +705,21 @@ export default function CampanasClient() {
     }
 
     setShowWizard(true); setLaunchResult(null); setLaunchQueued(null);
-    fetchRecipientCount(c.target_filter || 'todos', savedLines);
+    // Alcance guardado. Compat: en la versión anterior vivía dentro de
+    // target_filter, así que una campaña de esa ventana se precarga bien.
+    const scopeGuardado: Scope =
+      c.target_scope === 'suelto' || c.target_scope === 'libre' || c.target_scope === 'lineas'
+        ? c.target_scope
+        : (c.target_filter === 'suelto' || c.target_filter === 'libre' ? c.target_filter : 'lineas');
+    setScope(scopeGuardado);
+    // Si la categoría venía ocupada por el alcance (modelo viejo), la reseteamos.
+    if (c.target_filter === 'suelto' || c.target_filter === 'libre') setFilter('todos');
+
+    fetchRecipientCount(
+      c.target_filter === 'suelto' || c.target_filter === 'libre' ? 'todos' : (c.target_filter || 'todos'),
+      savedLines,
+      scopeGuardado,
+    );
     fetchMetaLimit();
   }
 
@@ -786,6 +818,8 @@ export default function CampanasClient() {
       const createBody = {
         name: name.trim(),
         target_filter: isIndividual ? 'seleccion' : effectiveFilter(filter, inactiveDays),
+        // Alcance por línea, independiente de la categoría de arriba.
+        target_scope: isIndividual ? null : scope,
         type: 'template_meta',
         template_name: templateName.trim(),
         template_language: templateLang.trim() || 'es',
@@ -1302,8 +1336,9 @@ export default function CampanasClient() {
               {/* ── Modo categoría ── */}
               {targetMode === 'category' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {/* Dimensión 1: CATEGORÍA (estado del contacto). */}
                   <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    Destinatarios <InfoCategorias />
+                    Categoría <InfoCategorias />
                   </label>
                   <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
                     {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
@@ -1317,23 +1352,16 @@ export default function CampanasClient() {
                     </>
                   )}
 
-                  {/* Alcance real de la categoría elegida. Las de estado se acotan a
-                      las emisoras + los sueltos; 'suelto' y 'libre' no. */}
-                  {senderIds.length > 0 && !FILTROS_DE_ALCANCE.has(filter) && (
-                    <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0', lineHeight: 1.5 }}>
-                      Incluye a los contactos de {senderIds.length === 1 ? 'la línea emisora' : 'las líneas emisoras'} más los que no tienen línea asignada.
-                    </p>
-                  )}
-                  {filter === 'suelto' && (
-                    <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0', lineHeight: 1.5 }}>
-                      Solo contactos que nunca hablaron con ninguna línea (típicamente, los importados).
-                    </p>
-                  )}
-                  {filter === 'libre' && (
-                    <p style={{ fontSize: '11px', color: '#bbb', margin: '4px 0 0 0', lineHeight: 1.5 }}>
-                      Todos los contactos de la cuenta, sin importar su línea.
-                    </p>
-                  )}
+                  {/* Dimensión 2: ALCANCE (por línea). Independiente de la categoría:
+                      se combinan, así "toda la base" + "Inactivo" da todos los inactivos. */}
+                  <label style={{ ...labelStyle, marginTop: '8px' }}>Alcance</label>
+                  <select value={scope} onChange={(e) => handleScopeChange(e.target.value as Scope)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                    {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                  <p style={{ fontSize: '11px', color: '#bbb', margin: '2px 0 0 0', lineHeight: 1.5 }}>
+                    {SCOPES.find((s) => s.value === scope)?.hint}
+                    {scope === 'lineas' && senderIds.length === 0 && ' Como la campaña sale por la línea habitual de cada contacto, no hay recorte.'}
+                  </p>
 
                   {(countLoading || recipientCount !== null) && (
                     <p style={{ fontSize: '12px', color: '#555', margin: '4px 0 0 0', fontWeight: 600 }}>
@@ -1503,6 +1531,9 @@ export default function CampanasClient() {
                 <div><strong>Destinatarios:</strong> {targetMode === 'individual'
                   ? `${selectedIds.length} contacto${selectedIds.length !== 1 ? 's' : ''} seleccionado${selectedIds.length !== 1 ? 's' : ''}`
                   : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
+                {targetMode === 'category' && (
+                  <div><strong>Alcance:</strong> {SCOPES.find((s) => s.value === scope)?.label}</div>
+                )}
                 <div>
                   <strong>Sale desde:</strong>{' '}
                   {senderIds.length === 0

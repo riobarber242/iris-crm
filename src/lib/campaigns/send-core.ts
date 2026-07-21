@@ -155,22 +155,26 @@ export async function campaignSentSince(campaignId: string, sinceISO: string): P
   return count ?? 0;
 }
 
-// Alcance de destinatarios de una campaña.
-//   'libre'  → todos los contactos del tenant, sin mirar líneas.
-//   'suelto' → SOLO los que no tienen línea asignada (whatsapp_number_id null).
-//   resto    → los asignados a las líneas emisoras MÁS los sueltos.
+// Alcance por LÍNEA de los destinatarios. Es una dimensión APARTE de la
+// categoría (target_filter): cualquier alcance se combina con cualquier
+// categoría, así que "toda la base" + "inactivo" da todos los inactivos.
+//   'lineas' (default) → contactos de las líneas emisoras MÁS los sueltos.
+//   'suelto'           → SOLO los que no tienen línea asignada.
+//   'libre'            → todos los del tenant, sin mirar líneas.
 //
-// Por qué los sueltos se suman siempre: una base importada (ej. Derki, 54.432 de
-// 54.460 contactos sin línea) nunca habló con ninguna línea, así que exigir
-// coincidencia dejaría la campaña en 28 destinatarios. El operador no tiene que
-// hacer nada extra: entran solos.
+// Por qué en 'lineas' los sueltos se suman siempre: una base importada (ej.
+// Derki, 54.432 de 54.460 contactos sin línea) nunca habló con ninguna línea,
+// así que exigir coincidencia dejaría la campaña en 28 destinatarios.
+//
 // `senderIds` = líneas EMISORAS (campañas nuevas). `legacyIds` = filtro de línea
 // de las campañas anteriores a este cambio, que se aplica ESTRICTO como siempre:
 // meterlas en la unión les agregaría de golpe toda la base de sueltos, en
 // campañas que nadie editó y que el cron puede reanudar solo.
-function applyScope(query: any, filter: string, senderIds: string[], legacyIds: string[]) {
-  if (filter === 'libre')  return query;                              // sin recorte
-  if (filter === 'suelto') return query.is('whatsapp_number_id', null);
+export type TargetScope = 'lineas' | 'suelto' | 'libre';
+
+function applyScope(query: any, scope: TargetScope, senderIds: string[], legacyIds: string[]) {
+  if (scope === 'libre')  return query;                              // sin recorte
+  if (scope === 'suelto') return query.is('whatsapp_number_id', null);
 
   if (senderIds.length > 0) {
     return query.or(`whatsapp_number_id.in.(${senderIds.join(',')}),whatsapp_number_id.is.null`);
@@ -182,26 +186,32 @@ function applyScope(query: any, filter: string, senderIds: string[], legacyIds: 
   return query;
 }
 
-// 'libre' y 'suelto' acotan por LÍNEA, no por estado del contacto: no se traducen
-// a un .eq('status', ...) como 'nuevo' o 'inactivo'.
-const FILTROS_DE_ALCANCE = new Set(['libre', 'suelto']);
+// Normaliza el alcance guardado. null/desconocido = 'lineas' (el default y el
+// comportamiento de las campañas anteriores a la columna target_scope).
+// COMPAT: en la versión previa el alcance vivía DENTRO de target_filter, así que
+// una campaña creada en esa ventana se sigue interpretando bien.
+export function normalizeScope(scope: unknown, filter: string): TargetScope {
+  const s = String(scope ?? '').trim();
+  if (s === 'lineas' || s === 'suelto' || s === 'libre') return s;
+  if (filter === 'suelto' || filter === 'libre') return filter;
+  return 'lineas';
+}
 
-async function resolveContacts(filter: string, tenantId: string, senderIds: string[], legacyIds: string[]) {
+// Categorías que NO se traducen a un .eq('status', ...). 'suelto'/'libre' están
+// solo por las campañas del modelo viejo (ver normalizeScope): ahí el alcance
+// ocupaba el lugar de la categoría, así que no hay estado que filtrar.
+const SIN_FILTRO_DE_ESTADO = new Set(['todos', 'suelto', 'libre']);
+
+async function resolveContacts(filter: string, tenantId: string, scope: TargetScope, senderIds: string[], legacyIds: string[]) {
   let base = supabaseAdmin
     .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
     .order('created_at', { ascending: true });
 
-  base = applyScope(base, filter, senderIds, legacyIds);
+  base = applyScope(base, scope, senderIds, legacyIds);
 
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
     const { data } = await base.eq('phone', phone);
-    return data ?? [];
-  }
-
-  // Categorías de alcance: ya quedaron aplicadas arriba, sin filtro de estado.
-  if (FILTROS_DE_ALCANCE.has(filter)) {
-    const { data } = await base;
     return data ?? [];
   }
 
@@ -226,7 +236,7 @@ async function resolveContacts(filter: string, tenantId: string, senderIds: stri
     return (inactivos ?? []).filter((c: any) => !recentIds.has(c.id));
   }
 
-  if (filter && filter !== 'todos') {
+  if (filter && !SIN_FILTRO_DE_ESTADO.has(filter)) {
     const { data } = await base.eq('status', filter);
     return data ?? [];
   }
@@ -320,7 +330,9 @@ export async function runCampaignBatch(
     const legacyIds: string[] = Array.isArray(campaign.target_number_ids) && campaign.target_number_ids.length > 0
       ? campaign.target_number_ids.filter((x: unknown): x is string => typeof x === 'string')
       : (campaign.target_number_id ? [campaign.target_number_id] : []);
-    contacts = await resolveContacts(campaign.target_filter ?? 'todos', tenantId, senderNumberIds, legacyIds);
+    const filtro = campaign.target_filter ?? 'todos';
+    const scope  = normalizeScope(campaign.target_scope, filtro);
+    contacts = await resolveContacts(filtro, tenantId, scope, senderNumberIds, legacyIds);
   }
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las
