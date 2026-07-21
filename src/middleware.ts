@@ -13,6 +13,7 @@ const PUBLIC_PREFIXES = [
   '/api/admin/seed-auth', // bootstrap del admin, gateado por su propio secret
   '/api/health',          // healthcheck para monitoreo externo — sin cookie
   '/privacidad',          // política de privacidad — pública (URL para apps de Meta)
+  '/info',                // páginas explicativas para compartirle al cliente (sin login)
 ];
 
 // Solo admin: administración de tenants y servicios (datos globales del sistema).

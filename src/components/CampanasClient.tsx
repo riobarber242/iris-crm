@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { TemplateStatusDot } from '@/components/ui/TemplateStatusDot';
+import { InfoCategorias } from '@/components/ui/InfoCategorias';
 import { templateStatus } from '@/lib/template-status';
 
 type Campaign = {
@@ -1301,7 +1302,9 @@ export default function CampanasClient() {
               {/* ── Modo categoría ── */}
               {targetMode === 'category' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={labelStyle}>Destinatarios</label>
+                  <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    Destinatarios <InfoCategorias />
+                  </label>
                   <select value={filter} onChange={(e) => handleFilterChange(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
                     {FILTERS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </select>
