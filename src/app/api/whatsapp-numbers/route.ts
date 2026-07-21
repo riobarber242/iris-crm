@@ -14,7 +14,7 @@ const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created
 function sanitize(row: any) {
   // Ni el token plano ni el cifrado viajan al cliente: solo el booleano de presencia.
   const { access_token, access_token_enc, ...rest } = row;
-  return { ...rest, has_token: !!(access_token || access_token_enc) };
+  return { ...rest, has_token: !!access_token_enc };
 }
 
 async function requireAdmin(): Promise<{ session: any; error?: undefined } | { session?: undefined; error: NextResponse }> {
