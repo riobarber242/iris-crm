@@ -633,7 +633,7 @@ export async function runCampaignBatch(
           ? `"${campaign.name}" alcanzó su límite diario del cronograma${rampLimit != null ? ` (${rampLimit}/día)` : ''}. Retoma automáticamente mañana.`
           : `"${campaign.name}" alcanzó el límite diario de Meta. Retoma automáticamente cuando se libere cupo.`;
     try {
-      await notifyActiveAgents({ title: 'IRIS · Campaña pausada', body, url: '/campanas', kind: 'conversation' });
+      await notifyActiveAgents(tenantId, { title: 'IRIS · Campaña pausada', body, url: '/campanas', kind: 'conversation' });
     } catch (err) {
       console.warn('[campaign send] No se pudo notificar la pausa por push:', err);
     }

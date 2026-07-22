@@ -117,14 +117,23 @@ export async function notifyContactAgents(assignedAgentId: string | null, tenant
   return sent;
 }
 
-// Notifica a TODOS los agentes activos con suscripción. Devuelve cuántos push salieron.
-export async function notifyActiveAgents(payload: PushPayload): Promise<number> {
+// Notifica a los agentes activos DEL TENANT que tienen el módulo de Campañas
+// (roles admin y agent — los operadores no lo ven, ver AdminShell). Devuelve
+// cuántos push salieron. Dos filtros obligatorios:
+//  · tenant_id: sin él, un push de un tenant (p.ej. el nombre de una campaña
+//    pausada) llegaba a los operadores de todos los demás tenants.
+//  · role: no tiene sentido avisar de una pausa de campaña a quien no tiene el
+//    módulo. Whitelist (no "≠ operator"): un rol nuevo no recibe hasta sumarlo.
+// Hoy su único uso es el aviso de campaña pausada (send-core).
+export async function notifyActiveAgents(tenantId: string, payload: PushPayload): Promise<number> {
   if (!ensureVapid()) return 0;
 
   const { data: agents, error: aErr } = await supabaseAdmin
     .from('agents')
     .select('id')
-    .eq('active', true);
+    .eq('active', true)
+    .eq('tenant_id', tenantId)
+    .in('role', ['admin', 'agent']);
   if (aErr) { console.warn('[push] Error leyendo agents:', aErr.message); return 0; }
 
   const ids = (agents ?? []).map((a: { id: string }) => a.id);
