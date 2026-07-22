@@ -157,6 +157,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
+  // Latido de identidad: revalida la sesión cada 30s aunque la pestaña no reciba
+  // foco ni cambie de ruta. Cubre la pestaña VISIBLE en un segundo monitor que
+  // sigue recibiendo datos por Realtime/polling: si otra pestaña pisó la cookie
+  // con otra cuenta/tenant, refresh() lo detecta (id o tenant distinto) y recarga.
+  // No-op mientras la sesión es estable (/me devuelve lo mismo → no recarga).
+  // Solo corre con sesión cargada; el browser NO throttlea el interval en una
+  // pestaña visible (justo el caso que resuelve), y sí en una oculta —que igual
+  // se reconcilia al volverse visible por el listener de arriba.
+  const hasSession = !!agent;
+  useEffect(() => {
+    if (!hasSession) return;
+    const timer = setInterval(() => { refresh(); }, 30_000);
+    return () => clearInterval(timer);
+  }, [hasSession, refresh]);
+
   // Reintento automático con backoff ante fallos TRANSITORIOS (red caída, 5xx):
   // sin esto, un único fetch fallido dejaba el panel en esqueleto para siempre.
   // 'denied' (401/403) corta enseguida: reintentar sin sesión no tiene sentido.
