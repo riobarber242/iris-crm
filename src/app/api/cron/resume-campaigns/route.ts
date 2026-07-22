@@ -33,14 +33,12 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 export async function GET(request: Request) {
   // Mismo esquema que /api/cron/clasificar: staff logueado (para probar a mano) o
   // el cron de Vercel con Authorization: Bearer ${CRON_SECRET}.
+  // Fail-closed (igual que retry-media / backfill-thumbs): sin auth válida → 401.
   const session = await getSessionAgent();
   const isStaff = !!session && (session.role === 'admin' || session.role === 'agent');
   const secret  = process.env.CRON_SECRET;
   const secretOk = !!secret && request.headers.get('authorization') === `Bearer ${secret}`;
-  if (!isStaff && !secretOk) {
-    if (secret) return new NextResponse('No autorizado', { status: 401 });
-    console.warn('[cron/resume-campaigns] Sin CRON_SECRET configurado: ejecución sin autenticar. Configurá CRON_SECRET en Vercel.');
-  }
+  if (!isStaff && !secretOk) return new NextResponse('No autorizado', { status: 401 });
 
   try {
     // Campañas a retomar, más antigua primero (se termina una antes de empezar otra).

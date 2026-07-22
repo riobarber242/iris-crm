@@ -85,16 +85,12 @@ async function reclasificarEnTs(monthStart: string): Promise<Record<string, numb
 export async function GET(request: Request) {
   // Acceso permitido: 1) staff logueado (botón "Ejecutar ahora" de Configuración)
   // o 2) el cron de Vercel, que manda Authorization: Bearer ${CRON_SECRET}.
-  // Si CRON_SECRET no está configurado, no bloqueamos el cron programado (se
-  // permite con warning) hasta que se configure el env en Vercel.
+  // Fail-closed (igual que retry-media / backfill-thumbs): sin auth válida → 401.
   const session = await getSessionAgent();
   const isStaff = !!session && (session.role === 'admin' || session.role === 'agent');
   const secret  = process.env.CRON_SECRET;
   const secretOk = !!secret && request.headers.get('authorization') === `Bearer ${secret}`;
-  if (!isStaff && !secretOk) {
-    if (secret) return new NextResponse('No autorizado', { status: 401 });
-    console.warn('[cron/clasificar] Sin CRON_SECRET configurado: ejecución sin autenticar. Configurá CRON_SECRET en Vercel.');
-  }
+  if (!isStaff && !secretOk) return new NextResponse('No autorizado', { status: 401 });
 
   try {
     const monthStart = currentMonthStartISO();

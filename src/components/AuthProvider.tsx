@@ -60,6 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // y se comparte entre pestañas, así que loguear otra cuenta en otra pestaña la
   // pisa acá. NO se setea con el hint optimista de localStorage.
   const lastConfirmedIdRef = useRef<string | null>(null);
+  // tenant del último agente confirmado. Se reconcilia JUNTO con el id: si un
+  // mismo id puede quedar mapeado a otro tenant (p.ej. una cuenta global), un
+  // cambio de tenant sin cambio de id también dispara la recarga dura.
+  const lastConfirmedTenantRef = useRef<string | null>(null);
 
   const refresh = useCallback(async (): Promise<RefreshResult> => {
     try {
@@ -69,13 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // La sesión cambió por debajo (otra cuenta/tenant quedó en la cookie
         // compartida desde el último /me confirmado). Recarga dura → toda la UI y
         // los fetches se rehacen bajo la identidad real, sin estado cruzado. La
-        // cookie es estable, así que tras recargar /me devuelve el mismo id y no
-        // hay loop.
-        if (lastConfirmedIdRef.current && lastConfirmedIdRef.current !== a.id) {
+        // cookie es estable, así que tras recargar /me devuelve lo mismo y no hay
+        // loop. Se compara id Y tenant: un cambio de cualquiera de los dos recarga.
+        const prevId = lastConfirmedIdRef.current;
+        if (prevId !== null && (prevId !== a.id || lastConfirmedTenantRef.current !== (a.tenant_id ?? null))) {
           window.location.reload();
           return 'ok';
         }
-        lastConfirmedIdRef.current = a.id;
+        lastConfirmedIdRef.current     = a.id;
+        lastConfirmedTenantRef.current = a.tenant_id ?? null;
         setAgent(a);
         writeAgentHint(a);
         return 'ok';
@@ -84,7 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Sesión realmente inválida → recién acá limpiamos el menú.
         setAgent(null);
         writeAgentHint(null);
-        lastConfirmedIdRef.current = null;
+        lastConfirmedIdRef.current     = null;
+        lastConfirmedTenantRef.current = null;
         return 'denied';
       }
       // Otros estados (5xx transitorios) → conservamos el agente actual y

@@ -117,26 +117,26 @@ export async function notifyContactAgents(assignedAgentId: string | null, tenant
   return sent;
 }
 
-// Notifica a los agentes activos DEL TENANT que tienen el módulo de Campañas
-// (roles admin y agent — los operadores no lo ven, ver AdminShell). Devuelve
-// cuántos push salieron. Dos filtros obligatorios:
-//  · tenant_id: sin él, un push de un tenant (p.ej. el nombre de una campaña
-//    pausada) llegaba a los operadores de todos los demás tenants.
-//  · role: no tiene sentido avisar de una pausa de campaña a quien no tiene el
-//    módulo. Whitelist (no "≠ operator"): un rol nuevo no recibe hasta sumarlo.
-// Hoy su único uso es el aviso de campaña pausada (send-core).
+// Notifica a los agentes activos DEL TENANT que tienen el módulo de Campañas.
+// "Tener Campañas" = admin/agent (siempre) u operador con can_see_campaigns
+// habilitado — el MISMO criterio que gatea /api/campaigns en el middleware.
+// Devuelve cuántos push salieron. El filtro por tenant_id es obligatorio: sin él,
+// un push (p.ej. el nombre de una campaña pausada) llegaba a los operadores de
+// todos los demás tenants. Hoy su único uso es el aviso de campaña pausada.
 export async function notifyActiveAgents(tenantId: string, payload: PushPayload): Promise<number> {
   if (!ensureVapid()) return 0;
 
   const { data: agents, error: aErr } = await supabaseAdmin
     .from('agents')
-    .select('id')
+    .select('id, role, can_see_campaigns')
     .eq('active', true)
-    .eq('tenant_id', tenantId)
-    .in('role', ['admin', 'agent']);
+    .eq('tenant_id', tenantId);
   if (aErr) { console.warn('[push] Error leyendo agents:', aErr.message); return 0; }
 
-  const ids = (agents ?? []).map((a: { id: string }) => a.id);
+  // admin/agent siempre; operador solo si tiene el permiso de Campañas.
+  const ids = (agents ?? [])
+    .filter((a: { role: string; can_see_campaigns: boolean | null }) => a.role !== 'operator' || !!a.can_see_campaigns)
+    .map((a: { id: string }) => a.id);
   if (ids.length === 0) return 0;
 
   const { data: subs, error: sErr } = await supabaseAdmin
