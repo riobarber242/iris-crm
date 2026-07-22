@@ -455,23 +455,44 @@ async function processStatus(status: any) {
   try {
     const { data: cms } = await supabaseAdmin
       .from('campaign_message_status')
-      .select('id, campaign_id, status, delivered_at, read_at')
+      .select('id, campaign_id')
       .eq('wamid', wamid)
       .maybeSingle();
     if (cms?.campaign_id) {
-      const patch: Record<string, any> = { status: newStat };
+      // Reclamo ATÓMICO de cada transición contable. Antes esto era un
+      // read-modify-write con carrera: se leía el estado, se decidía el
+      // incremento y recién después se escribía, así que dos reenvíos del mismo
+      // status de Meta casi simultáneos leían ambos delivered_at=null y ambos
+      // incrementaban (delivered_count inflado). Ahora el UPDATE condicional
+      // (.is(col, null) / .neq('status','failed')) gatea el contador: sólo se
+      // incrementa si la fila REALMENTE transicionó (afectó ≥1 fila). Postgres
+      // serializa los UPDATE sobre la misma fila y reevalúa el WHERE contra la
+      // versión ya commiteada, así que sólo el primero reclama; el reenvío
+      // afecta 0 filas y no cuenta.
       let counterCol: string | null = null;
-      if (newStat === 'delivered' && !cms.delivered_at) {
-        patch.delivered_at = new Date().toISOString();
-        counterCol = 'delivered_count';
-      } else if (newStat === 'read' && !cms.read_at) {
-        patch.read_at = new Date().toISOString();
-        counterCol = 'read_count';
-      } else if (newStat === 'failed' && cms.status !== 'failed') {
-        counterCol = 'failed_count';
+      if (newStat === 'delivered') {
+        const { data: claimed } = await supabaseAdmin
+          .from('campaign_message_status')
+          .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+          .eq('id', cms.id).is('delivered_at', null).select('id');
+        if (claimed && claimed.length > 0) counterCol = 'delivered_count';
+      } else if (newStat === 'read') {
+        const { data: claimed } = await supabaseAdmin
+          .from('campaign_message_status')
+          .update({ status: 'read', read_at: new Date().toISOString() })
+          .eq('id', cms.id).is('read_at', null).select('id');
+        if (claimed && claimed.length > 0) counterCol = 'read_count';
+      } else if (newStat === 'failed') {
+        const { data: claimed } = await supabaseAdmin
+          .from('campaign_message_status')
+          .update({ status: 'failed' })
+          .eq('id', cms.id).neq('status', 'failed').select('id');
+        if (claimed && claimed.length > 0) counterCol = 'failed_count';
+      } else {
+        // 'sent' u otros no contables: sólo reflejar el último status.
+        await supabaseAdmin.from('campaign_message_status').update({ status: newStat }).eq('id', cms.id);
       }
 
-      await supabaseAdmin.from('campaign_message_status').update(patch).eq('id', cms.id);
       if (counterCol) {
         const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col: counterCol });
         if (incErr) console.warn(`[status] increment_campaign_counter ${counterCol} falló:`, incErr.message);
