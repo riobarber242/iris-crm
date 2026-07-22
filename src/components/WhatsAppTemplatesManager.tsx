@@ -157,6 +157,15 @@ export default function WhatsAppTemplatesManager() {
     return opt ? opt.labels.join(' · ') : `WABA ${wabaId}`;
   }
 
+  // Etiqueta de la opción por defecto del selector de WABA: nombra la WABA del
+  // número default (la que resolveWaba usa cuando no se elige nada) para que no
+  // quede ambiguo a qué cuenta va la plantilla. Fallback al texto genérico si no
+  // hay número default activo con waba_id.
+  const defaultLine = lines.find((l) => l.is_default && l.active);
+  const defaultWabaOptionLabel = defaultLine?.waba_id
+    ? `Cuenta principal — ${wabaLabel(defaultLine.waba_id)}`
+    : 'Cuenta principal (número default)';
+
   // localStorage da el valor inmediato (sin parpadeo); el servidor es la fuente
   // de verdad por tenant y su valor SIEMPRE gana (sube o baja el checkbox).
   useEffect(() => {
@@ -409,7 +418,7 @@ export default function WhatsAppTemplatesManager() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <label style={labelStyle}>Cuenta de WhatsApp (WABA)</label>
                       <select value={editWaba} onChange={(e) => setEditWaba(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                        <option value="">Cuenta principal (número default)</option>
+                        <option value="">{defaultWabaOptionLabel}</option>
                         {wabaOptions.map((w) => (
                           <option key={w.wabaId} value={w.wabaId}>{w.labels.join(' · ')}</option>
                         ))}
@@ -475,7 +484,7 @@ export default function WhatsAppTemplatesManager() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <label style={labelStyle}>Cuenta de WhatsApp (WABA)</label>
                 <select value={newWaba} onChange={(e) => setNewWaba(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                  <option value="">Cuenta principal (número default)</option>
+                  <option value="">{defaultWabaOptionLabel}</option>
                   {wabaOptions.map((w) => (
                     <option key={w.wabaId} value={w.wabaId}>{w.labels.join(' · ')}</option>
                   ))}
