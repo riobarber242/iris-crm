@@ -26,17 +26,15 @@ function getBusinessAccountId(): string {
 // Resuelve las credenciales de WhatsApp a usar para enviar/leer media.
 // Siempre como par atómico (nunca token de un origen con phone_id de otro):
 //  1. numberId → fila de whatsapp_numbers (el número de ESA conversación).
-//     access_token null en la fila = usar el token global de env.
+//     access_token_enc null en la fila = usar el token global de env.
 //  2. tenantId → número default activo del tenant en whatsapp_numbers.
-//  3. tenantId → columnas legacy tenants.whatsapp_* (números aún no migrados
-//     a whatsapp_numbers; retirar cuando se eliminen esas columnas).
-//  4. Env vars globales (tenant Principal / sin configuración propia).
+//  3. Env vars globales (tenant Principal / sin configuración propia).
 export async function resolveCreds(tenantId?: string, numberId?: string | null): Promise<{ token: string; phoneId: string }> {
   try {
     if (numberId) {
       const { data } = await supabaseAdmin
         .from('whatsapp_numbers')
-        .select('id, phone_number_id, access_token, access_token_enc')
+        .select('id, phone_number_id, access_token_enc')
         .eq('id', numberId)
         .maybeSingle();
       if (data?.phone_number_id) {
@@ -49,7 +47,7 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
     if (tenantId) {
       const { data: def } = await supabaseAdmin
         .from('whatsapp_numbers')
-        .select('id, phone_number_id, access_token, access_token_enc')
+        .select('id, phone_number_id, access_token_enc')
         .eq('tenant_id', tenantId)
         .eq('is_default', true)
         .eq('active', true)
@@ -57,14 +55,6 @@ export async function resolveCreds(tenantId?: string, numberId?: string | null):
       if (def?.phone_number_id) {
         const token = readWaSecret(def.access_token_enc, 'access_token', def.id) || getToken();
         return { token, phoneId: def.phone_number_id };
-      }
-      const { data } = await supabaseAdmin
-        .from('tenants')
-        .select('whatsapp_access_token, whatsapp_phone_id')
-        .eq('id', tenantId)
-        .maybeSingle();
-      if (data?.whatsapp_access_token && data?.whatsapp_phone_id) {
-        return { token: data.whatsapp_access_token, phoneId: data.whatsapp_phone_id };
       }
     }
   } catch (err) {

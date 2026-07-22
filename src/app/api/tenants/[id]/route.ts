@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/current-agent';
 import { hashPassword } from '@/lib/auth';
 
 const TENANT_FIELDS =
-  'id, name, whatsapp_phone_id, whatsapp_access_token, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
+  'id, name, whatsapp_phone_id, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
   'plan, status, monthly_amount, trial_ends_at, paid_until, skin, notes, max_whatsapp_numbers';
 
 const MAX_PROMPT = 4000;
@@ -17,7 +17,7 @@ const SKINS   = ['casino', 'loteria', 'barberia'];
 
 // PATCH /api/tenants/[id] — editar tenant (admin)
 // Campos editables (todos opcionales; solo se tocan los que vienen en el body):
-//   name, whatsapp_phone_id, whatsapp_access_token, waba_id, numero_visible
+//   name, whatsapp_phone_id, waba_id, numero_visible
 //     → columnas escalares en `tenants`
 //   system_prompt → upsert en `settings` (key='system_prompt', por tenant)
 //   nueva_password → re-hash (scrypt) del agente rol='agent' de este tenant
@@ -38,7 +38,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     updates.name = name;
   }
   if (body.whatsapp_phone_id !== undefined)     updates.whatsapp_phone_id      = String(body.whatsapp_phone_id).trim() || null;
-  if (body.whatsapp_access_token !== undefined) updates.whatsapp_access_token  = String(body.whatsapp_access_token).trim() || null;
   if (body.waba_id !== undefined)               updates.whatsapp_waba_id       = String(body.waba_id).trim() || null;
   if (body.numero_visible !== undefined)        updates.whatsapp_display_number = String(body.numero_visible).trim() || null;
 

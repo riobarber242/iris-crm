@@ -13,10 +13,10 @@ import { numbersQuota } from '@/lib/wa-numbers';
 // Los secretos (token / app_secret) NUNCA viajan al cliente: el GET expone solo
 // has_token / has_app_secret.
 
-const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token, access_token_enc, app_secret, app_secret_enc';
+const FIELDS = 'id, label, phone_number_id, waba_id, active, is_default, created_at, access_token_enc, app_secret_enc';
 
 function sanitize(row: any) {
-  const { access_token, access_token_enc, app_secret, app_secret_enc, ...rest } = row;
+  const { access_token_enc, app_secret_enc, ...rest } = row;
   return {
     ...rest,
     has_token:      !!access_token_enc,
@@ -77,10 +77,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       tenant_id:        tenantId,
       label,
       phone_number_id:  phoneNumberId,
-      // Secretos cifrados; las columnas planas quedan null en las altas nuevas.
-      access_token:     null,
+      // Secretos cifrados (las columnas de texto plano ya no existen).
       access_token_enc: accessToken ? encryptSecret(accessToken) : null,
-      app_secret:       null,
       app_secret_enc:   appSecret ? encryptSecret(appSecret) : null,
       waba_id:          wabaId,
       active:           true,
@@ -136,7 +134,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (t && !isSecretEncryptionConfigured()) {
       return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
     }
-    updates.access_token     = null;
     updates.access_token_enc = t ? encryptSecret(t) : null;
   }
   if (body?.app_secret !== undefined) {
@@ -144,7 +141,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (s && !isSecretEncryptionConfigured()) {
       return new NextResponse('Falta SECRET_ENC_KEY (clave de cifrado) en el entorno', { status: 500 });
     }
-    updates.app_secret     = null;
     updates.app_secret_enc = s ? encryptSecret(s) : null;
   }
   if (body?.waba_id !== undefined) updates.waba_id = String(body.waba_id).trim() || null;

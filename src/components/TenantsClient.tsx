@@ -8,7 +8,6 @@ type Tenant = {
   id: string;
   name: string;
   whatsapp_phone_id: string | null;
-  whatsapp_access_token: string | null;
   whatsapp_waba_id: string | null;
   whatsapp_display_number: string | null;
   created_at: string;
