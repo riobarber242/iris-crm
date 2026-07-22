@@ -355,7 +355,7 @@ export default function WhatsAppTemplatesManager() {
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: '200px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <TemplateStatusDot status={t.approval_status} />
+                    <TemplateStatusDot status={t.approval_status} createdAt={t.created_at} />
                     <code style={{ fontSize: '13px', fontWeight: 800, color: '#000', background: '#fff', borderRadius: '6px', padding: '2px 8px' }}>{t.name}</code>
                     <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
                     {/* La WABA solo aporta información si el tenant tiene más de una. */}

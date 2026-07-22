@@ -57,6 +57,9 @@ type WaLine = { id: string; label: string | null; active: boolean; is_default: b
 type IrisTemplate = {
   id: string; name: string; language: string; body: string; buttons: string[];
   waba_id: string | null; approval_status: string | null;
+  // Para distinguir legacy (pre-migración de WABA, usable sin estado) de una
+  // plantilla nueva que todavía no sincronizó su aprobación (bloqueada).
+  created_at: string;
 };
 
 // Contacto seleccionable en el modo "elegir contactos" (agendados con usuario).
@@ -435,7 +438,7 @@ export default function CampanasClient() {
     const sigueValida = templates.some(
       (t) => t.name === templateName
         && (!t.waba_id || !selectedWaba || t.waba_id === selectedWaba)
-        && templateStatus(t.approval_status).usable,
+        && templateStatus(t.approval_status, t.created_at).usable,
     );
     if (!sigueValida) {
       setTemplateName(''); setTemplateBody(''); setTemplateButtons([]); setTemplateVars([]);
@@ -619,6 +622,11 @@ export default function CampanasClient() {
     setAvisoConversion('');
     setEditingId(null); setPendingEdit(null);
     setError('');
+    // Fuerza el re-fetch (con sync contra Meta) en CADA apertura del asistente.
+    // Antes se cargaba una sola vez por sesión de página, y una plantilla creada
+    // después quedaba en la lista vieja sin estado — gris y elegible (el bug de
+    // revinculacion_2). resetWizard corre en las dos aperturas (nueva y edición).
+    setTplLoaded(false);
   }
 
   function openWizard() {
@@ -1243,7 +1251,7 @@ export default function CampanasClient() {
                     const selected = templateName === t.name;
                     // Sin aprobación de Meta la plantilla no se puede mandar: se
                     // muestra con su punto pero no es clickeable.
-                    const st       = templateStatus(t.approval_status);
+                    const st       = templateStatus(t.approval_status, t.created_at);
                     const disabled = !st.usable;
                     return (
                       <button
@@ -1261,7 +1269,7 @@ export default function CampanasClient() {
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          <TemplateStatusDot status={t.approval_status} />
+                          <TemplateStatusDot status={t.approval_status} createdAt={t.created_at} />
                           <code style={{ fontSize: '13px', fontWeight: 800, color: '#000', background: '#F5F5F5', borderRadius: '6px', padding: '2px 8px' }}>{t.name}</code>
                           <span style={{ fontSize: '11px', color: '#888' }}>{t.language}</span>
                           {disabled && <span style={{ fontSize: '11px', color: '#F2994A', fontWeight: 800 }}>{st.label}</span>}

@@ -5,8 +5,8 @@ import { templateStatus } from '@/lib/template-status';
 
 // Punto de color con el estado de aprobación de la plantilla en Meta.
 // Verde = aprobada · naranja = en revisión · rojo = rechazada/pausada · gris = sin sincronizar.
-export function TemplateStatusDot({ status, showLabel = false }: { status: string | null | undefined; showLabel?: boolean }) {
-  const s = templateStatus(status);
+export function TemplateStatusDot({ status, createdAt, showLabel = false }: { status: string | null | undefined; createdAt?: string | null; showLabel?: boolean }) {
+  const s = templateStatus(status, createdAt);
   return (
     <span
       title={s.label}

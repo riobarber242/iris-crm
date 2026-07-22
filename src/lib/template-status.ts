@@ -11,7 +11,18 @@ export type TemplateStatusView = {
   usable: boolean;    // ¿se puede elegir en una campaña?
 };
 
-export function templateStatus(approvalStatus: string | null | undefined): TemplateStatusView {
+// Corte de la migración de plantillas por WABA (commit 9a3d562, deployado el
+// 2026-07-20). Las filas ANTERIORES nacieron sin approval_status porque Iris
+// todavía no lo conocía, y se venían usando sin problema: a esas no las
+// bloqueamos por "no sé". Una fila POSTERIOR sin estado es una plantilla nueva
+// a la que el sync todavía no le bajó el veredicto de Meta (la ventana del bug
+// de revinculacion_2): esa NO es usable hasta que Meta diga APPROVED.
+const WABA_MIGRATION_CUTOFF = Date.parse('2026-07-21T00:00:00Z');
+
+export function templateStatus(
+  approvalStatus: string | null | undefined,
+  createdAt?: string | null,
+): TemplateStatusView {
   const s = String(approvalStatus ?? '').toUpperCase();
 
   switch (s) {
@@ -27,9 +38,26 @@ export function templateStatus(approvalStatus: string | null | undefined): Templ
       return { color: '#E53935', label: 'Pausada por Meta (baja calidad)', usable: false };
     case 'DISABLED':
       return { color: '#E53935', label: 'Deshabilitada por Meta', usable: false };
-    default:
-      // Sin sincronizar: son las plantillas legacy, que se venían usando sin problema.
-      // No las bloqueamos — bloquear por "no sé" rompería campañas que hoy funcionan.
-      return { color: '#bbb', label: 'Estado sin sincronizar con Meta', usable: true };
+    case 'LIMIT_EXCEEDED':
+      return { color: '#E53935', label: 'Límite de plantillas de la WABA excedido en Meta', usable: false };
+    case 'ARCHIVED':
+      return { color: '#E53935', label: 'Archivada en Meta', usable: false };
+    case 'DELETED':
+      return { color: '#E53935', label: 'Eliminada en Meta', usable: false };
+    default: {
+      // Meta reportó un estado que no conocemos: fail-closed. Si Meta dijo algo
+      // y no sabemos qué significa, no dejamos que se dispare una campaña con eso.
+      if (s) return { color: '#E53935', label: `Estado desconocido de Meta (${s})`, usable: false };
+
+      // Sin estado (nunca sincronizada). Solo las legacy pre-migración se dejan
+      // usar: bloquearlas rompería campañas que hoy funcionan. Una plantilla
+      // nueva sin estado queda bloqueada hasta que el sync baje el veredicto
+      // (sin fecha conocida se asume nueva: fail-closed).
+      const created = createdAt ? Date.parse(createdAt) : NaN;
+      const esLegacy = Number.isFinite(created) && created < WABA_MIGRATION_CUTOFF;
+      return esLegacy
+        ? { color: '#bbb', label: 'Estado sin sincronizar con Meta', usable: true }
+        : { color: '#bbb', label: 'Sin estado de Meta todavía — sincronizá y esperá la aprobación', usable: false };
+    }
   }
 }

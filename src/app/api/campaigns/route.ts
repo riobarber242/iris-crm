@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { arMondayOf, startOfArDayISO } from '@/lib/campaigns/send-core';
+import { templateStatus } from '@/lib/template-status';
 
 // Valida y normaliza la ventana horaria (minutos AR). Solo mismo día: exige
 // 0 ≤ start < end ≤ 1440; si no, va null (sin restricción) para no bloquear envíos.
@@ -120,8 +121,9 @@ async function targetNumberCols(
 //
 // Fail-open a propósito en dos casos, para no romper lo que hoy funciona:
 //  · plantilla legacy sin waba_id → no sabemos de qué WABA es, se deja pasar.
-//  · approval_status null (nunca sincronizada) → se deja pasar; solo bloqueamos
-//    cuando Meta dijo explícitamente que NO está aprobada.
+//  · approval_status null en una fila legacy (pre-migración de WABA) → se deja
+//    pasar. Una fila NUEVA sin estado se bloquea hasta que el sync baje el
+//    veredicto de Meta — misma regla que templateStatus() en la UI.
 async function validateTemplate(
   tenantId: string,
   templateName: string,
@@ -133,9 +135,9 @@ async function validateTemplate(
   // entera, justo en el escenario multi-WABA para el que se escribió.
   const { data: rows } = await supabaseAdmin
     .from('whatsapp_templates')
-    .select('waba_id, approval_status')
+    .select('waba_id, approval_status, created_at')
     .eq('tenant_id', tenantId).eq('name', templateName);
-  const tpls = (rows ?? []) as { waba_id: string | null; approval_status: string | null }[];
+  const tpls = (rows ?? []) as { waba_id: string | null; approval_status: string | null; created_at: string | null }[];
   if (tpls.length === 0) return null;   // no está en Iris (cargada a mano en Meta): no opinamos
 
   // WABAs por las que va a salir la campaña ([] = todas las líneas → no acotamos).
@@ -156,15 +158,16 @@ async function validateTemplate(
     return `La plantilla "${templateName}" pertenece a otra cuenta de WhatsApp (WABA) y no existe en la línea elegida.`;
   }
 
-  // Alcanza con que UNA candidata esté usable: aprobada, o sin estado conocido
-  // (legacy nunca sincronizada) — bloquear por "no sé" rompería lo que hoy anda.
-  const usable = candidatas.some((t) => {
-    const s = String(t.approval_status ?? '').toUpperCase();
-    return !s || s === 'APPROVED';
-  });
+  // Alcanza con que UNA candidata esté usable. La regla vive en templateStatus()
+  // (la misma que pinta y bloquea las plantillas en el asistente): aprobada, o
+  // legacy pre-migración nunca sincronizada — bloquear esas rompería lo que hoy
+  // anda. Una plantilla nueva sin estado, o con estado no aprobado, no pasa.
+  const usable = candidatas.some((t) => templateStatus(t.approval_status, t.created_at).usable);
   if (!usable) {
     const estado = String(candidatas[0].approval_status ?? '').toUpperCase();
-    return `La plantilla "${templateName}" no está aprobada por Meta (${estado}). Esperá la aprobación antes de usarla en una campaña.`;
+    return estado
+      ? `La plantilla "${templateName}" no está aprobada por Meta (${estado}). Esperá la aprobación antes de usarla en una campaña.`
+      : `La plantilla "${templateName}" todavía no tiene estado de aprobación de Meta. Sincronizá las plantillas (↻) y esperá la aprobación antes de usarla en una campaña.`;
   }
   return null;
 }
