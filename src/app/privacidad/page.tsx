@@ -10,8 +10,7 @@ export const metadata: Metadata = {
 };
 
 const LAST_UPDATED = '18 de julio de 2026';
-// ⚠️ Reemplazá por tu correo/dominio real antes de publicar la URL en Meta.
-const CONTACT_EMAIL = 'soporte@iris.online';
+const CONTACT_EMAIL = 'iris.online2026@gmail.com';
 
 const page: React.CSSProperties = {
   minHeight: '100vh', background: '#fafafa', color: '#1a1a1a',
