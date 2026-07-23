@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
@@ -81,6 +81,103 @@ function growTextarea(el: HTMLTextAreaElement | null) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, TA_MAX_H) + 'px';
 }
+
+// ─── Composer aislado ────────────────────────────────────────────────────────
+// El estado del texto vive ACÁ, no en ChatWindow. Antes `input` era estado del
+// padre y cada tecla re-renderizaba ChatWindow entero —incluida la lista de
+// mensajes (rows.map)—; en una conversación larga esa reconciliación tardaba y el
+// ícono de micrófono demoraba 2-3 s en pasar a "enviar". Ahora tipear solo
+// re-renderiza este subárbol chico. El padre lo maneja por ref (getText/clear/
+// setText/insertEmoji/focus) para enviar, precargar respuestas rápidas / credenciales
+// de casino e insertar emojis. El botón es type="submit": lo recoge el <form> del
+// padre; Enter delega en onSend.
+export interface ComposerHandle {
+  getText: () => string;
+  setText: (v: string) => void;
+  clear: () => void;
+  insertEmoji: (emoji: string) => void;
+  focus: () => void;
+}
+interface ComposerProps {
+  disabled: boolean;   // loading || cooldown → botón deshabilitado / con estado
+  loading: boolean;
+  cooldown: boolean;
+  hasImage: boolean;   // hay imagen adjunta → habilita enviar aunque el caption esté vacío
+  onSend: () => void;  // Enter → delega en handleSend del padre (el submit lo hace el form)
+  onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onStartRecording: () => void;
+}
+const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  { disabled, loading, cooldown, hasImage, onSend, onPaste, onStartRecording }, ref,
+) {
+  const [text, setText] = useState('');
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Auto-crecimiento ante cualquier cambio de texto (tipeo, emoji, respuesta rápida
+  // o reset al enviar).
+  useEffect(() => { growTextarea(taRef.current); }, [text]);
+
+  useImperativeHandle(ref, () => ({
+    getText: () => text,
+    setText: (v: string) => setText(v),
+    clear:   () => setText(''),
+    focus:   () => {
+      const el = taRef.current;
+      if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); }
+    },
+    insertEmoji: (emoji: string) => {
+      const el = taRef.current;
+      if (!el) { setText((v) => v + emoji); return; }
+      const start = el.selectionStart ?? el.value.length;
+      const end   = el.selectionEnd   ?? el.value.length;
+      const next  = el.value.slice(0, start) + emoji + el.value.slice(end);
+      setText(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        // Avanzar el cursor en code units UTF-16 (emoji.length), NO en code points.
+        // Usar [...emoji].length deja el cursor en medio del par surrogate y el
+        // próximo insert parte el emoji → surrogate suelto → se guarda como "�".
+        const pos = start + emoji.length;
+        el.setSelectionRange(pos, pos);
+      });
+    },
+  }), [text]);
+
+  const canSend = !disabled && (!!text.trim() || hasImage);
+
+  return (
+    <>
+      <textarea
+        ref={taRef}
+        rows={1}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
+        onPaste={onPaste}
+        onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'end' })}
+        placeholder={hasImage ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje... (podés pegar una imagen)'}
+        style={{
+          flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: `${TA_MAX_H}px`,
+          background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '11px 16px',
+          fontSize: '14px', lineHeight: '20px', color: '#1a1a1a', outline: 'none',
+          overflowY: 'auto', fontFamily: 'inherit',
+        }}
+      />
+
+      {canSend ? (
+        <button type="submit" title="Enviar" aria-label="Enviar" className="wa-send-btn" style={{ background: '#C8FF00', color: '#000' }}>
+          {loading ? '…' : cooldown ? '✓' : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
+      ) : (
+        <button type="button" onClick={onStartRecording} title="Grabar audio" aria-label="Grabar audio" className="wa-icon-btn">🎤</button>
+      )}
+    </>
+  );
+});
 
 // Fila del menú "+" (acciones colapsadas).
 const actionItem: React.CSSProperties = {
@@ -219,7 +316,6 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
   const [editingContent, setEditingContent] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -265,7 +361,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
   const qrPanelRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
-  const textInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<ComposerHandle | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -404,42 +500,18 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
 
   // Precarga de credenciales de casino: al crear un usuario (desde el header o el
   // chat, vía CustomEvent 'iris:casino-credentials'), dejamos el mensaje editable
-  // en el input para que el operador lo envíe con el botón normal.
+  // en el composer para que el operador lo envíe con el botón normal.
   useEffect(() => {
     function onCreds(e: Event) {
       const detail = (e as CustomEvent).detail;
       if (!detail || detail.contactId !== contactId || typeof detail.message !== 'string') return;
-      setInput(detail.message);
-      requestAnimationFrame(() => {
-        const el = textInputRef.current;
-        if (el) { el.focus(); const n = el.value.length; el.setSelectionRange(n, n); }
-      });
+      composerRef.current?.setText(detail.message);
+      requestAnimationFrame(() => composerRef.current?.focus());
     }
     window.addEventListener('iris:casino-credentials', onCreds as EventListener);
     return () => window.removeEventListener('iris:casino-credentials', onCreds as EventListener);
   }, [contactId]);
-
-  function insertEmoji(emoji: string) {
-    setShowEmoji(false);
-    const el = textInputRef.current;
-    if (!el) { setInput((v) => v + emoji); return; }
-    const start = el.selectionStart ?? el.value.length;
-    const end   = el.selectionEnd   ?? el.value.length;
-    const next  = el.value.slice(0, start) + emoji + el.value.slice(end);
-    setInput(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      // Avanzar el cursor en code units UTF-16 (emoji.length), NO en code points.
-      // Usar [...emoji].length deja el cursor en medio del par surrogate y el
-      // próximo insert parte el emoji → surrogate suelto → se guarda como "�".
-      const pos = start + emoji.length;
-      el.setSelectionRange(pos, pos);
-    });
-  }
-
-  // Auto-crecimiento del textarea: ante cualquier cambio de `input` (tipeo,
-  // emoji, respuesta rápida o reset al enviar) reajusta la altura.
-  useEffect(() => { growTextarea(textInputRef.current); }, [input]);
+  // (insertEmoji y el auto-grow del textarea viven ahora dentro de <Composer/>.)
 
   useEffect(() => {
     fetchMessages();
@@ -680,9 +752,9 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
   }
 
   async function handleSendText() {
-    const content = input.trim();
+    const content = (composerRef.current?.getText() ?? '').trim();
     if (!content) return;
-    setInput('');
+    composerRef.current?.clear();
     await sendText(content);
   }
 
@@ -817,9 +889,9 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
 
   async function handleSendImage() {
     if (!imageFile) return;
-    const caption = input.trim();
+    const caption = (composerRef.current?.getText() ?? '').trim();
     const preview = imagePreview;
-    setImageFile(null); setImagePreview(null); setInput('');
+    setImageFile(null); setImagePreview(null); composerRef.current?.clear();
     setLoading(true); setCooldown(true);
     const tempContent = JSON.stringify({ _type: 'image', url: preview ?? '', caption });
     const temp: Message = { role: 'human', content: tempContent, status: 'sending', agent_name: agent?.name, agent_role: agent?.role, agent_avatar: agent?.avatar_url };
@@ -909,13 +981,16 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
     if (longPressRef.current) { clearTimeout(longPressRef.current); longPressRef.current = null; }
   }
 
-  const canSend = !loading && !cooldown && !isRecording && (!!input.trim() || !!imageFile || !!audioBlob);
+  // Habilita el botón de enviar AUDIO grabado (rama audioBlob del composer). El
+  // texto ya no vive acá: el envío de texto/imagen lo gobierna <Composer/> con su
+  // estado local, así que tipear no re-renderiza ChatWindow ni esta lista.
+  const canSendAudio = !loading && !cooldown && !isRecording;
 
   // Precómputo por mensaje (memoizado por `messages`): el trabajo pesado por fila
   // —JSON.parse (parseMedia), regex (classifyBody), formateo de fecha y linkify—
   // corre UNA vez cuando cambian los mensajes, NO en cada tecla del composer (que
-  // cambia `input`, no `messages`). Antes esto se recalculaba por burbuja en cada
-  // render → tipear en una conversación larga era O(n) de parse/regex por tecla.
+  // vive en el hijo). Antes esto se recalculaba por burbuja en cada render → tipear
+  // en una conversación larga era O(n) de parse/regex por tecla.
   const rows = useMemo(() =>
     messages
       // Ocultar mensajes de reacción viejos guardados como texto. No son burbujas.
@@ -1350,7 +1425,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               <button
                 key={qr.id}
                 type="button"
-                onClick={() => { setInput(qr.content); setShowQR(false); }}
+                onClick={() => { composerRef.current?.setText(qr.content); setShowQR(false); }}
                 style={{ background: 'none', border: 'none', borderRadius: '10px', padding: '10px 14px', textAlign: 'left', cursor: 'pointer' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
@@ -1381,7 +1456,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                     <button
                       key={i}
                       type="button"
-                      onClick={() => { insertEmoji(e); setEmojiQuery(''); }}
+                      onClick={() => { composerRef.current?.insertEmoji(e); setShowEmoji(false); setEmojiQuery(''); }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '22px', padding: '2px', lineHeight: 1 }}
                     >
                       {e}
@@ -1391,7 +1466,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               </div>
             )}
             <EmojiPicker
-              onEmojiClick={(data) => insertEmoji(data.emoji)}
+              onEmojiClick={(data) => { composerRef.current?.insertEmoji(data.emoji); setShowEmoji(false); }}
               searchPlaceHolder="Buscar emoji..."
               searchPlaceholder="Buscar emoji..."
               categories={EMOJI_CATEGORIES}
@@ -1498,7 +1573,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
             <>
               <button type="button" onClick={clearAudio} title="Descartar audio" aria-label="Descartar audio" className="wa-icon-btn" style={{ color: '#E53935', fontSize: '18px' }}>🗑️</button>
               <audio controls src={audioPreviewUrl ?? undefined} style={{ flex: 1, minWidth: 0, height: '40px' }} />
-              <button type="submit" disabled={!canSend} title="Enviar audio" aria-label="Enviar audio" className="wa-send-btn" style={{ background: canSend ? '#C8FF00' : '#e0e0e0', color: '#000' }}>
+              <button type="submit" disabled={!canSendAudio} title="Enviar audio" aria-label="Enviar audio" className="wa-send-btn" style={{ background: canSendAudio ? '#C8FF00' : '#e0e0e0', color: '#000' }}>
                 {loading ? '…' : cooldown ? '✓' : (
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
@@ -1507,7 +1582,10 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
               </button>
             </>
           ) : (
-            /* Estado normal: botón "+", textarea y micrófono/enviar */
+            /* Estado normal: botón "+" y el composer aislado (textarea + micrófono/
+               enviar). El texto vive en <Composer/>, así tipear no re-renderiza la
+               lista de mensajes. El botón de enviar es type="submit" → lo recoge este
+               mismo <form>. El padre lo controla por composerRef. */
             <>
               <button
                 type="button"
@@ -1518,34 +1596,16 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
                 style={{ background: showActions ? '#E8FFB0' : 'transparent', fontSize: '26px' }}
               >+</button>
 
-              <textarea
-                ref={textInputRef}
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              <Composer
+                ref={composerRef}
+                disabled={loading || cooldown}
+                loading={loading}
+                cooldown={cooldown}
+                hasImage={!!imageFile}
+                onSend={() => handleSend()}
                 onPaste={handlePasteImage}
-                onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'end' })}
-                placeholder={imageFile ? 'Agregar descripción (opcional)...' : 'Escribí un mensaje... (podés pegar una imagen)'}
-                style={{
-                  flex: 1, minWidth: 0, resize: 'none', minHeight: '44px', maxHeight: `${TA_MAX_H}px`,
-                  background: '#F5F5F5', border: 'none', borderRadius: '22px', padding: '11px 16px',
-                  fontSize: '14px', lineHeight: '20px', color: '#1a1a1a', outline: 'none',
-                  overflowY: 'auto', fontFamily: 'inherit',
-                }}
+                onStartRecording={startRecording}
               />
-
-              {canSend ? (
-                <button type="submit" title="Enviar" aria-label="Enviar" className="wa-send-btn" style={{ background: '#C8FF00', color: '#000' }}>
-                  {loading ? '…' : cooldown ? '✓' : (
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M3 11.5 L21 3 L13.5 21 L11 13.5 Z" fill="#000" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-              ) : (
-                <button type="button" onClick={startRecording} title="Grabar audio" aria-label="Grabar audio" className="wa-icon-btn">🎤</button>
-              )}
             </>
           )}
         </form>

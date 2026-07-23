@@ -617,6 +617,31 @@ async function processMessage(
                 `[button] CHIP NO INSERTADO campaign=${cms.campaign_id} contact=${cms.contact_id} payload=${payload}:`,
                 evErr.message,
               );
+
+              // Push del click: avisar aunque el operador no tenga la conversación
+              // abierta, igual que una respuesta de texto libre (el chip solo se ve
+              // si ya estás mirando el chat). Off del camino crítico con after();
+              // trae el contacto para resolver el agente asignado y el nombre. Solo
+              // en el PRIMER click (estamos dentro de firstClick → no repite).
+              const cid = cms.contact_id, tid = cms.tenant_id, label = btnText;
+              after((async () => {
+                try {
+                  const { data: c } = await supabaseAdmin
+                    .from('contacts')
+                    .select('id, name, phone, assigned_agent_id')
+                    .eq('id', cid)
+                    .maybeSingle();
+                  if (!c) return;
+                  await notifyContactAgents(c.assigned_agent_id ?? null, tid, {
+                    title: 'IRIS',
+                    body:  `${c.name || c.phone}: ✅ Apretó: ${label || 'el botón'}`,
+                    url:   `/conversaciones/${c.id}`,
+                    kind:  'conversation', // suena, como un mensaje entrante
+                  });
+                } catch (err) {
+                  console.warn('[button] push del click falló (ignorado):', err);
+                }
+              })());
             }
           }
         }
@@ -668,6 +693,35 @@ async function processMessage(
         console.log(`[webhook] Identidad sincronizada → name=casino_username="${known}"`);
       }
     }
+  }
+
+  // ── Push a los operadores: avisar que entró un mensaje de cliente ───────────
+  // Fuera del camino crítico: se dispara ACÁ (antes de bajar la media y antes del
+  // bot) y after() lo mantiene vivo tras responder el webhook. Antes esperaba, en
+  // serie, (a) la descarga+subida del archivo de media —hasta 30 s— y (b) el envío
+  // secuencial a cada dispositivo, retrasando el aviso Y la respuesta del bot. El
+  // preview se arma con el `type` (NO usa la URL de la media), así que no depende de
+  // la descarga. Best-effort: nunca rompe el flujo. Va después del dedup, así que un
+  // reenvío del webhook no vuelve a notificar.
+  {
+    const pushPreview =
+      type === 'text'                ? text
+      : type === 'image'             ? '📷 Imagen'
+      : type === 'document'          ? '📄 Documento'
+      : ['audio', 'voice'].includes(type) ? '🎤 Audio'
+      : type === 'video'             ? '🎬 Video'
+      : type === 'sticker'           ? '🌟 Sticker'
+      : type === 'location'          ? '📍 Ubicación'
+      : type === 'contacts'          ? '👤 Contacto'
+      : type;
+    after(
+      notifyContactAgents(contact.assigned_agent_id ?? null, tenantId, {
+        title: 'IRIS',
+        body: `${contact.name || contact.phone}: ${String(pushPreview).slice(0, 120)}`,
+        url: `/conversaciones/${contact.id}`,
+        kind: 'conversation', // suena, incluso en pantalla bloqueada
+      }).catch((err) => console.warn('[webhook] notifyContactAgents falló (ignorado):', err)),
+    );
   }
 
   // ── Imágenes/documentos: subir ANTES de guardar el mensaje, para que el
@@ -757,29 +811,6 @@ async function processMessage(
     }
   } catch (err) {
     console.error('[webhook] Error inesperado guardando mensaje usuario:', err);
-  }
-
-  // ── Push a los operadores: avisar que entró un mensaje de cliente ───────────
-  // Best-effort: nunca debe romper el flujo del bot si el push falla.
-  try {
-    const preview =
-      type === 'text'                ? text
-      : type === 'image'             ? '📷 Imagen'
-      : type === 'document'          ? '📄 Documento'
-      : ['audio', 'voice'].includes(type) ? '🎤 Audio'
-      : type === 'video'             ? '🎬 Video'
-      : type === 'sticker'           ? '🌟 Sticker'
-      : type === 'location'          ? '📍 Ubicación'
-      : type === 'contacts'          ? '👤 Contacto'
-      : type;
-    await notifyContactAgents(contact.assigned_agent_id ?? null, tenantId, {
-      title: 'IRIS',
-      body: `${contact.name || contact.phone}: ${String(preview).slice(0, 120)}`,
-      url: `/conversaciones/${contact.id}`,
-      kind: 'conversation', // suena, incluso en pantalla bloqueada
-    });
-  } catch (err) {
-    console.warn('[webhook] notifyContactAgents falló (ignorado):', err);
   }
 
   // ── Bot enabled check ──────────────────────────────────────────────────────
