@@ -540,8 +540,43 @@ export async function runCampaignBatch(
       }
 
       sent++;
-    } catch {
+    } catch (err: any) {
       console.error(`[campaign send] Falló envío a ${contact.phone}`);
+
+      // Fallo SINCRÓNICO: Meta rechazó la llamada al enviar (sin wamid), p.ej.
+      // pago/elegibilidad de la cuenta (131042), token vencido (190) o parámetro
+      // inválido (100). Antes esto quedaba SOLO en el log → invisible en las
+      // estadísticas de la campaña (ni fila cms, ni failed_count). Ahora lo dejamos
+      // registrado como un fallo más: fila campaign_message_status status='failed'
+      // con el código/razón de Meta + failed_count++. Sin wamid, así que ningún
+      // webhook de status lo va a pisar ni doble-contar. Solo para plantillas (las
+      // campañas de texto no trackean cms). Best-effort: nunca corta el loop.
+      if (isTemplate) {
+        const me       = err?.response?.data?.error;
+        const errCode  = me?.code != null ? Number(me.code) : null;
+        const errTitle = (me?.type ?? null) as string | null;
+        const errMsg   = (me?.error_data?.details ?? me?.message ?? err?.message ?? null) as string | null;
+        const baseRow  = { campaign_id: campaignId, contact_id: contact.id, tenant_id: tenantId, wamid: null, status: 'failed' as const };
+        try {
+          let registered = false;
+          const { error: cmsErr } = await supabaseAdmin
+            .from('campaign_message_status')
+            .insert({ ...baseRow, error_code: errCode, error_title: errTitle, error_message: errMsg });
+          if (!cmsErr) registered = true;
+          else {
+            // ¿columnas error_* sin migrar? reintento sin ellas: el fallo igual se cuenta.
+            const { error: cmsErr2 } = await supabaseAdmin.from('campaign_message_status').insert(baseRow);
+            if (!cmsErr2) registered = true;
+            else console.warn('[campaign send] No se registró el fallo sincrónico en campaign_message_status:', cmsErr2.message);
+          }
+          if (registered) {
+            const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: campaignId, col: 'failed_count' });
+            if (incErr) console.warn('[campaign send] increment_campaign_counter failed_count (fallo sincrónico) falló:', incErr.message);
+          }
+        } catch (e2) {
+          console.warn('[campaign send] Excepción registrando el fallo sincrónico (ignorada):', e2);
+        }
+      }
     }
 
     // Registramos el intento (éxito o fallo) para reanudar sin reenviar y garantizar

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { TemplateStatusDot } from '@/components/ui/TemplateStatusDot';
 import { InfoCategorias } from '@/components/ui/InfoCategorias';
 import { templateStatus } from '@/lib/template-status';
+import { motivoDeFallo } from '@/lib/meta-error';
 
 type Campaign = {
   id: string;
@@ -45,6 +46,10 @@ type Campaign = {
   failed_count: number | null;
   btn1_count: number | null;
   btn2_count: number | null;
+  // Desglose de motivos de fallo (lo calcula el GET agrupando campaign_message_status
+  // por código de error de Meta). Se muestra traducido con motivoDeFallo. Ausente si
+  // la campaña no tuvo fallos.
+  failure_reasons?: { code: number | null; count: number; title: string | null; message: string | null }[];
 };
 
 // waba_id: cuenta de WhatsApp Business a la que pertenece la línea. Sin ella no
@@ -220,6 +225,30 @@ function Chip({ label, value, color, bg }: { label: string; value: number; color
     <span style={{ fontSize: '11px', fontWeight: 800, color, background: bg, borderRadius: '8px', padding: '3px 10px', whiteSpace: 'nowrap' }}>
       {value} {label}
     </span>
+  );
+}
+
+// Desglose de POR QUÉ fallaron los envíos de una campaña, traducido al castellano
+// (el GET agrupa campaign_message_status por código de error de Meta). Se muestra
+// tanto en la tarjeta de la campaña activa/pausada —donde más importa: para ver por
+// qué está fallando MIENTRAS corre— como en el historial. Null si no hubo fallos.
+function FailureReasons({ reasons }: { reasons?: Campaign['failure_reasons'] }) {
+  if (!Array.isArray(reasons) || reasons.length === 0) return null;
+  return (
+    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <span style={{ fontSize: '11px', fontWeight: 700, color: '#c0392b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        Por qué fallaron
+      </span>
+      {reasons.map((fr, i) => (
+        <div key={i} style={{ fontSize: '12px', color: '#7a2018', background: '#fff2f0', border: '1px solid #ffd6cf', borderRadius: '8px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+          <span style={{ fontWeight: 800, flexShrink: 0 }}>{fr.count}×</span>
+          <span>
+            {motivoDeFallo(fr.code, fr.title, fr.message)
+              ?? `Meta rechazó el envío${fr.code != null ? ` (código ${fr.code})` : ''}.`}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1815,6 +1844,10 @@ export default function CampanasClient() {
             );
           })()}
 
+          {/* Por qué están fallando los envíos (traducido). Va en la card activa/
+              pausada —no solo en el historial— para diagnosticar mientras corre. */}
+          <FailureReasons reasons={c.failure_reasons} />
+
           {(c.status === 'enviando' || c.status === 'pausada') && (
             <button onClick={() => handleStop(c)} style={{ alignSelf: 'flex-start', background: 'transparent', color: '#a33a3a', fontWeight: 700, fontSize: '13px', border: '1px solid #e0a0a0', borderRadius: '10px', padding: '8px 14px', cursor: 'pointer' }}>
               ⏹ Detener
@@ -1918,6 +1951,7 @@ export default function CampanasClient() {
                           <Chip label="btn2"       value={c.btn2_count ?? 0}    color="#b8860b" bg="#fff4d6" />
                           <Chip label="fallidos"   value={c.failed_count ?? 0}  color="#c0392b" bg="#ffe6e6" />
                         </div>
+                        <FailureReasons reasons={c.failure_reasons} />
                       </div>
                     );
                   })

@@ -203,6 +203,42 @@ export async function GET() {
     for (const c of rampedActive) (c as any).ramp_used_today = tally.get(c.id) ?? 0;
   }
 
+  // ── Desglose de motivos de fallo (para el panel) ─────────────────────────────
+  // Agrupa campaign_message_status status='failed' por código de error de Meta, así
+  // el panel muestra POR QUÉ fallaron (traducido con motivoDeFallo en el cliente) y
+  // no solo el contador. Solo para las campañas que tienen fallos → si no hay ninguno,
+  // no se pega a la tabla. Las filas son chicas (3 columnas). Best-effort: si las
+  // columnas error_* no están migradas o la query falla, el panel cae al contador.
+  const failedIds = (data ?? []).filter((c: any) => (c.failed_count ?? 0) > 0).map((c: any) => c.id);
+  if (failedIds.length > 0) {
+    const { data: fails, error: fErr } = await supabaseAdmin
+      .from('campaign_message_status')
+      .select('campaign_id, error_code, error_title, error_message')
+      .eq('tenant_id', session.tenant_id)
+      .eq('status', 'failed')
+      .in('campaign_id', failedIds);
+    if (fErr) {
+      console.warn('[campaigns GET] No se pudo traer el desglose de fallos:', fErr.message);
+    } else {
+      // Agrupar por (campaign_id, error_code), conservando un title/message representativo.
+      const byCampaign = new Map<string, Map<string, { code: number | null; count: number; title: string | null; message: string | null }>>();
+      for (const f of fails ?? []) {
+        const perCode = byCampaign.get(f.campaign_id) ?? new Map();
+        const key = String(f.error_code ?? 'null');
+        const cur = perCode.get(key) ?? { code: f.error_code ?? null, count: 0, title: null, message: null };
+        cur.count++;
+        if (!cur.title   && f.error_title)   cur.title   = f.error_title;
+        if (!cur.message && f.error_message) cur.message = f.error_message;
+        perCode.set(key, cur);
+        byCampaign.set(f.campaign_id, perCode);
+      }
+      for (const c of data ?? []) {
+        const perCode = byCampaign.get((c as any).id);
+        if (perCode) (c as any).failure_reasons = [...perCode.values()].sort((a, b) => b.count - a.count);
+      }
+    }
+  }
+
   return NextResponse.json(data);
 }
 

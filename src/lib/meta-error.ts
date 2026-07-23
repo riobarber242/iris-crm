@@ -40,6 +40,15 @@ const CODIGOS: Record<number, string> = {
   130497: 'Meta restringe el envío a este país desde esta cuenta. No es un problema del mensaje: hay que habilitar el país en la cuenta de WhatsApp Business.',
   368:    'La cuenta está temporalmente bloqueada por violar las políticas de Meta.',
   131031: 'La cuenta de WhatsApp fue restringida o dada de baja.',
+  // 131042 visto en producción (17star): ~40% de los fallos de la campaña. Es un
+  // problema de la CUENTA (pago/elegibilidad), no del mensaje ni del número: se
+  // resuelve en Meta Business Manager, no reintentando.
+  131042: 'El envío está frenado por un problema de pago o de elegibilidad de la cuenta de WhatsApp Business. No es del mensaje ni del número: hay que revisar el método de pago y la habilitación de la cuenta en Meta Business Manager.',
+
+  // Credenciales / configuración de la línea (suelen aparecer como fallo sincrónico
+  // al mandar, no por webhook). Son problemas de config de IRIS/Meta, no del cliente.
+  190: 'El token de acceso de WhatsApp venció o es inválido. Hay que renovarlo en la configuración de la línea.',
+  100: 'Meta rechazó el envío por un parámetro inválido (número mal formado o dato de la plantilla incorrecto).',
 };
 
 // Motivo legible de un envío fallido. Devuelve null si no hay nada que mostrar
@@ -52,9 +61,13 @@ export function motivoDeFallo(
   const conocido = code != null ? CODIGOS[code] : undefined;
   if (conocido) return conocido;
 
-  // Sin traducción propia: el texto de Meta (details suele ser el más explicativo).
-  const propio = (message ?? '').trim() || (title ?? '').trim();
-  if (propio) return code != null ? `${propio} (código ${code})` : propio;
+  // Sin traducción propia y CON código: mensaje genérico en castellano + el código
+  // (para soporte). No mostramos el texto crudo de Meta, que viene en inglés y era
+  // justo lo que se veía sin traducir; el detalle original igual queda en el log/DB.
+  if (code != null) return `Meta rechazó el envío por un motivo no habitual (código ${code}).`;
 
-  return code != null ? `Meta rechazó el envío (código ${code}).` : null;
+  // Sin código ni traducción: como último recurso, lo que haya mandado Meta (mejor
+  // algo que nada); si tampoco hay texto, null = no mostramos nada.
+  const propio = (message ?? '').trim() || (title ?? '').trim();
+  return propio || null;
 }
