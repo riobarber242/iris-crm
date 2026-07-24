@@ -5,6 +5,7 @@ import { TemplateStatusDot } from '@/components/ui/TemplateStatusDot';
 import { InfoCategorias } from '@/components/ui/InfoCategorias';
 import { templateStatus } from '@/lib/template-status';
 import { motivoDeFallo } from '@/lib/meta-error';
+import ClickAutoReplyPanel from '@/components/ClickAutoReplyPanel';
 
 type Campaign = {
   id: string;
@@ -990,6 +991,9 @@ export default function CampanasClient() {
           {showWizard ? '✕ Cancelar' : '+ Nueva campaña'}
         </button>
       </div>
+
+      {/* Auto-respuestas al click de botón (configurable por tenant). */}
+      <ClickAutoReplyPanel />
 
       {/* Dashboard del límite diario de Meta — siempre visible (haya o no envío corriendo).
           used = destinatarios únicos de campañas en la ventana móvil de 24h; metaLimit =

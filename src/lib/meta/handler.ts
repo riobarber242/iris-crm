@@ -10,6 +10,7 @@ import { decideBotResponse, BOT_FLOW_STATES } from './bot-decision';
 import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
 import { insertMessage } from '../messages';
+import { fireClickAutoReply } from '../campaigns/click-autoreply-runner';
 import { after } from 'next/server';
 import { makeThumb, thumbPathFor } from '../thumb-generate';
 
@@ -642,6 +643,21 @@ async function processMessage(
                   console.warn('[button] push del click falló (ignorado):', err);
                 }
               })());
+
+              // Auto-enganche: responder el click al INSTANTE, sin depender de que
+              // un operador reaccione a tiempo (acá la ventana de 24h está lo más
+              // fresca posible). Off del camino crítico con after(); resuelve el
+              // mensaje por posición de botón (configurable por tenant) y hace
+              // fallback a plantilla si el texto libre cae por ventana cerrada. Todo
+              // su manejo de errores es interno: nunca tira. Solo en firstClick →
+              // idempotente ante reenvíos del webhook.
+              after(fireClickAutoReply({
+                tenantId:   cms.tenant_id,
+                numberId,
+                contactId:  cms.contact_id,
+                campaignId: cms.campaign_id,
+                payload,
+              }));
             }
           }
         }

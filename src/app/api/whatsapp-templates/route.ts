@@ -27,13 +27,14 @@ async function resolveTemplateWaba(tenantId: string, requested: unknown): Promis
   return resolveWaba(tenantId);
 }
 
-// Normaliza los botones de respuesta rápida: array de hasta 2 textos no vacíos.
+// Normaliza los botones de respuesta rápida: array de hasta 3 textos no vacíos
+// (3 = máximo de quick-reply que permite Meta por plantilla).
 function parseButtons(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((b) => String(b ?? '').trim())
     .filter((b) => b.length > 0)
-    .slice(0, 2);
+    .slice(0, 3);
 }
 
 // GET: plantillas del tenant.

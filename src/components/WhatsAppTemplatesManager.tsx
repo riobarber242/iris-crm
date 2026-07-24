@@ -43,6 +43,47 @@ const buttonChip: React.CSSProperties = {
   border: '1px solid #ddd', borderRadius: '8px', padding: '5px 12px',
 };
 
+// Máximo de botones de respuesta rápida por plantilla (límite de Meta).
+const MAX_QUICK_REPLY_BUTTONS = 3;
+
+// Editor de botones de respuesta rápida: lista dinámica de hasta 3 posiciones, con
+// agregar/quitar. Los vacíos se filtran al guardar (una plantilla puede no tener
+// botones). El orden importa: primero = positivo, último = negativo (lo usa el
+// auto-enganche de campañas).
+function QuickReplyButtonsEditor({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
+  const set    = (i: number, v: string) => onChange(value.map((x, j) => (j === i ? v : x)));
+  const add    = () => onChange([...value, '']);
+  const remove = (i: number) => onChange(value.filter((_, j) => j !== i));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <label style={labelStyle}>Botones de respuesta rápida (hasta {MAX_QUICK_REPLY_BUTTONS}, opcional)</label>
+      {value.map((b, i) => (
+        <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            value={b}
+            onChange={(e) => set(i, e.target.value)}
+            placeholder={i === 0 ? 'Ej: Sí, recargar' : (i === value.length - 1 ? 'Ej: Ahora no' : `Botón ${i + 1}`)}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            title="Quitar botón"
+            style={{ ...smallBtn, background: '#fff', color: '#E53935', border: '1px solid #f08080', padding: '9px 12px' }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {value.length < MAX_QUICK_REPLY_BUTTONS && (
+        <button type="button" onClick={add} style={{ ...smallBtn, alignSelf: 'flex-start' }}>
+          + Agregar botón
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Gestión de plantillas de WhatsApp del tenant (tabla whatsapp_templates).
 // Visible para admin y agent: para otros roles no renderiza nada (la API igual
 // exige admin o agent server-side para crear/editar/borrar).
@@ -225,7 +266,7 @@ export default function WhatsAppTemplatesManager() {
     setEditName(t.name);
     setEditLanguage(t.language || 'es');
     setEditBody(t.body);
-    setEditButtons([t.buttons?.[0] ?? '', t.buttons?.[1] ?? '']);
+    setEditButtons(t.buttons && t.buttons.length > 0 ? t.buttons.slice(0, MAX_QUICK_REPLY_BUTTONS) : ['', '']);
     setEditWaba(t.waba_id ?? '');
     setError('');
   }
@@ -429,16 +470,7 @@ export default function WhatsAppTemplatesManager() {
                     <label style={labelStyle}>Cuerpo</label>
                     <textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} rows={4} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
-                      <label style={labelStyle}>Botón 1</label>
-                      <input value={editButtons[0]} onChange={(e) => setEditButtons([e.target.value, editButtons[1]])} placeholder="Ej: Sí, recargar" style={inputStyle} />
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
-                      <label style={labelStyle}>Botón 2</label>
-                      <input value={editButtons[1]} onChange={(e) => setEditButtons([editButtons[0], e.target.value])} placeholder="Ej: Ahora no" style={inputStyle} />
-                    </div>
-                  </div>
+                  <QuickReplyButtonsEditor value={editButtons} onChange={setEditButtons} />
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                       onClick={() => handleSaveEdit(t)}
@@ -498,16 +530,7 @@ export default function WhatsAppTemplatesManager() {
               <label style={labelStyle}>Cuerpo</label>
               <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder="Texto de la plantilla. Usá {{1}}, {{2}} para variables." style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
             </div>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
-                <label style={labelStyle}>Botón 1</label>
-                <input value={buttons[0]} onChange={(e) => setButtons([e.target.value, buttons[1]])} placeholder="Ej: Sí, recargar" style={inputStyle} />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '140px' }}>
-                <label style={labelStyle}>Botón 2</label>
-                <input value={buttons[1]} onChange={(e) => setButtons([buttons[0], e.target.value])} placeholder="Ej: Ahora no" style={inputStyle} />
-              </div>
-            </div>
+            <QuickReplyButtonsEditor value={buttons} onChange={setButtons} />
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 type="submit"
