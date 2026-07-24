@@ -10,7 +10,6 @@ import {
   validateBotText, SYSTEM_PROMPT_MAX_LEN,
 } from '@/lib/bot-config';
 import { HELP_SECTIONS, helpSectionsForRole } from '@/lib/iris-help';
-import { TEMPLATES, previewTemplate } from '@/lib/meta/templates';
 
 // Modelo de Anthropic. Se usa el alias vigente de Sonnet (claude-sonnet-4-6);
 // el ID con fecha claude-sonnet-4-20250514 está deprecado y se retira el
@@ -213,7 +212,7 @@ const STAFF_TOOLS: Tool[] = [
   {
     name: 'get_available_templates',
     description:
-      'Lista las plantillas de WhatsApp (Meta) disponibles para envío: nombre, idioma, categoría, propósito y texto. Usala para recomendar qué plantilla usar en una campaña o para responder "qué plantillas tengo".',
+      'Lista las plantillas de WhatsApp REALES cargadas en el panel de ESTE cliente (consulta en vivo su tabla de plantillas): por cada una nombre exacto, idioma, texto, botones, estado de aprobación en Meta y la línea/WABA a la que pertenece. Usala SIEMPRE antes de nombrar o recomendar una plantilla: nunca menciones nombres de memoria ni inventes: los nombres válidos son solo los que devuelve esta herramienta. Si el cliente tiene más de una línea/WABA, las plantillas no se comparten entre ellas: distinguí por el campo "linea".',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -921,25 +920,67 @@ async function getUnverifiedAlerts(tid: string) {
   };
 }
 
-// Propósito legible de cada plantilla conocida (para que Iris recomiende bien).
-const TEMPLATE_PURPOSE: Record<string, string> = {
-  reactivacion_inactivos:  'reactivar clientes inactivos ofreciendo 20% extra en la recarga',
-  reactivacion_15:         'reactivar clientes inactivos ofreciendo 15% extra en la recarga',
-  reactivacion_25:         'reactivar clientes inactivos ofreciendo 25% extra en la recarga',
-  reactivacion_30:         'reactivar clientes inactivos ofreciendo 30% extra (la oferta más fuerte)',
-  bienvenida_reactivacion: 'avisar que el negocio volvió a estar activo después de una pausa',
+const APPROVAL_ES: Record<string, string> = {
+  APPROVED: 'aprobada',
+  PENDING:  'pendiente de aprobación',
+  REJECTED: 'rechazada',
 };
 
-function getAvailableTemplates() {
+// Plantillas REALES del tenant (tabla whatsapp_templates), leídas en vivo y
+// agrupadas por WABA. Dinámico: refleja lo que cada cliente tiene cargado en su
+// panel, sin listas hardcodeadas ni tocar código cuando cambian sus plantillas.
+// Cada plantilla pertenece a UNA WABA (waba_id): con >1 WABA (ej. Derki: Derqui
+// Latino y Cancun Vip) las plantillas NO se comparten entre líneas, por eso se
+// etiqueta cada una con su línea. waba_id null = legacy → vale para toda línea.
+async function getAvailableTemplates(tid: string) {
+  const { data, error } = await supabaseAdmin
+    .from('whatsapp_templates')
+    .select('name, language, body, buttons, waba_id, approval_status')
+    .eq('tenant_id', tid)
+    .order('created_at', { ascending: true });
+  if (error) return { error: error.message };
+
+  const rows = data ?? [];
+  if (rows.length === 0) {
+    return {
+      plantillas: [],
+      nota: 'Este cliente NO tiene plantillas cargadas en el panel (sección Plantillas). No inventes nombres: si no hay ninguna, decilo tal cual.',
+    };
+  }
+
+  // Etiqueta legible de cada WABA a partir de las líneas activas del tenant (una
+  // WABA se identifica por el/los nombre(s) de sus números). Es lo que permite
+  // distinguir "Derqui Latino" de "Cancun Vip" cuando hay más de una WABA.
+  const { data: nums } = await supabaseAdmin
+    .from('whatsapp_numbers')
+    .select('label, waba_id')
+    .eq('tenant_id', tid)
+    .eq('active', true);
+  const wabaLabel = new Map<string, string>();
+  for (const n of nums ?? []) {
+    const lbl = (n.label ?? '').trim();
+    if (!n.waba_id || !lbl) continue;
+    const prev = wabaLabel.get(n.waba_id);
+    wabaLabel.set(n.waba_id, prev ? `${prev} / ${lbl}` : lbl);
+  }
+
+  const plantillas = rows.map((t: any) => ({
+    nombre:  t.name,
+    idioma:  t.language,
+    texto:   t.body,
+    botones: Array.isArray(t.buttons) ? t.buttons : [],
+    linea:   t.waba_id ? (wabaLabel.get(t.waba_id) ?? 'línea sin identificar') : 'todas las líneas',
+    estado:  t.approval_status ? (APPROVAL_ES[t.approval_status] ?? t.approval_status) : 'sin verificar',
+  }));
+
+  const multiWaba = new Set(rows.map((t: any) => t.waba_id).filter(Boolean)).size > 1;
+
   return {
-    plantillas: TEMPLATES.map((t) => ({
-      nombre:    t.name,
-      idioma:    t.language,
-      categoria: t.category,
-      proposito: TEMPLATE_PURPOSE[t.name] ?? 'plantilla aprobada en Meta',
-      texto:     previewTemplate(t),
-    })),
-    nota: 'Todas resuelven {{1}} con el nombre del contacto. Para usarlas en una campaña: tipo "Template Meta" con el nombre exacto.',
+    plantillas,
+    ...(multiWaba ? {
+      aviso_multi_linea: 'Este cliente tiene MÁS DE UNA línea/WABA y las plantillas NO se comparten entre ellas. Al recomendar una, aclará siempre a qué línea pertenece (campo "linea").',
+    } : {}),
+    nota: 'Estas son las plantillas REALES cargadas en el panel de este cliente. Usá SOLO estos nombres exactos; nunca inventes ni completes con otros. Para usar una en campaña: tipo "Template Meta" con el nombre exacto.',
   };
 }
 
@@ -1165,7 +1206,7 @@ async function runTool(
     case 'get_unverified_alerts':
       return getUnverifiedAlerts(tid);
     case 'get_available_templates':
-      return getAvailableTemplates();
+      return getAvailableTemplates(tid);
     case 'get_campaign_stats':
       return getCampaignStats(tid, clampLimit(input?.limit));
     case 'create_meta_template_guide':
