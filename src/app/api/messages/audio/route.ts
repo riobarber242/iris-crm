@@ -60,8 +60,11 @@ export async function POST(req: NextRequest) {
     const content = JSON.stringify({ _type: 'audio', url: publicUrl });
 
     let whatsappStatus: 'sent' | 'failed' = 'sent';
+    // Igual que en imagen: sin el wamid guardado, processStatus no puede matchear
+    // la fila y el audio se queda en un solo tilde aunque Meta lo entregue.
+    let wamid: string | null = null;
     try {
-      await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id, contact.whatsapp_number_id);
+      wamid = await sendWhatsAppAudio(contact.phone, publicUrl, session.tenant_id, contact.whatsapp_number_id);
     } catch (err) {
       console.error('[messages/audio] sendWhatsAppAudio falló:', err);
       whatsappStatus = 'failed';
@@ -69,6 +72,7 @@ export async function POST(req: NextRequest) {
 
     const { data: saved, error: dbError } = await insertMessage({
       contact_id: contactId, role: 'human', content, status: whatsappStatus, tenant_id: session.tenant_id,
+      whatsapp_message_id: wamid,
     });
 
     if (dbError) {

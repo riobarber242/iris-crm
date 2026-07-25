@@ -64,8 +64,12 @@ export async function POST(req: NextRequest) {
 
     const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/comprobantes/${path}`;
 
+    // El wamid se guarda en la fila: es la ÚNICA clave con la que el webhook de
+    // status (processStatus) matchea el mensaje para pasarlo a entregado/leído.
+    // Sin él la imagen quedaba clavada en un solo tilde.
+    let wamid: string | null = null;
     try {
-      await sendWhatsAppImage(contact.phone, publicUrl, caption, session.tenant_id, contact.whatsapp_number_id);
+      wamid = await sendWhatsAppImage(contact.phone, publicUrl, caption, session.tenant_id, contact.whatsapp_number_id);
     } catch {
       // Imagen subida pero WhatsApp falló: guardamos la fila como 'failed' y la
       // devolvemos con 207 (igual que audio). Así el cliente la reconcilia por id
@@ -78,6 +82,7 @@ export async function POST(req: NextRequest) {
 
     const { data: saved, error: dbError } = await insertMessage({
       contact_id: contactId, role: 'human', content: JSON.stringify({ _type: 'image', url: publicUrl, caption }), status: 'sent', tenant_id: session.tenant_id,
+      whatsapp_message_id: wamid,
     });
 
     if (dbError) {

@@ -192,18 +192,24 @@ export async function sendWhatsAppText(to: string, text: string, tenantId?: stri
   }
 }
 
-export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string, tenantId?: string, numberId?: string | null) {
+// Devuelve el wamid, igual que sendWhatsAppText: sin él, el webhook de status no
+// puede matchear la fila (matchea por whatsapp_message_id) y la imagen se queda
+// en un solo tilde para siempre aunque Meta confirme la entrega.
+export async function sendWhatsAppImage(to: string, imageUrl: string, caption: string, tenantId?: string, numberId?: string | null): Promise<string | null> {
   const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   try {
-    await withTransientRetry(`sendWhatsAppImage → ${to}`, () =>
+    const res = await withTransientRetry(`sendWhatsAppImage → ${to}`, () =>
       axios.post(
         `${BASE_URL}/${phoneId}/messages`,
         { messaging_product: 'whatsapp', to, type: 'image', image: { link: imageUrl, caption } },
         { headers },
       ),
     );
+    const wamid = res.data?.messages?.[0]?.id ?? null;
+    console.log(`[sendWhatsAppImage] ✓ Enviado a ${to} wamid=${wamid}`);
+    return wamid;
   } catch (err: any) {
     logApiError('sendWhatsAppImage', err);
     throw err;
@@ -292,16 +298,20 @@ export async function sendWhatsAppReaction(to: string, messageId: string, emoji:
   }
 }
 
-export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?: string, numberId?: string | null) {
+// Devuelve el wamid por el mismo motivo que sendWhatsAppImage (ticks del CRM).
+export async function sendWhatsAppAudio(to: string, audioUrl: string, tenantId?: string, numberId?: string | null): Promise<string | null> {
   const { token, phoneId } = await resolveCreds(tenantId, numberId);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' };
 
   const payload = { messaging_product: 'whatsapp', to, type: 'audio', audio: { link: audioUrl } };
 
   try {
-    await withTransientRetry(`sendWhatsAppAudio → ${to}`, () =>
+    const res = await withTransientRetry(`sendWhatsAppAudio → ${to}`, () =>
       axios.post(`${BASE_URL}/${phoneId}/messages`, payload, { headers }),
     );
+    const wamid = res.data?.messages?.[0]?.id ?? null;
+    console.log(`[sendWhatsAppAudio] ✓ Enviado a ${to} wamid=${wamid}`);
+    return wamid;
   } catch (err: any) {
     console.error(`[sendWhatsAppAudio] ✗ status=${err?.response?.status} body=${JSON.stringify(err?.response?.data ?? err?.message)}`);
     logApiError('sendWhatsAppAudio', err);
