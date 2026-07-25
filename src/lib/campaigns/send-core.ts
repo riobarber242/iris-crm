@@ -387,14 +387,20 @@ export async function runCampaignBatch(
   let buttons: string[] = [];
   let templateBody: string | null = null;
   if (isTemplate && campaign.template_name) {
-    const { data: tpl } = await supabaseAdmin
+    // El mismo nombre puede existir en varias cuentas (misma name, distinto waba_id)
+    // por "Copiar a…". Keyeamos por idioma y tomamos UNA fila con limit(1): así la
+    // query nunca rompe (maybeSingle tiraría con >1 fila). Los botones/preview salen
+    // de esa fila; para una campaña de una sola WABA (lo normal) es la correcta.
+    const { data: tplRows } = await supabaseAdmin
       .from('whatsapp_templates')
       .select('buttons, body')
       .eq('tenant_id', tenantId)
       .eq('name', campaign.template_name)
-      .maybeSingle();
-    if (Array.isArray(tpl?.buttons)) buttons = tpl.buttons;
-    if (typeof tpl?.body === 'string') templateBody = tpl.body;
+      .eq('language', campaign.template_language ?? 'es')
+      .limit(1);
+    const tpl = tplRows?.[0];
+    if (Array.isArray(tpl?.buttons)) buttons = tpl!.buttons;
+    if (typeof tpl?.body === 'string') templateBody = tpl!.body;
   }
 
   // ── Config de ritmo de envío (con defaults seguros si faltan columnas) ───────

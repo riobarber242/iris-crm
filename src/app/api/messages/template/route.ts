@@ -34,13 +34,16 @@ export async function POST(request: Request) {
   const vars   = def.variables.map((v) => (v === 'nombre' ? nombre : ''));
 
   // Botones configurados para esta plantilla en la BD del tenant (si existe).
-  const { data: tpl } = await supabaseAdmin
+  // El mismo nombre puede existir en varias cuentas (misma name, distinto waba_id):
+  // keyeamos por idioma y tomamos una fila con limit(1) para no romper con duplicados.
+  const { data: tplRows } = await supabaseAdmin
     .from('whatsapp_templates')
     .select('buttons')
     .eq('tenant_id', session.tenant_id)
     .eq('name', def.name)
-    .maybeSingle();
-  const buttons: string[] = Array.isArray(tpl?.buttons) ? tpl.buttons : [];
+    .eq('language', def.language)
+    .limit(1);
+  const buttons: string[] = Array.isArray(tplRows?.[0]?.buttons) ? tplRows[0].buttons : [];
 
   let failureReason: string | null = null;
   try {

@@ -29,12 +29,17 @@ type FireOpts = {
 // cerrada. Best-effort: si tampoco entra, se loguea y listo.
 async function sendFallbackTemplate(opts: FireOpts, phone: string, templateName: string): Promise<void> {
   try {
-    const { data: tpl } = await supabaseAdmin
+    // La plantilla de fallback se identifica solo por nombre (su idioma no se conoce
+    // de antemano). Puede existir en varias cuentas (misma name, distinto waba_id):
+    // tomamos la primera de forma determinística en vez de maybeSingle (que rompería).
+    const { data: tplRows } = await supabaseAdmin
       .from('whatsapp_templates')
       .select('language, body, buttons')
       .eq('tenant_id', opts.tenantId)
       .eq('name', templateName)
-      .maybeSingle();
+      .order('created_at', { ascending: true })
+      .limit(1);
+    const tpl = tplRows?.[0];
 
     const language = (tpl?.language as string) || 'es';
     const buttons  = Array.isArray(tpl?.buttons) ? (tpl!.buttons as string[]) : [];
@@ -78,19 +83,21 @@ export async function fireClickAutoReply(opts: FireOpts): Promise<void> {
     //    cuál es el "último" = negativo).
     const [{ data: contact }, { data: campaign }] = await Promise.all([
       supabaseAdmin.from('contacts').select('phone').eq('id', opts.contactId).maybeSingle(),
-      supabaseAdmin.from('campaigns').select('template_name').eq('id', opts.campaignId).maybeSingle(),
+      supabaseAdmin.from('campaigns').select('template_name, template_language').eq('id', opts.campaignId).maybeSingle(),
     ]);
     if (!contact?.phone) return;
 
     let buttonCount = 0;
     if (campaign?.template_name) {
-      const { data: tpl } = await supabaseAdmin
+      // Keyeamos por idioma + limit(1): el mismo nombre puede estar en varias cuentas.
+      const { data: tplRows } = await supabaseAdmin
         .from('whatsapp_templates')
         .select('buttons')
         .eq('tenant_id', opts.tenantId)
         .eq('name', campaign.template_name)
-        .maybeSingle();
-      if (Array.isArray(tpl?.buttons)) buttonCount = tpl!.buttons.length;
+        .eq('language', campaign.template_language ?? 'es')
+        .limit(1);
+      if (Array.isArray(tplRows?.[0]?.buttons)) buttonCount = tplRows[0].buttons.length;
     }
 
     // 3) ¿Qué mandamos? (respeta switch, defaults primero/último y posiciones

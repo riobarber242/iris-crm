@@ -97,20 +97,26 @@ export async function PUT(request: Request) {
   if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 });
   if (!text) return NextResponse.json({ error: 'El cuerpo es requerido' }, { status: 400 });
 
-  // Renombrar o cambiar el idioma convierte esto en OTRA plantilla para Meta: la
-  // aprobación anterior deja de aplicar, así que el estado vuelve a "desconocido"
-  // (punto gris) hasta la próxima sincronización.
+  // Editar una plantilla la convierte en OTRA para Meta: renombrar/cambiar idioma es
+  // otra identidad, y cambiar el CONTENIDO (cuerpo o botones) obliga a re-aprobar. En
+  // cualquiera de esos casos reseteamos el estado a "sin enviar" (punto gris) para
+  // que quede claro que hay que volver a mandarla a Meta. Modelo independiente por
+  // cuenta: esto afecta SOLO a esta fila/cuenta, no a las copias del mismo nombre en
+  // otras WABAs.
   const { data: prev } = await supabaseAdmin
     .from('whatsapp_templates')
-    .select('name, language').eq('id', id).eq('tenant_id', session.tenant_id).maybeSingle();
+    .select('name, language, body, buttons').eq('id', id).eq('tenant_id', session.tenant_id).maybeSingle();
   const identityChanged = !!prev && (prev.name !== name || (prev.language || '') !== language);
+  const prevButtons = Array.isArray(prev?.buttons) ? prev!.buttons : [];
+  const contentChanged = !!prev && ((prev.body ?? '') !== text || JSON.stringify(prevButtons) !== JSON.stringify(buttons));
+  const resetState = identityChanged || contentChanged;
 
   const { data, error } = await supabaseAdmin
     .from('whatsapp_templates')
     .update({
       name, language, body: text, buttons,
       ...(body?.waba_id !== undefined ? { waba_id: await resolveTemplateWaba(session.tenant_id, body?.waba_id) } : {}),
-      ...(identityChanged ? { approval_status: null, meta_template_id: null, status_synced_at: null } : {}),
+      ...(resetState ? { approval_status: null, meta_template_id: null, status_synced_at: null } : {}),
     })
     .eq('id', id)
     .eq('tenant_id', session.tenant_id)
