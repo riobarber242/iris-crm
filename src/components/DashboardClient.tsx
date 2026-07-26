@@ -322,6 +322,8 @@ export default function DashboardClient({ initialPlan }: { initialPlan?: string 
   // Datos derivados para los charts (solo si ya cargaron).
   const contactData     = charts ? charts.contactsByStatus.map((d)     => ({ label: d.label, value: d.count, color: d.color })) : [];
   const comprobanteData = charts ? charts.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color })) : [];
+  // Torta de campañas: las 4 porciones ya vienen calculadas y filtradas (>0).
+  const campanaData     = charts ? (charts.campanasByEstado ?? []).map((d) => ({ label: d.label, value: d.count, color: d.color })) : [];
   const twoMonths       = charts ? charts.revenueByMonth.slice(-2) : [];
 
   function renderCustomWidget(w: WidgetConfig): React.ReactNode {
@@ -487,6 +489,11 @@ export default function DashboardClient({ initialPlan }: { initialPlan?: string 
 
       case 'estado_contactos':
         return charts ? <DonutChart data={contactData} title={w.label} emptyLabel="Sin contactos" /> : <ChartSkeleton />;
+
+      case 'campanas_chart':
+        // Mismo estilo que "Estado de Contactos". Sin envíos este mes la dona
+        // queda vacía con su propio texto en vez de un círculo en blanco.
+        return charts ? <DonutChart data={campanaData} title={w.label} emptyLabel="Sin envíos este mes" /> : <ChartSkeleton />;
 
       case 'comprobantes_chart':
         return charts ? <DonutChart data={comprobanteData} title={w.label} emptyLabel="Sin comprobantes" /> : <ChartSkeleton />;

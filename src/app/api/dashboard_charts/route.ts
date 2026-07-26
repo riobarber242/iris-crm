@@ -21,7 +21,19 @@ export async function GET() {
   // que es lo que el cliente usa para no dibujar esos paneles.
   const cajaEnabled = hasFeature(await planForTenant(tid), 'caja');
 
-  const [contactsRes, comprobantesRes, recargasRes] = await Promise.all([
+  // Torta de campañas: partición de los mensajes enviados ESTE MES. Ojo con la
+  // trampa — "entregados" incluye a los leídos, así que como porciones sueltas
+  // sumarían más que el total. Las 4 porciones de abajo son disjuntas y cierran
+  // exacto: leídos + entregados-sin-leer + fallidos + en-camino = enviados.
+  const mesInicio = new Date();
+  mesInicio.setDate(1); mesInicio.setHours(0, 0, 0, 0);
+  const mesIso = mesInicio.toISOString();
+  const cms = () => supabaseAdmin
+    .from('campaign_message_status').select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tid).gte('created_at', mesIso);
+
+  const [contactsRes, comprobantesRes, recargasRes,
+         campTotalRes, campLeidosRes, campEntregadosRes, campFallidosRes] = await Promise.all([
     supabaseAdmin.from('contacts').select('status, provincia').eq('tenant_id', tid),
     cajaEnabled
       ? supabaseAdmin.from('comprobantes').select('estado').eq('tenant_id', tid)
@@ -33,6 +45,12 @@ export async function GET() {
           .eq('estado', 'verificado')
           .gte('created_at', sixMonthsAgo.toISOString())
       : Promise.resolve({ data: [] as any[] }),
+
+    // Campañas del mes: total, leídos, entregados (incluye leídos) y fallidos.
+    cms(),
+    cms().not('read_at', 'is', null),
+    cms().not('delivered_at', 'is', null),
+    cms().eq('status', 'failed'),
   ]);
 
   // Contact status breakdown
@@ -94,9 +112,23 @@ export async function GET() {
     return { provincia, total, dominant, counts };
   });
 
+  // ── Torta de campañas (porciones disjuntas, suman los enviados del mes) ─────
+  const campTotal      = campTotalRes.count      ?? 0;
+  const campLeidos     = campLeidosRes.count     ?? 0;
+  const campEntregados = campEntregadosRes.count ?? 0;
+  const campFallidos   = campFallidosRes.count   ?? 0;
+  const campanasByEstado = [
+    { estado: 'leidos',       label: 'Leídos',              count: campLeidos,                            color: '#22C55E' },
+    { estado: 'sin_leer',     label: 'Entregados sin leer', count: Math.max(0, campEntregados - campLeidos), color: '#1565c0' },
+    { estado: 'fallidos',     label: 'Fallidos',            count: campFallidos,                          color: '#EF4444' },
+    // Enviados sin confirmación de entrega ni fallo todavía.
+    { estado: 'en_camino',    label: 'En camino',           count: Math.max(0, campTotal - campEntregados - campFallidos), color: '#F59E0B' },
+  ].filter((s) => s.count > 0);
+
   return NextResponse.json({
     contactsByStatus,
     comprobantesByEstado,
+    campanasByEstado,
     // Con Caja apagada quedan en 0 (no se consultó nada): se mandan vacíos.
     revenueByMonth: cajaEnabled ? revenueByMonth : [],
     provinceData,

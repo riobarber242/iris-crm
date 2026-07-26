@@ -10,6 +10,10 @@ type ProvinceItem  = { provincia: string; total: number; dominant: string };
 export type ChartsData = {
   contactsByStatus:     StatusItem[];
   comprobantesByEstado: EstadoItem[];
+  // Torta de campañas: porciones DISJUNTAS que suman los enviados del mes
+  // (leídos + entregados sin leer + fallidos + en camino). Las porciones en 0
+  // no vienen. Ver /api/dashboard_charts.
+  campanasByEstado?:    EstadoItem[];
   revenueByMonth:       MonthItem[];
   provinceData:         ProvinceItem[];
   // false = el plan no incluye Caja: los dos paneles de comprobantes no se
@@ -128,10 +132,13 @@ export function DonutChart({
 // ── SVG Bar chart ──────────────────────────────────────────────────────────────
 export function BarChart({ data, title }: { data: MonthItem[]; title: string }) {
   const max    = Math.max(...data.map((d) => d.monto), 1);
-  const W      = 420;
+  // Lienzo angosto y barras finas: antes el viewBox era de 420 con barras de
+  // ~172, que ocupaban casi todo el ancho y se veían como dos bloques enormes.
+  const W      = 240;
   const H      = 140;
-  const PAD    = 32;
-  const barW   = Math.floor((W - PAD * 2) / data.length) - 6;
+  const PAD    = 24;
+  const slot   = (W - PAD * 2) / data.length;   // espacio por barra
+  const barW   = Math.min(52, Math.floor(slot) - 12);
   const barArea = H - 32; // reserve 32px for labels at bottom
 
   function fmt(n: number) {
@@ -141,15 +148,18 @@ export function BarChart({ data, title }: { data: MonthItem[]; title: string }) 
   }
 
   return (
-    <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 2, minWidth: '320px' }}>
-      <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>{title}</p>
+    <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '200px' }}>
+      {/* Título centrado, para que quede alineado con las barras (que van
+          centradas en el lienzo) y no pegado a la izquierda. Igual que las donas. */}
+      <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0, textAlign: 'center' }}>{title}</p>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
         {/* Zero line */}
         <line x1={PAD} y1={barArea} x2={W - PAD} y2={barArea} stroke="#e0e0e0" strokeWidth="1" />
 
         {data.map((d, i) => {
           const barH  = max > 0 ? (d.monto / max) * (barArea - 8) : 0;
-          const x     = PAD + i * ((W - PAD * 2) / data.length) + 3;
+          // Barra centrada dentro de su espacio, no pegada al borde izquierdo.
+          const x     = PAD + i * slot + (slot - barW) / 2;
           const y     = barArea - barH;
           const isMax = d.monto === max && max > 0;
 
@@ -221,8 +231,12 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia', stat
         {title}
       </p>
 
-      <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <svg width="160" viewBox="0 0 280 480" style={{ flexShrink: 0, overflow: 'visible' }}>
+      {/* La lista de provincias va AL COSTADO del mapa, arriba a la derecha.
+          Antes esta fila tenía flex-wrap y, con varios gráficos en la misma
+          franja, la lista se caía debajo del mapa. El flex-wrap ahora vive en
+          .dash-map-row (globals.css), que sólo lo habilita en celular. */}
+      <div className="dash-map-row" style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+        <svg width="140" viewBox="0 0 280 480" style={{ flexShrink: 0, overflow: 'visible' }}>
           {/* Argentina outline */}
           <path d={ARG_PATH} fill="#F5F5F5" stroke="#ddd" strokeWidth="2" strokeLinejoin="round" />
 
@@ -245,26 +259,28 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia', stat
           })}
         </svg>
 
-        {/* Legend + ranked list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+        {/* Ranking + leyenda, al lado del mapa. minWidth 0 para que la columna
+            pueda encogerse (si no, su contenido la empuja y rompe la fila) y
+            letra un punto menor, que es lo que la hace entrar al costado. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', flex: 1, minWidth: 0 }}>
           {!hasData ? (
-            <p style={{ fontSize: '12px', color: '#bbb', margin: 0 }}>
+            <p style={{ fontSize: '11.5px', color: '#bbb', margin: 0 }}>
               Asigná provincia en cada contacto para ver el mapa.
             </p>
           ) : (
             [...data].sort((a, b) => b.total - a.total).slice(0, 8).map((d) => (
-              <div key={d.provincia} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor(d.dominant), flexShrink: 0 }} />
-                <span style={{ fontSize: '12px', color: '#555', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.provincia}</span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#000' }}>{d.total}</span>
+              <div key={d.provincia} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: dotColor(d.dominant), flexShrink: 0 }} />
+                <span style={{ fontSize: '11px', color: '#555', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.provincia}</span>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: '#000', flexShrink: 0 }}>{d.total}</span>
               </div>
             ))
           )}
-          <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
             {Object.entries(leyenda).map(([label, color]) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: color, flexShrink: 0 }} />
-                <span style={{ fontSize: '11px', color: '#999' }}>{label}</span>
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <div style={{ width: '7px', height: '7px', borderRadius: '2px', background: color, flexShrink: 0 }} />
+                <span style={{ fontSize: '10px', color: '#999', whiteSpace: 'nowrap' }}>{label}</span>
               </div>
             ))}
           </div>

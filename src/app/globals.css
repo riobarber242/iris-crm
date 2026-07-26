@@ -104,7 +104,38 @@ button, input, textarea, select {
   grid-template-columns: 1fr;
 }
 @media (min-width: 640px) { .dash-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(5, 1fr); } }
+/* 6 columnas en desktop: es la cantidad de columnas de métricas del panel
+   completo (Conversaciones, Contactos Nuevos, Campañas, Embudo, Finanzas,
+   Operación). Quedan TODAS alineadas en una sola fila en vez de que la última
+   caiga a un segundo renglón; en Lite hay menos y se estiran para ocupar el
+   mismo ancho.
+   minmax(0, 1fr) y NO 1fr: `1fr` equivale a minmax(auto, 1fr), así que el
+   min-content de las tarjetas empuja las columnas y a 1280 las seis se
+   desbordan (medido: 1173px dentro de un área de 1052px). Con el mínimo en 0
+   se encogen de verdad y entran justas. */
+@media (min-width: 1280px) { .dash-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+
+/* 1280–1439: con seis columnas cada una queda en ~153px y el encabezado más
+   largo ("CONVERSACIONES", una sola palabra que no se puede partir en un
+   espacio) no entra al lado del emoji: se cortaba. En ese rango se esconde el
+   emoji y el título baja a 11px — medido en un viewport real de 1280: necesita
+   104px y hay 120 disponibles. Desde 1440 sobra lugar y se ve como siempre.
+   El !important es necesario: el <h3> trae font-size y letter-spacing INLINE
+   desde el componente (DashboardClient → Column), y el estilo inline le gana a
+   la hoja de estilos. Sin él, esta regla no hace nada. */
+@media (min-width: 1280px) and (max-width: 1439px) {
+  .col-header-3d > span:first-child { display: none; }
+  .col-header-3d h3 {
+    font-size: 11px !important;
+    letter-spacing: 0.02em !important;
+    min-width: 0;
+  }
+}
+
+/* Mapa de provincias: el ranking va SIEMPRE al costado del mapa. Sólo en
+   celular, donde no hay ancho para las dos cosas, se permite que baje. */
+.dash-map-row { flex-wrap: nowrap; }
+@media (max-width: 640px) { .dash-map-row { flex-wrap: wrap; } }
 
 /* ── Toggles BOT/OFFLINE del header ─────────────────────────────────────────
    Dimensiones en CSS (no inline) para poder compactarlos en mobile.

@@ -14,6 +14,7 @@ export type WidgetId =
   | 'finanzas'
   | 'operacion'
   | 'estado_contactos'
+  | 'campanas_chart'
   | 'comprobantes_chart'
   | 'distribucion_provincia'
   | 'mes_anterior_actual';
@@ -60,6 +61,7 @@ export const WIDGET_GROUP: Record<WidgetId, WidgetGroup> = {
   finanzas:               'metric',
   operacion:              'metric',
   estado_contactos:       'chart',
+  campanas_chart:         'chart',
   comprobantes_chart:     'chart',
   distribucion_provincia: 'chart',
   mes_anterior_actual:    'chart',
@@ -74,6 +76,7 @@ export const DEFAULT_LABELS: Record<WidgetId, string> = {
   finanzas:               'Finanzas',
   operacion:              'Operación',
   estado_contactos:       'Estado de Contactos',
+  campanas_chart:         'Campañas',
   comprobantes_chart:     'Comprobantes',
   distribucion_provincia: 'Distribución por Provincia',
   mes_anterior_actual:    'Mes Anterior vs Actual',
@@ -89,6 +92,7 @@ export const WIDGET_ORDER: WidgetId[] = [
   'finanzas',
   'operacion',
   'estado_contactos',
+  'campanas_chart',
   'comprobantes_chart',
   'distribucion_provincia',
   'mes_anterior_actual',
