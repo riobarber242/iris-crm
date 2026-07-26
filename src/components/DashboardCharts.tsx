@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 
 type StatusItem    = { status: string; label: string; count: number; color: string };
 type EstadoItem    = { estado: string; label: string; count: number; color: string };
@@ -293,46 +293,6 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia', stat
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ── Main export ────────────────────────────────────────────────────────────────
-export default function DashboardCharts() {
-  const [data, setData]       = useState<ChartsData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch('/api/dashboard_charts')
-      .then((r) => r.json())
-      .then(setData)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading) {
-    return (
-      <div style={{ background: '#F0F0F0', borderRadius: '20px', height: '280px', marginTop: '8px' }} />
-    );
-  }
-
-  if (!data) return null;
-
-  const contactData     = data.contactsByStatus.map((d)    => ({ label: d.label, value: d.count, color: d.color }));
-  const comprobanteData = data.comprobantesByEstado.map((d) => ({ label: d.label, value: d.count, color: d.color }));
-
-  const twoMonths = data.revenueByMonth.slice(-2);
-
-  return (
-    <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-      <DonutChart data={contactData}     title="Estado de contactos"  emptyLabel="Sin contactos" />
-      {data.cajaEnabled !== false && (
-        <DonutChart data={comprobanteData} title="Comprobantes" emptyLabel="Sin comprobantes" />
-      )}
-      <ArgentinaMap data={data.provinceData ?? []} statusColors={data.cajaEnabled !== false} />
-      {data.cajaEnabled !== false && (
-        <BarChart data={twoMonths} title="Mes anterior vs actual" />
-      )}
     </div>
   );
 }

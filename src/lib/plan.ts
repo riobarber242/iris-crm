@@ -14,7 +14,7 @@ export type Plan = 'trial' | 'lite' | 'premium';
 // Orden de presentación en el selector de Membresía del panel de admin.
 export const PLANS: Plan[] = ['trial', 'lite', 'premium'];
 
-export const PLAN_LABEL: Record<Plan, string> = {
+const PLAN_LABEL: Record<Plan, string> = {
   trial:   'Iris Trial',
   lite:    'Iris Lite',
   premium: 'Iris Premium',
@@ -48,7 +48,7 @@ const ALL_FEATURES: Feature[] = [
 
 // Qué incluye cada plan. 'trial' = premium completo mientras dura la prueba (es
 // como se comporta hoy el tenant Principal, que está en trial y ve todo).
-export const PLAN_FEATURES: Record<Plan, Feature[]> = {
+const PLAN_FEATURES: Record<Plan, Feature[]> = {
   trial:   ALL_FEATURES,
   premium: ALL_FEATURES,
   lite:    [],
@@ -57,7 +57,7 @@ export const PLAN_FEATURES: Record<Plan, Feature[]> = {
 // Rutas y secciones de cada feature. `sections` son las claves del menú de
 // AdminShell; `pages` y `apis` son PREFIJOS (matchean la ruta exacta o cualquier
 // subruta), el mismo criterio que usa el middleware para los permisos por rol.
-export const FEATURE_ROUTES: Record<Feature, { sections: string[]; pages: string[]; apis: string[] }> = {
+const FEATURE_ROUTES: Record<Feature, { sections: string[]; pages: string[]; apis: string[] }> = {
   caja: {
     sections: ['cargas', 'pagos', 'fichas', 'mi-caja'],
     pages:    ['/cargas', '/pagos', '/fichas', '/mi-caja'],
@@ -119,7 +119,7 @@ export const FEATURE_ROUTES: Record<Feature, { sections: string[]; pages: string
 // el status del contacto se deriva EXCLUSIVAMENTE de comprobantes verificados
 // (ver lib/contact-status.ts). Sin Caja ningún contacto sale nunca de 'nuevo',
 // así que esas cuatro quedarían clavadas en 0 / 0 / todos / 0% para siempre.
-export const LITE_METRICS: string[] = [
+const LITE_METRICS: string[] = [
   'conversaciones',
   'mensajes',
   'contactos_nuevos',
@@ -127,7 +127,7 @@ export const LITE_METRICS: string[] = [
 ];
 
 // null = sin recorte (todo el catálogo).
-export const METRICS_BY_PLAN: Record<Plan, string[] | null> = {
+const METRICS_BY_PLAN: Record<Plan, string[] | null> = {
   trial:   null,
   premium: null,
   lite:    LITE_METRICS,
@@ -142,7 +142,7 @@ export const METRICS_BY_PLAN: Record<Plan, string[] | null> = {
 // 'operacion' NO está acá porque es mixto: su tarjeta de "Tiempo 1ra respuesta"
 // sí aplica a Lite. Ese widget se queda y esconde por dentro las 3 tarjetas de
 // caja (ver DashboardClient).
-export const CAJA_WIDGETS: string[] = [
+const CAJA_WIDGETS: string[] = [
   'finanzas',
   'comprobantes_chart',
   'mes_anterior_actual',
@@ -173,12 +173,12 @@ export function hasFeature(plan: unknown, feature: Feature): boolean {
   return PLAN_FEATURES[normalizePlan(plan)].includes(feature);
 }
 
-export function featuresFor(plan: unknown): Feature[] {
+function featuresFor(plan: unknown): Feature[] {
   return PLAN_FEATURES[normalizePlan(plan)];
 }
 
 // Features que el plan NO tiene: es lo que hay que bloquear/esconder.
-export function missingFeaturesFor(plan: unknown): Feature[] {
+function missingFeaturesFor(plan: unknown): Feature[] {
   const has = new Set(featuresFor(plan));
   return ALL_FEATURES.filter((f) => !has.has(f));
 }
@@ -189,7 +189,7 @@ export function blockedSectionsFor(plan: unknown): string[] {
 }
 
 // Prefijos de páginas y de API que este plan no debe poder abrir.
-export function blockedPathsFor(plan: unknown): { pages: string[]; apis: string[] } {
+function blockedPathsFor(plan: unknown): { pages: string[]; apis: string[] } {
   const missing = missingFeaturesFor(plan);
   return {
     pages: missing.flatMap((f) => FEATURE_ROUTES[f].pages),
@@ -199,7 +199,7 @@ export function blockedPathsFor(plan: unknown): { pages: string[]; apis: string[
 
 // Match de prefijo: ruta exacta o subruta. Mismo criterio que matchesPrefix() del
 // middleware — vive acá para que el gate del plan y el de roles no diverjan.
-export function matchesPathPrefix(pathname: string, prefixes: string[]): boolean {
+function matchesPathPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 
@@ -211,7 +211,7 @@ export function isPathBlockedFor(plan: unknown, pathname: string): boolean {
 }
 
 // Ids de métricas permitidas, o null si no hay recorte.
-export function metricsFor(plan: unknown): string[] | null {
+function metricsFor(plan: unknown): string[] | null {
   return METRICS_BY_PLAN[normalizePlan(plan)];
 }
 

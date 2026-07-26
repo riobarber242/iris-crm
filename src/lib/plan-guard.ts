@@ -35,7 +35,7 @@ export async function planForTenant(tenantId: string | null | undefined): Promis
 // Plan del tenant de la sesión actual. Sin sesión → 'premium': la falta de
 // sesión ya la resuelven el middleware y los guards de auth de cada ruta; acá
 // solo nos ocupamos del plan.
-export async function currentPlan(): Promise<Plan> {
+async function currentPlan(): Promise<Plan> {
   const session = await getSessionAgent();
   return planForTenant(session?.tenant_id);
 }
