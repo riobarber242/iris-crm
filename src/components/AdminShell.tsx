@@ -82,6 +82,14 @@ export function AdminShell({ children, initialPlan }: { children: ReactNode; ini
   // de la palabra (el SVG posiciona a mano, no hay layout que la acomode sola).
   const planWord  = { trial: 'TRIAL', lite: 'LITE', premium: 'PREMIUM' }[normalizePlan(plan)];
   const planDashX = { trial: 369,     lite: 345,    premium: 430       }[normalizePlan(plan)];
+
+  // Paleta del logo. Lite tiene la suya: el ícono en cian (mismo que ya usan las
+  // rayas del logo) y "IRIS" en verde lima, o sea los dos colores intercambiados
+  // respecto del original. Cualquier otro plan queda EXACTAMENTE como estaba.
+  // La palabra del plan ya sale naranja (#FF6600) en todos.
+  const esLite     = normalizePlan(plan) === 'lite';
+  const logoIcono  = esLite ? '#00BBDD' : '#D4E800';   // círculo + rayo + cola
+  const logoTexto  = esLite ? '#D4E800' : '#FFFFFF';   // "IRIS"
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
@@ -358,12 +366,12 @@ export function AdminShell({ children, initialPlan }: { children: ReactNode; ini
           {/* Desktop: logo completo */}
           <svg className="logo-desktop" width="220" height="66" viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
             <rect x="20" y="18" width="148" height="148" rx="26" fill="#111" stroke="#FF5500" strokeWidth="7"/>
-            <circle cx="94" cy="88" r="44" fill="none" stroke="#D4E800" strokeWidth="5"/>
-            <path d="M72 118 L52 142 L80 124" fill="#111" stroke="#D4E800" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
-            <path d="M114 48 L78 90 L102 90 L82 128 L124 76 L98 76 Z" fill="#D4E800"/>
-            {/* "I" tipográfica en blanco, igual estilo que "RIS", alineada justo antes */}
-            <text x="210" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">I</text>
-            <text x="252" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">RIS</text>
+            <circle cx="94" cy="88" r="44" fill="none" stroke={logoIcono} strokeWidth="5"/>
+            <path d="M72 118 L52 142 L80 124" fill="#111" stroke={logoIcono} strokeWidth="5" strokeLinejoin="round" strokeLinecap="round"/>
+            <path d="M114 48 L78 90 L102 90 L82 128 L124 76 L98 76 Z" fill={logoIcono}/>
+            {/* "I" tipográfica, igual estilo que "RIS", alineada justo antes */}
+            <text x="210" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill={logoTexto} letterSpacing="-4">I</text>
+            <text x="252" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill={logoTexto} letterSpacing="-4">RIS</text>
             <text x="222" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
             <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">{planWord}</text>
             <text x={planDashX} y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
@@ -372,9 +380,9 @@ export function AdminShell({ children, initialPlan }: { children: ReactNode; ini
           {/* Mobile: solo ícono */}
           <svg className="logo-mobile" width="52" height="52" viewBox="0 0 188 188" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
             <rect x="4" y="4" width="180" height="180" rx="32" fill="#111" stroke="#FF5500" strokeWidth="8"/>
-            <circle cx="94" cy="94" r="54" fill="none" stroke="#D4E800" strokeWidth="6"/>
-            <path d="M72 124 L50 150 L78 130" fill="#111" stroke="#D4E800" strokeWidth="6" strokeLinejoin="round" strokeLinecap="round"/>
-            <path d="M106 52 L76 96 L98 96 L84 138 L118 84 L94 84 Z" fill="#D4E800"/>
+            <circle cx="94" cy="94" r="54" fill="none" stroke={logoIcono} strokeWidth="6"/>
+            <path d="M72 124 L50 150 L78 130" fill="#111" stroke={logoIcono} strokeWidth="6" strokeLinejoin="round" strokeLinecap="round"/>
+            <path d="M106 52 L76 96 L98 96 L84 138 L118 84 L94 84 Z" fill={logoIcono}/>
           </svg>
         </div>
 
