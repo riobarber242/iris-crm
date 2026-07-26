@@ -492,7 +492,9 @@ export default function DashboardClient({ initialPlan }: { initialPlan?: string 
         return charts ? <DonutChart data={comprobanteData} title={w.label} emptyLabel="Sin comprobantes" /> : <ChartSkeleton />;
 
       case 'distribucion_provincia':
-        return charts ? <ArgentinaMap data={charts.provinceData ?? []} title={w.label} /> : <ChartSkeleton />;
+        // Sin Caja no hay clasificación de contactos por status: el mapa se
+        // pinta de un solo color (salvo bloqueados). Ver ArgentinaMap.
+        return charts ? <ArgentinaMap data={charts.provinceData ?? []} title={w.label} statusColors={charts.cajaEnabled !== false} /> : <ChartSkeleton />;
 
       case 'mes_anterior_actual':
         return charts ? <BarChart data={twoMonths} title={w.label} /> : <ChartSkeleton />;

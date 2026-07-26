@@ -192,9 +192,28 @@ const ARG_PATH =
   'L 52,472 L 32,452 L 5,432 L 5,395 L 8,345 L 15,278 ' +
   'L 22,235 L 34,165 L 46,108 L 55,52 L 64,3 Z';
 
-export function ArgentinaMap({ data, title = 'Distribución por provincia' }: { data: ProvinceItem[]; title?: string }) {
+// statusColors=false: un solo color para todos los contactos, salvo 'bloqueado'.
+// Es para los planes sin Caja: el status del contacto (cliente activo/nuevo/
+// inactivo) se deriva de comprobantes verificados, así que sin Caja pintar el
+// mapa por status sería inventar una clasificación que no existe. 'bloqueado'
+// sí es real en cualquier plan (lo marca el operador a mano).
+export function ArgentinaMap({ data, title = 'Distribución por provincia', statusColors = true }: { data: ProvinceItem[]; title?: string; statusColors?: boolean }) {
   const byProvincia = new Map(data.map((d) => [d.provincia, d]));
   const hasData     = data.length > 0;
+
+  // Color del punto/leyenda según el modo.
+  const CONTACTO_COLOR = '#4A90D9';
+  const dotColor = (dominant: string) =>
+    statusColors
+      ? (STATUS_COLOR[dominant] ?? CONTACTO_COLOR)
+      : (dominant === 'bloqueado' ? '#FF4444' : CONTACTO_COLOR);
+  // Sin colores por status no hay caso "cliente activo" (verde lima), así que
+  // tampoco su borde ni su texto oscuro.
+  const esActivo = (dominant: string) => statusColors && dominant === 'cliente_activo';
+
+  const leyenda = statusColors
+    ? { 'Cliente activo': '#C8FF00', 'Nuevo': '#4A90D9', 'Inactivo': '#aaa', 'Bloqueado': '#FF4444' }
+    : { 'Contactos': CONTACTO_COLOR, 'Bloqueado': '#FF4444' };
 
   return (
     <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
@@ -210,14 +229,14 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia' }: { 
           {/* Province dots */}
           {Object.entries(PROVINCE_COORDS).map(([prov, [cx, cy]]) => {
             const item   = byProvincia.get(prov);
-            const color  = item ? (STATUS_COLOR[item.dominant] ?? '#4A90D9') : '#e0e0e0';
+            const color  = item ? dotColor(item.dominant) : '#e0e0e0';
             const r      = item ? Math.min(18, Math.max(7, Math.sqrt(item.total) * 2.5)) : 4;
-            const stroke = item ? (item.dominant === 'cliente_activo' ? '#8ab000' : 'rgba(0,0,0,0.15)') : '#ccc';
+            const stroke = item ? (esActivo(item.dominant) ? '#8ab000' : 'rgba(0,0,0,0.15)') : '#ccc';
             return (
               <g key={prov}>
                 <circle cx={cx} cy={cy} r={r} fill={color} stroke={stroke} strokeWidth="1.5" opacity={item ? 1 : 0.4} />
                 {item && (
-                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize="8" fontWeight="800" fill={item.dominant === 'cliente_activo' ? '#3a5a00' : '#fff'}>
+                  <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize="8" fontWeight="800" fill={esActivo(item.dominant) ? '#3a5a00' : '#fff'}>
                     {item.total}
                   </text>
                 )}
@@ -235,14 +254,14 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia' }: { 
           ) : (
             [...data].sort((a, b) => b.total - a.total).slice(0, 8).map((d) => (
               <div key={d.provincia} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: STATUS_COLOR[d.dominant] ?? '#4A90D9', flexShrink: 0 }} />
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor(d.dominant), flexShrink: 0 }} />
                 <span style={{ fontSize: '12px', color: '#555', flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.provincia}</span>
                 <span style={{ fontSize: '12px', fontWeight: 800, color: '#000' }}>{d.total}</span>
               </div>
             ))
           )}
           <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {Object.entries({ 'Cliente activo': '#C8FF00', 'Nuevo': '#4A90D9', 'Inactivo': '#aaa', 'Bloqueado': '#FF4444' }).map(([label, color]) => (
+            {Object.entries(leyenda).map(([label, color]) => (
               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: color, flexShrink: 0 }} />
                 <span style={{ fontSize: '11px', color: '#999' }}>{label}</span>
@@ -287,7 +306,7 @@ export default function DashboardCharts() {
       {data.cajaEnabled !== false && (
         <DonutChart data={comprobanteData} title="Comprobantes" emptyLabel="Sin comprobantes" />
       )}
-      <ArgentinaMap data={data.provinceData ?? []} />
+      <ArgentinaMap data={data.provinceData ?? []} statusColors={data.cajaEnabled !== false} />
       {data.cajaEnabled !== false && (
         <BarChart data={twoMonths} title="Mes anterior vs actual" />
       )}
