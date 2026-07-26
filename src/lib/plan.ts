@@ -99,11 +99,14 @@ export const FEATURE_ROUTES: Record<Feature, { sections: string[]; pages: string
     apis:     ['/api/agent/config', '/api/settings/bot-enabled'],
   },
   dashboard_full: {
-    // El Dashboard NO se bloquea entero en Lite: se recorta por métrica (ver
-    // METRICS_BY_PLAN). Por eso esta feature no aporta rutas.
+    // Dashboard COMPLETO: las métricas/gráficos de Caja (ver METRICS_BY_PLAN y
+    // CAJA_WIDGETS) y la personalización de widgets. La página /dashboard NO se
+    // bloquea —está en todos los planes—, por eso no hay `pages` ni `sections`:
+    // en los planes sin esta feature el panel es fijo y el endpoint del layout
+    // no se puede tocar.
     sections: [],
     pages:    [],
-    apis:     [],
+    apis:     ['/api/settings/dashboard-layout'],
   },
 };
 

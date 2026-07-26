@@ -2,12 +2,16 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { mergeLayout, sanitizeLayout } from '@/lib/dashboard-layout';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Personalización del dashboard por tenant. Se guarda como JSON en
 // settings.dashboard_layout (value es text → JSON.stringify/parse).
 const KEY = 'dashboard_layout';
 
 export async function GET() {
+  const blocked = await featureBlocked('dashboard_full');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -29,6 +33,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('dashboard_full');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 

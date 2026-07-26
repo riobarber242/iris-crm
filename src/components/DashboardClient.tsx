@@ -8,7 +8,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { DonutChart, BarChart, ArgentinaMap, type ChartsData } from './DashboardCharts';
 import DashboardCustomizer from './DashboardCustomizer';
 import { DEFAULT_LAYOUT, widgetGroup, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
-import { hiddenWidgetsFor } from '@/lib/plan';
+import { hiddenWidgetsFor, hasFeature } from '@/lib/plan';
 import { PERIODS, getMetric, metricKey, formatMetricValue } from '@/lib/dashboard-metrics';
 
 type Stats = {
@@ -120,12 +120,18 @@ function ChartSkeleton() {
   return <div className="dash-chart" style={{ flex: 1, minWidth: '220px', background: '#F0F0F0', borderRadius: '14px', minHeight: '200px' }} />;
 }
 
-export default function DashboardClient() {
+export default function DashboardClient({ initialPlan }: { initialPlan?: string | null }) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [charts, setCharts] = useState<ChartsData | null>(null);
   // tenant del usuario: filtra los postgres_changes por tenant (llega async → va en deps).
   const { agent } = useAuth();
   const tid = agent?.tenant_id ?? null;
+  // Plan efectivo: el que baja del servidor (ya disponible en el primer render)
+  // y, cuando /api/auth/me responde, el de la sesión.
+  const plan = agent?.plan ?? initialPlan ?? null;
+  // ¿Puede personalizar el dashboard? Sin esta feature el panel es fijo: no hay
+  // engranaje, no se abre el modal y el layout ni se lee ni se guarda.
+  const canCustomize = hasFeature(plan, 'dashboard_full');
   const [layout, setLayout] = useState<WidgetConfig[]>(DEFAULT_LAYOUT);
   const [customValues, setCustomValues] = useState<Record<string, number>>({});
   const [customizing, setCustomizing] = useState(false);
@@ -187,7 +193,15 @@ export default function DashboardClient() {
     fetchStats();
     fetchCharts();
 
-    // Layout de personalización (mergeado con defaults en el server).
+    // Layout de personalización (mergeado con defaults en el server). En los
+    // planes sin dashboard personalizable el panel es fijo: no se pide ni se
+    // guarda el layout (ese endpoint devuelve 404) y se usa el de fábrica.
+    if (!canCustomize) {
+      const fijo = DEFAULT_LAYOUT.map((w) => ({ ...w }));
+      setLayout(fijo);
+      layoutRef.current = fijo;
+      fetchCustomMetrics(fijo);
+    } else {
     fetch('/api/settings/dashboard-layout')
       .then((r) => r.json())
       .then((d) => {
@@ -216,6 +230,7 @@ export default function DashboardClient() {
         }
       })
       .catch(() => {});
+    }
 
     // Polling every 15 s — guaranteed refresh regardless of Realtime status
     const interval = setInterval(() => { fetchStats(); fetchCharts(); fetchCustomMetrics(layoutRef.current); }, 15_000);
@@ -476,7 +491,7 @@ export default function DashboardClient() {
   // planes que no la incluyen (sus datos vienen en 0 porque el endpoint ni los
   // consulta). Va acá y no sobre `layout` para no reescribir el layout guardado
   // del tenant: si algún día sube de plan, sus widgets vuelven solos.
-  const hidden  = new Set(hiddenWidgetsFor(agent?.plan));
+  const hidden  = new Set(hiddenWidgetsFor(plan));
   const visible = [...layout]
     .sort((a, b) => a.order - b.order)
     .filter((w) => w.visible && !hidden.has(w.id));
@@ -491,14 +506,18 @@ export default function DashboardClient() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {heroWidgets.map((w) => <Fragment key={w.id}>{renderWidget(w)}</Fragment>)}
         </div>
-        <button
-          onClick={() => setCustomizing(true)}
-          aria-label="Personalizar dashboard"
-          title="Personalizar"
-          style={{ flexShrink: 0, alignSelf: 'stretch', aspectRatio: '1 / 1', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '18px', fontSize: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        >
-          ⚙
-        </button>
+        {/* Engranaje de personalización: solo en los planes con dashboard
+            configurable. Sin él el panel queda fijo, con el layout de fábrica. */}
+        {canCustomize && (
+          <button
+            onClick={() => setCustomizing(true)}
+            aria-label="Personalizar dashboard"
+            title="Personalizar"
+            style={{ flexShrink: 0, alignSelf: 'stretch', aspectRatio: '1 / 1', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '18px', fontSize: '22px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            ⚙
+          </button>
+        )}
       </div>
 
       {/* MÉTRICAS: 5 columnas desktop (≥1280) / 3 tablet / 1 mobile */}
@@ -515,7 +534,7 @@ export default function DashboardClient() {
         </div>
       )}
 
-      {customizing && (
+      {customizing && canCustomize && (
         <DashboardCustomizer
           layout={layout}
           onClose={() => setCustomizing(false)}
