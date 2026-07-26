@@ -4,12 +4,17 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import BotToggle from '@/components/BotToggle';
 import BotConfigEditor from '@/components/BotConfigEditor';
 import OfflineConfig from '@/components/OfflineConfig';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
 // "Mi Bot": todo lo del bot del agente (on/off, system prompt, modo offline).
 // El acceso (admin + agent, sin operator) lo controla el middleware vía
 // /mi-bot en STAFF_PREFIXES. La administración de la cuenta (números de
 // WhatsApp, etc.) vive en /configuracion ("Configuración").
-export default function MiBotPage() {
+export default async function MiBotPage() {
+  // Sin bot en el plan la sección no existe; su tarjeta de "Modo offline" se
+  // renderiza en Configuración (el toggle OFFLINE del header sigue vivo).
+  await requireFeaturePage('bot');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <SectionCard title="Control del bot" description="Activá o pausá el bot automático de WhatsApp.">

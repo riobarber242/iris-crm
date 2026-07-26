@@ -15,9 +15,9 @@ export type Plan = 'trial' | 'lite' | 'premium';
 export const PLANS: Plan[] = ['trial', 'lite', 'premium'];
 
 export const PLAN_LABEL: Record<Plan, string> = {
-  trial:   'Trial',
-  lite:    'Lite',
-  premium: 'Premium',
+  trial:   'Iris Trial',
+  lite:    'Iris Lite',
+  premium: 'Iris Premium',
 };
 
 // Etiqueta tolerante para pintar un plan que viene de la base como string suelto
@@ -39,10 +39,11 @@ export type Feature =
   | 'chat_interno'   // chat entre operadores del cliente
   | 'top_clientes'   // ranking de clientes
   | 'iris_ai'        // asistente interno (widget + transcripción de voz)
+  | 'bot'            // bot automático de WhatsApp: on/off + system prompt
   | 'dashboard_full';// métricas y gráficos que dependen de Caja
 
 const ALL_FEATURES: Feature[] = [
-  'caja', 'casino', 'operadores', 'chat_interno', 'top_clientes', 'iris_ai', 'dashboard_full',
+  'caja', 'casino', 'operadores', 'chat_interno', 'top_clientes', 'iris_ai', 'bot', 'dashboard_full',
 ];
 
 // Qué incluye cada plan. 'trial' = premium completo mientras dura la prueba (es
@@ -87,6 +88,15 @@ export const FEATURE_ROUTES: Record<Feature, { sections: string[]; pages: string
     pages:    [],
     // /api/iris/transcribe es la entrada de voz del mismo asistente.
     apis:     ['/api/iris-ai', '/api/iris'],
+  },
+  bot: {
+    // La sección "Mi Bot" entera: el on/off del bot y su system prompt. El MODO
+    // OFFLINE no entra acá —es presencia del agente, no el bot— y por eso su
+    // tarjeta se muda a Configuración en los planes sin bot (ver esa página).
+    // /api/settings/offline-mode y /api/settings/offline-msg quedan accesibles.
+    sections: ['mi-bot'],
+    pages:    ['/mi-bot'],
+    apis:     ['/api/agent/config', '/api/settings/bot-enabled'],
   },
   dashboard_full: {
     // El Dashboard NO se bloquea entero en Lite: se recorta por métrica (ver

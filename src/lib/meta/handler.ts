@@ -11,6 +11,8 @@ import { notifyContactAgents } from '../push';
 import { generateBotResponse } from '../groq';
 import { insertMessage } from '../messages';
 import { fireClickAutoReply } from '../campaigns/click-autoreply-runner';
+import { planForTenant } from '../plan-guard';
+import { hasFeature } from '../plan';
 import { after } from 'next/server';
 import { makeThumb, thumbPathFor } from '../thumb-generate';
 
@@ -1246,6 +1248,17 @@ async function getOfflineMode(tenantId: string): Promise<boolean> {
 }
 
 async function getBotEnabled(tenantId: string): Promise<boolean> {
+  // Compuerta por PLAN, antes que el setting del tenant: si el plan no incluye
+  // el bot automático, el bot NO responde, y punto. Esconder el toggle sin esto
+  // dejaría al bot contestándole a los clientes con el dueño de la cuenta sin
+  // manera de apagarlo. Cae en el mismo camino de "bot apagado" que ya existe
+  // (silencio; en modo offline sigue saliendo el aviso fijo, que es presencia
+  // del agente y no el bot).
+  if (!hasFeature(await planForTenant(tenantId), 'bot')) {
+    console.log(`[getBotEnabled] tenant=${tenantId} sin la feature 'bot' en su plan → bot apagado`);
+    return false;
+  }
+
   try {
     // Read ALL possible key formats for bot control (de este tenant)
     const { data: rows, error } = await supabaseAdmin

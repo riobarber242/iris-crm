@@ -9,7 +9,10 @@ import WhatsAppTemplatesManager from '@/components/WhatsAppTemplatesManager';
 import ChangePasswordCard from '@/components/ChangePasswordCard';
 import NotificationVolumeCard from '@/components/NotificationVolumeCard';
 import CasinoConfigCard from '@/components/CasinoConfigCard';
+import OfflineConfig from '@/components/OfflineConfig';
 import { getSessionAgent } from '@/lib/current-agent';
+import { planForTenant } from '@/lib/plan-guard';
+import { hasFeature } from '@/lib/plan';
 
 // "Configuración": todo lo de la cuenta (números de WhatsApp, notificación de
 // recarga, clasificación de contactos, respuestas rápidas). El control del bot
@@ -24,13 +27,25 @@ export default async function ConfiguracionPage() {
   const role = session?.role;
   const showAccountConfig = role === 'admin' || role === 'agent';
   const showChangePassword = role === 'agent' || role === 'operator';
-  // Configuración del casino: SOLO rol 'agent'.
-  const showCasinoConfig = role === 'agent';
+
+  // Recorte por PLAN, encima del recorte por rol:
+  //  · "Notificación de recarga verificada" y "Clasificación de contactos"
+  //    dependen de Caja (la segunda recalcula estados que salen de comprobantes
+  //    verificados: sin Caja no tendría nada que recalcular).
+  //  · "Configuración del casino" pide, además del rol 'agent', la feature.
+  //  · "Modo offline" vive normalmente en Mi Bot; en los planes SIN bot esa
+  //    sección no existe, así que la tarjeta se muda acá — el toggle OFFLINE
+  //    del header se queda en todos los planes y su mensaje tiene que ser
+  //    editable en algún lado.
+  const plan            = await planForTenant(session?.tenant_id);
+  const showCajaConfig  = showAccountConfig && hasFeature(plan, 'caja');
+  const showCasinoConfig = role === 'agent' && hasFeature(plan, 'casino');
+  const showOfflineHere = showAccountConfig && !hasFeature(plan, 'bot');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-      {showAccountConfig && (
+      {showCajaConfig && (
         <>
           <SectionCard title="Notificación de recarga verificada" description="Mensaje que se envía al cliente por WhatsApp al verificar una recarga. Editable, con la variable $monto.">
             <AutoMsgToggle />
@@ -39,7 +54,20 @@ export default async function ConfiguracionPage() {
           <SectionCard title="Clasificación de contactos" description="Forzá la actualización de estados sin esperar el cron diario.">
             <CronRunner />
           </SectionCard>
+        </>
+      )}
 
+      {showOfflineHere && (
+        <SectionCard
+          title="Modo offline"
+          description="Cuando lo activás desde el header, dejás de atender y se responde a todos los clientes con un único mensaje fijo."
+        >
+          <OfflineConfig />
+        </SectionCard>
+      )}
+
+      {showAccountConfig && (
+        <>
           <SectionCard title="Respuestas rápidas" description="Plantillas de mensajes predefinidas. Usalas desde el chat con el botón ⚡.">
             <QuickRepliesManager />
           </SectionCard>

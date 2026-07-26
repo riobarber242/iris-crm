@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { irisSystemPrompt } from '@/lib/system-prompt';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Self-service del system prompt del bot para el panel del agente.
 // Fuente de verdad: settings(key='system_prompt') scopeado por tenant_id —
@@ -19,6 +20,9 @@ async function requireStaff() {
 }
 
 export async function GET() {
+  const blocked = await featureBlocked('bot');
+  if (blocked) return blocked;
+
   const { session, error } = await requireStaff();
   if (error) return error;
 
@@ -39,6 +43,9 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const blocked = await featureBlocked('bot');
+  if (blocked) return blocked;
+
   const { session, error } = await requireStaff();
   if (error) return error;
 

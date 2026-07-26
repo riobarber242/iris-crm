@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { featureBlocked } from '@/lib/plan-guard';
 
 export async function GET() {
+  const blocked = await featureBlocked('bot');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -20,6 +24,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('bot');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 

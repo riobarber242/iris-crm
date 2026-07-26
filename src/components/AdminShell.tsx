@@ -7,7 +7,7 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
-import { blockedSectionsFor, hasFeature } from '@/lib/plan';
+import { blockedSectionsFor, hasFeature, normalizePlan } from '@/lib/plan';
 import IrisChat from './IrisChat';
 import ActivityGuard from './ActivityGuard';
 import ProfileCard from './ProfileCard';
@@ -32,9 +32,13 @@ const navLabels: Record<string, string> = {
 
 const BANNER_H = 80;
 
-export function AdminShell({ children }: { children: ReactNode }) {
+export function AdminShell({ children, initialPlan }: { children: ReactNode; initialPlan?: string | null }) {
   const pathname = usePathname();
   const { agent, loading, refresh, logout } = useAuth();
+  // Plan efectivo: el del servidor (llega ya en el primer render, sin parpadeo)
+  // y, cuando /api/auth/me responde, el de la sesión — que es el que refleja un
+  // cambio de plan sin obligar a recargar la página.
+  const plan = agent?.plan ?? initialPlan ?? null;
   // tenant del usuario: filtra los postgres_changes por tenant (llega async → va en deps).
   const tid = agent?.tenant_id ?? null;
   // El rol está confirmado en cuanto conocemos el agente (del backend o del
@@ -67,8 +71,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
   // secciones que su plan no incluye (Caja, Operadores, Chat interno, Top
   // Clientes). Esto es SOLO cosmético — el bloqueo real de las rutas es
   // server-side; acá evitamos ofrecer links que van a devolver 404.
-  const hiddenBySection = new Set(blockedSectionsFor(agent?.plan));
+  const hiddenBySection = new Set(blockedSectionsFor(plan));
   if (hiddenBySection.size > 0) items = items.filter((i) => !hiddenBySection.has(i));
+
+  // ¿El plan incluye el bot automático de WhatsApp? Gatea el toggle BOT del
+  // header (el de OFFLINE se queda: es presencia del agente, no el bot).
+  const hasBot = hasFeature(plan, 'bot');
+
+  // Palabra del plan en el logo. La raya de la derecha se corre según el largo
+  // de la palabra (el SVG posiciona a mano, no hay layout que la acomode sola).
+  const planWord  = { trial: 'TRIAL', lite: 'LITE', premium: 'PREMIUM' }[normalizePlan(plan)];
+  const planDashX = { trial: 369,     lite: 345,    premium: 430       }[normalizePlan(plan)];
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
@@ -81,10 +94,16 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     function fetchBotStatus() {
-      fetch('/api/settings/bot-enabled')
-        .then((r) => r.json())
-        .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
-        .catch(() => setMounted(true));
+      // El estado del bot solo se consulta en los planes que lo incluyen: sin la
+      // feature ese endpoint devuelve 404 y el toggle ni se dibuja.
+      if (hasBot) {
+        fetch('/api/settings/bot-enabled')
+          .then((r) => r.json())
+          .then((d) => { setBotEnabled(d.enabled); setMounted(true); })
+          .catch(() => setMounted(true));
+      } else {
+        setMounted(true);
+      }
       fetch('/api/settings/offline-mode')
         .then((r) => r.json())
         .then((d) => setOfflineMode(!!d.offline))
@@ -114,7 +133,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
       window.removeEventListener('bot-status-changed', handleBotChange);
       window.removeEventListener('offline-mode-changed', handleOfflineChange);
     };
-  }, []);
+    // hasBot llega async con /me: el efecto se rehace cuando se conoce el plan,
+    // si no el intervalo quedaría con el valor inicial capturado en el closure.
+  }, [hasBot]);
 
   const fetchUnreadRef = useRef<() => void>(() => {});
   // Conteos previos para detectar SUBIDAS y disparar el sonido correspondiente.
@@ -344,8 +365,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <text x="210" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">I</text>
             <text x="252" y="118" fontFamily="Arial Black, Impact, sans-serif" fontSize="108" fontWeight="900" fill="#FFFFFF" letterSpacing="-4">RIS</text>
             <text x="222" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
-            <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">PREMIUM</text>
-            <text x="430" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
+            <text x="258" y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#FF6600" letterSpacing="4">{planWord}</text>
+            <text x={planDashX} y="162" fontFamily="Arial, sans-serif" fontSize="26" fontWeight="800" fill="#00BBDD">—</text>
           </svg>
 
           {/* Mobile: solo ícono */}
@@ -386,6 +407,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
             </span>
           </div>
 
+          {/* Toggle BOT — solo en los planes que incluyen el bot automático. */}
+          {hasBot && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
             <button
               onClick={toggleBot}
@@ -405,6 +428,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
               {botEnabled ? 'BOT' : 'HUM'}
             </span>
           </div>
+          )}
          </div>
 
           {/* Agente logueado + salir. Solo cuando el rol está confirmado, para
@@ -585,7 +609,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       {/* Asistente Iris AI — chat flotante, en los planes que lo incluyen. No
           es una sección del menú, así que se filtra acá con la misma fuente. */}
-      {hasFeature(agent?.plan, 'iris_ai') && <IrisChat />}
+      {hasFeature(plan, 'iris_ai') && <IrisChat />}
     </div>
   );
 
