@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import OnboardingWizard from './OnboardingWizard';
 import AdminTenantNumbersModal, { AdminWaNumber, numbersHealth } from './AdminTenantNumbersModal';
+import { PLANS, planLabel } from '@/lib/plan';
 
 type Tenant = {
   id: string;
@@ -26,12 +27,13 @@ type Tenant = {
 
 const MAX_PROMPT = 4000;
 
-const PLAN_OPTIONS   = ['trial', 'basic', 'premium'];
+// Los planes salen del catálogo (lib/plan.ts) para que el selector de Membresía
+// ofrezca exactamente los mismos que valida el PATCH y que gatean las secciones.
+const PLAN_OPTIONS   = PLANS;
 const STATUS_OPTIONS = ['active', 'suspended', 'cancelled'];
 const SKIN_OPTIONS   = ['casino', 'loteria', 'barberia'];
 
 const SKIN_LABEL: Record<string, string> = { casino: 'Casino', loteria: 'Lotería', barberia: 'Barbería' };
-const PLAN_LABEL: Record<string, string> = { trial: 'Trial', basic: 'Basic', premium: 'Premium' };
 
 // Badge de estado: mezcla status + plan. Trial (ámbar) cuando está activo en
 // período de prueba; Activo (verde) si paga; Suspendido (rojo); Cancelado (gris).
@@ -195,7 +197,7 @@ export default function TenantsClient() {
                     </span>
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                    <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '3px 8px', borderRadius: '20px', background: '#f5f5f5', color: '#777', border: '1px solid #eaeaea' }}>{PLAN_LABEL[t.plan] ?? t.plan}</span>
+                    <span style={{ fontSize: '10px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '3px 8px', borderRadius: '20px', background: '#f5f5f5', color: '#777', border: '1px solid #eaeaea' }}>{planLabel(t.plan)}</span>
                     {(() => { const b = statusBadge(t); return <span style={{ fontSize: '10px', fontWeight: 800, borderRadius: '20px', padding: '3px 8px', background: b.bg, color: b.fg }}>{b.label}</span>; })()}
                   </span>
                 </div>
@@ -416,7 +418,7 @@ function EditMembershipModal({ tenant, onClose, onSaved }: { tenant: Tenant; onC
         <Section title="Plan y estado">
           <Field label="Plan">
             <select style={inputStyle} value={plan} onChange={e => setPlan(e.target.value)}>
-              {PLAN_OPTIONS.map(p => <option key={p} value={p}>{PLAN_LABEL[p] ?? p}</option>)}
+              {PLAN_OPTIONS.map(p => <option key={p} value={p}>{planLabel(p)}</option>)}
             </select>
           </Field>
           <Field label="Estado">

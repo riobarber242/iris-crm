@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 import { hashPassword } from '@/lib/auth';
+import { PLANS } from '@/lib/plan';
 
 const TENANT_FIELDS =
   'id, name, whatsapp_phone_id, whatsapp_waba_id, whatsapp_display_number, created_at, ' +
@@ -10,8 +11,10 @@ const TENANT_FIELDS =
 const MAX_PROMPT = 4000;
 
 // Valores permitidos para los selectores de membresía (defensa server-side: el
-// front solo ofrece estos, pero validamos igual).
-const PLANS   = ['trial', 'basic', 'premium'];
+// front solo ofrece estos, pero validamos igual). PLANS sale del catálogo de
+// planes (lib/plan.ts): es el mismo que gatea las secciones, así que no puede
+// divergir de lo que el panel ofrece. Requiere supabase-plan-lite.sql corrido
+// ('basic' reciclado como 'lite' + CHECK nuevo en la base).
 const STATUSES = ['active', 'suspended', 'cancelled'];
 const SKINS   = ['casino', 'loteria', 'barberia'];
 
@@ -44,7 +47,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   // ── Campos de membresía (panel de admin) ──────────────────────────────────
   if (body.plan !== undefined) {
     const plan = String(body.plan).trim();
-    if (!PLANS.includes(plan)) return NextResponse.json({ error: `Plan inválido (esperado: ${PLANS.join(', ')})` }, { status: 400 });
+    if (!(PLANS as string[]).includes(plan)) return NextResponse.json({ error: `Plan inválido (esperado: ${PLANS.join(', ')})` }, { status: 400 });
     updates.plan = plan;
   }
   if (body.status !== undefined) {
