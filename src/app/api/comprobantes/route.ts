@@ -486,14 +486,23 @@ export async function PATCH(request: Request) {
         // await: en serverless, un fire-and-forget no await-eado puede no
         // completarse porque el runtime suspende la instancia al retornar.
         try {
-          await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
+          const wamid = await sendWhatsAppText(contact.phone, msg, session.tenant_id, contact.whatsapp_number_id);
           // Registrar el aviso en el chat (mismo patrón que campañas: mensaje
           // 'human' enviado por el sistema, sin atribución a un agente).
+          //
+          // El wamid y el status van SIEMPRE: processStatus (el webhook de
+          // ticks) matchea la fila sólo por whatsapp_message_id, así que sin
+          // guardarlo el aviso se quedaba en un tilde para siempre aunque el
+          // cliente lo leyera. Es el mismo bug que tenían las imágenes y los
+          // audios (commit df1c72d); acá afectaba a ~300 avisos por mes, el
+          // mensaje automático de mayor volumen del sistema.
           await insertMessage({
             contact_id: comprobante.contact_id,
             role:       'human',
             content:    msg,
             tenant_id:  session.tenant_id,
+            status:     'sent',
+            whatsapp_message_id: wamid,
           });
         } catch {
           console.warn('[comprobantes] Auto-notificación WA falló (posible ventana 24h)');

@@ -46,8 +46,13 @@ export async function POST(request: Request) {
   const buttons: string[] = Array.isArray(tplRows?.[0]?.buttons) ? tplRows[0].buttons : [];
 
   let failureReason: string | null = null;
+  // El wamid es la ÚNICA clave con la que processStatus (el webhook de status)
+  // matchea la fila para pasarla a entregado/leído. Sin guardarlo, la plantilla
+  // se queda en un solo tilde para siempre — el mismo bug que tenían las
+  // imágenes y los audios (ver commit df1c72d).
+  let wamid: string | null = null;
   try {
-    await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id, contact.whatsapp_number_id, buttons);
+    wamid = await sendWhatsAppTemplate(contact.phone, def.name, def.language, vars, def.phoneId, session.tenant_id, contact.whatsapp_number_id, buttons);
   } catch (err: any) {
     failureReason =
       err?.response?.data?.error?.message ||
@@ -65,6 +70,7 @@ export async function POST(request: Request) {
     agent_name: session.name,
     tenant_id:  session.tenant_id,
     status:     failureReason ? 'failed' : 'sent',
+    whatsapp_message_id: wamid,
   });
 
   if (error) return new NextResponse(error.message, { status: 500 });
