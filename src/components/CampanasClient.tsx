@@ -234,21 +234,41 @@ function Chip({ label, value, color, bg }: { label: string; value: number; color
 // tanto en la tarjeta de la campaña activa/pausada —donde más importa: para ver por
 // qué está fallando MIENTRAS corre— como en el historial. Null si no hubo fallos.
 function FailureReasons({ reasons }: { reasons?: Campaign['failure_reasons'] }) {
+  // Colapsado por defecto: el detalle de los fallos es para diagnosticar cuando
+  // hace falta, no algo que tenga que ocupar lugar fijo en cada tarjeta.
+  const [abierto, setAbierto] = useState(false);
+
   if (!Array.isArray(reasons) || reasons.length === 0) return null;
+
+  // El número es la suma de los conteos (cuántos MENSAJES fallaron), no la
+  // cantidad de motivos distintos: es el dato que le importa al operador.
+  const total = reasons.reduce((s, fr) => s + (fr.count ?? 0), 0);
+  const etiqueta = total === 1
+    ? `${abierto ? 'Ocultar' : 'Ver'} el mensaje fallido`
+    : `${abierto ? 'Ocultar' : 'Ver'} los ${total} mensajes fallidos`;
+
   return (
-    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      <span style={{ fontSize: '11px', fontWeight: 700, color: '#c0392b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-        Por qué fallaron
-      </span>
-      {reasons.map((fr, i) => (
-        <div key={i} style={{ fontSize: '12px', color: '#7a2018', background: '#fff2f0', border: '1px solid #ffd6cf', borderRadius: '8px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-          <span style={{ fontWeight: 800, flexShrink: 0 }}>{fr.count}×</span>
-          <span>
-            {motivoDeFallo(fr.code, fr.title, fr.message)
-              ?? `Meta rechazó el envío${fr.code != null ? ` (código ${fr.code})` : ''}.`}
-          </span>
+    <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+      <button
+        onClick={() => setAbierto(!abierto)}
+        style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}
+      >
+        ⚠ {etiqueta} <span style={{ fontSize: '10px' }}>{abierto ? '▴' : '▾'}</span>
+      </button>
+
+      {abierto && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignSelf: 'stretch' }}>
+          {reasons.map((fr, i) => (
+            <div key={i} style={{ fontSize: '12px', color: '#7a2018', background: '#fff2f0', border: '1px solid #ffd6cf', borderRadius: '8px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+              <span style={{ fontWeight: 800, flexShrink: 0 }}>{fr.count}×</span>
+              <span>
+                {motivoDeFallo(fr.code, fr.title, fr.message)
+                  ?? `Meta rechazó el envío${fr.code != null ? ` (código ${fr.code})` : ''}.`}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
