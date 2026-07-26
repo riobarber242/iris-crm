@@ -2,6 +2,8 @@
 // Uses Web Crypto so it runs in BOTH Node (route handlers) and Edge (middleware).
 // Format: "<payloadB64url>.<sigB64url>"
 
+import type { Plan } from './plan';
+
 export const COOKIE_NAME  = 'iris_session';
 export const MAX_AGE_SEC  = 60 * 60 * 24 * 7; // 7 días
 
@@ -10,6 +12,14 @@ export type SessionPayload = {
   name: string;
   role: 'admin' | 'agent' | 'operator';
   tenant_id: string;       // multi-tenant: tenant del agente
+  // Plan comercial del TENANT (no del usuario). Viaja en el token porque el
+  // middleware corre en Edge y no puede pegarle a la base por request; es lo que
+  // le permite bloquear las secciones fuera del plan. En tokens viejos viene
+  // undefined → normalizePlan() lo trata como 'premium' (ver lib/plan.ts).
+  // OJO: como vive en el token, un cambio de plan recién impacta en el
+  // middleware cuando el usuario vuelve a loguearse (cookie de 7 días). Las
+  // páginas y los handlers leen el plan de la base, que es lo autoritativo.
+  plan?: Plan;
   // Permisos opcionales — solo relevantes para el rol 'operator'.
   // En tokens viejos vienen undefined → se tratan como false.
   can_see_top_clients?: boolean;

@@ -49,6 +49,10 @@ export async function PATCH(request: Request) {
       name: updates.name,
       role: session.role,
       tenant_id: session.tenant_id,
+      // Se arrastra el plan del token actual: esta re-firma es solo por el
+      // cambio de nombre, no debe degradar el plan a undefined (el middleware
+      // lo leería como 'premium' y abriría secciones fuera del plan).
+      plan: session.plan,
       can_see_top_clients: session.can_see_top_clients,
       can_see_campaigns:   session.can_see_campaigns,
     });

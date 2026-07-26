@@ -4,6 +4,7 @@ import { verifyPassword } from '@/lib/auth';
 import { signSession, COOKIE_NAME, MAX_AGE_SEC } from '@/lib/session';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { normalizePlan } from '@/lib/plan';
 
 const PRINCIPAL_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -36,11 +37,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Tu cuenta está desactivada. Contactá al administrador.' }, { status: 403 });
   }
 
+  const tenantId = agent.tenant_id ?? PRINCIPAL_TENANT_ID;
+
+  // Plan del tenant DENTRO del token: el middleware corre en Edge y no puede
+  // consultar la base por request, así que el gate de secciones por plan se
+  // apoya en esto. Una query extra por login (no por request). Si falla o el
+  // tenant no tiene plan, normalizePlan() cae a 'premium' y el usuario no
+  // pierde secciones por un error de lectura.
+  const { data: tenant } = await supabaseAdmin
+    .from('tenants').select('plan').eq('id', tenantId).maybeSingle();
+
   const token = await signSession({
     sub: agent.id,
     name: agent.name,
     role: agent.role,
-    tenant_id: agent.tenant_id ?? '00000000-0000-0000-0000-000000000001',
+    tenant_id: tenantId,
+    plan: normalizePlan(tenant?.plan),
     can_see_top_clients: !!agent.can_see_top_clients,
     can_see_campaigns:   !!agent.can_see_campaigns,
   });

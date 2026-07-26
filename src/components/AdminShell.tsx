@@ -7,6 +7,7 @@ import { getSupabaseBrowser } from '@/lib/supabase-browser';
 import { playPendingSound } from '@/lib/notify-sound';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthProvider';
+import { blockedSectionsFor, hasFeature } from '@/lib/plan';
 import IrisChat from './IrisChat';
 import ActivityGuard from './ActivityGuard';
 import ProfileCard from './ProfileCard';
@@ -61,6 +62,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
     // Agente: todo + Operadores (gestiona los de su tenant). Sin Tenants/Agentes.
     items = ['dashboard', 'conversaciones', 'contactos', 'cargas', 'pagos', 'fichas', 'top-clientes', 'campanas', 'agentes', 'chat-interno', 'mi-bot', 'configuracion'];
   }
+
+  // Recorte por PLAN, encima del recorte por rol: un cliente Lite no ve las
+  // secciones que su plan no incluye (Caja, Operadores, Chat interno, Top
+  // Clientes). Esto es SOLO cosmético — el bloqueo real de las rutas es
+  // server-side; acá evitamos ofrecer links que van a devolver 404.
+  const hiddenBySection = new Set(blockedSectionsFor(agent?.plan));
+  if (hiddenBySection.size > 0) items = items.filter((i) => !hiddenBySection.has(i));
   const [botEnabled, setBotEnabled] = useState(true);
   const [offlineMode, setOfflineMode] = useState(false);
   const [mounted, setMounted]       = useState(false);
@@ -575,8 +583,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       </div>
 
-      {/* Asistente Iris AI — chat flotante presente en toda la plataforma */}
-      <IrisChat />
+      {/* Asistente Iris AI — chat flotante, en los planes que lo incluyen. No
+          es una sección del menú, así que se filtra acá con la misma fuente. */}
+      {hasFeature(agent?.plan, 'iris_ai') && <IrisChat />}
     </div>
   );
 

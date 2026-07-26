@@ -11,6 +11,12 @@ export type Agent = {
   // (Fase 2) para armar el nombre del canal. Puede faltar en el hint de
   // localStorage recordado antes de esta versión: se rellena al resolver /me.
   tenant_id?: string | null;
+  // Plan comercial del tenant (lo resuelve /api/auth/me contra la base). El
+  // sidebar lo usa para esconder las secciones fuera del plan. Puede faltar en
+  // el hint de localStorage guardado antes de esta versión: hasta que resuelve
+  // /me se trata como 'premium' (no esconde nada), y el bloqueo real es
+  // server-side, así que un menú de más por un instante no da acceso a nada.
+  plan?: string | null;
   // Permisos opcionales del operator (admin/agent siempre tienen acceso).
   can_see_top_clients?: boolean;
   can_see_campaigns?:   boolean;
