@@ -8,6 +8,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { DonutChart, BarChart, ArgentinaMap, type ChartsData } from './DashboardCharts';
 import DashboardCustomizer from './DashboardCustomizer';
 import { DEFAULT_LAYOUT, widgetGroup, mergeLayout, type WidgetConfig } from '@/lib/dashboard-layout';
+import { hiddenWidgetsFor } from '@/lib/plan';
 import { PERIODS, getMetric, metricKey, formatMetricValue } from '@/lib/dashboard-metrics';
 
 type Stats = {
@@ -21,6 +22,9 @@ type Stats = {
   sinResponder: number;
   pendingOrange: number;
   pendingRed: number;
+  // false = el plan no incluye Caja: los campos de recargas/montos/comprobantes
+  // de arriba vienen en 0 porque el endpoint no los consultó.
+  cajaEnabled?: boolean;
 };
 
 function fmt(n: number) {
@@ -439,9 +443,15 @@ export default function DashboardClient() {
         return (
           <Column title={w.label} icon="⚡">
             <MetricCard label="Tiempo 1ra respuesta"        value={mins(s.avgFirstHumanResponseMin)}                  href="/conversaciones" />
-            <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/cargas" />
-            <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/cargas" />
-            <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/cargas" />
+            {/* Las tres de abajo salen de comprobantes: sin Caja en el plan no
+                se consultan (llegan en 0) y la sección /cargas no existe. */}
+            {s.cajaEnabled !== false && (
+              <>
+                <MetricCard label="Ticket promedio del mes"     value={money(s.ticketPromedio)}                          href="/cargas" />
+                <MetricCard label="Ticket promedio mes anterior" value={money(s.ticketPromedioMesAnterior)}              href="/cargas" />
+                <MetricCard label="Comprobantes del mes"        value={fmt(s.recargasMes)}                               href="/cargas" />
+              </>
+            )}
           </Column>
         );
 
@@ -462,7 +472,14 @@ export default function DashboardClient() {
     }
   }
 
-  const visible = [...layout].sort((a, b) => a.order - b.order).filter((w) => w.visible);
+  // Recorte por PLAN: los widgets que dependen de Caja no se dibujan en los
+  // planes que no la incluyen (sus datos vienen en 0 porque el endpoint ni los
+  // consulta). Va acá y no sobre `layout` para no reescribir el layout guardado
+  // del tenant: si algún día sube de plan, sus widgets vuelven solos.
+  const hidden  = new Set(hiddenWidgetsFor(agent?.plan));
+  const visible = [...layout]
+    .sort((a, b) => a.order - b.order)
+    .filter((w) => w.visible && !hidden.has(w.id));
   const heroWidgets   = visible.filter((w) => widgetGroup(w) === 'hero');
   const metricWidgets = visible.filter((w) => widgetGroup(w) === 'metric');
   const chartWidgets  = visible.filter((w) => widgetGroup(w) === 'chart');

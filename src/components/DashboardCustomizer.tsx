@@ -14,6 +14,8 @@ import {
   DEFAULT_LAYOUT, CUSTOM_PREFIX, widgetGroup, isCustomWidget, type WidgetConfig,
 } from '@/lib/dashboard-layout';
 import { METRIC_CATALOG, PERIODS, getMetric } from '@/lib/dashboard-metrics';
+import { useAuth } from '@/components/AuthProvider';
+import { isMetricAllowedFor, hiddenWidgetsFor } from '@/lib/plan';
 
 const GROUP_LABEL: Record<string, string> = {
   hero:   'Destacado',
@@ -28,6 +30,13 @@ export default function DashboardCustomizer({
   onClose: () => void;
   onSave: (l: WidgetConfig[]) => Promise<void> | void;
 }) {
+  // Recorte por plan: no se listan para reordenar/renombrar los widgets que el
+  // plan no incluye, ni se ofrecen sus métricas al crear uno nuevo (el endpoint
+  // las descarta igual, quedaría un widget siempre vacío).
+  const { agent } = useAuth();
+  const hidden    = new Set(hiddenWidgetsFor(agent?.plan));
+  const catalog   = METRIC_CATALOG.filter((m) => isMetricAllowedFor(agent?.plan, m.id));
+
   const [draft, setDraft] = useState<WidgetConfig[]>(() =>
     [...layout].sort((a, b) => a.order - b.order)
   );
@@ -150,7 +159,7 @@ export default function DashboardCustomizer({
               <FormField label="Métrica">
                 <select value={nwMetric} onChange={(e) => setNwMetric(e.target.value)} style={selectStyle}>
                   <option value="">Elegí una métrica…</option>
-                  {METRIC_CATALOG.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  {catalog.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
               </FormField>
               {nwHasPeriod && (
@@ -183,8 +192,8 @@ export default function DashboardCustomizer({
           )}
 
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={draft.map((w) => w.id)} strategy={verticalListSortingStrategy}>
-              {draft.map((w) => (
+            <SortableContext items={draft.filter((w) => !hidden.has(w.id)).map((w) => w.id)} strategy={verticalListSortingStrategy}>
+              {draft.filter((w) => !hidden.has(w.id)).map((w) => (
                 <SortableRow key={w.id} w={w} onToggle={toggle} onRename={rename} onDelete={removeWidget} />
               ))}
             </SortableContext>

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
+import { planForTenant } from '@/lib/plan-guard';
+import { hasFeature } from '@/lib/plan';
 
 // Argentina is always UTC-3 (no DST since 2009).
 // All period boundaries are expressed in UTC but aligned to Argentina midnight.
@@ -45,6 +47,11 @@ export async function GET() {
   // Rolling 30-day window for the operator first-response SLA
   const slaWindowStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
+  // Caja fuera del plan → no se consultan comprobantes (ni la query de
+  // pendientes ni la RPC de montos) y esos campos vuelven en 0. El cliente usa
+  // cajaEnabled para no dibujar las tarjetas que dependen de ellos.
+  const cajaEnabled = hasFeature(await planForTenant(tid), 'caja');
+
   // ── Todo en paralelo ──────────────────────────────────────────────────────
   // counts (head:true, baratos) + sumas de montos (comprobantes, chico) + las
   // RPCs que AGREGAN en Postgres (conteos por período, SLA, chats activos,
@@ -73,19 +80,23 @@ export async function GET() {
     // Total de contactos (denominador de la tasa de conversión)
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid),
 
-    // Comprobantes pendientes
-    supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('estado', 'pendiente'),
+    // Comprobantes pendientes — solo con Caja en el plan (si no, ni se consulta).
+    cajaEnabled
+      ? supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).eq('estado', 'pendiente')
+      : Promise.resolve({ count: 0 }),
 
     // Montos verificados: conteos + sumas por período agregados en Postgres. Antes
     // se traían las filas para sumar/contar en Node, con el mismo cap-1000 (un mes
     // con >1000 verificados subcontaba recargas y monto). Ver supabase-topclients-montos-rpcs.sql.
-    supabaseAdmin.rpc('fn_dashboard_montos', {
-      p_tenant_id:   tid,
-      p_today_start: todayStart.toISOString(),
-      p_month_start: monthStart.toISOString(),
-      p_prev_start:  prevMonthStart.toISOString(),
-      p_prev_end:    prevMonthEnd.toISOString(),
-    }),
+    cajaEnabled
+      ? supabaseAdmin.rpc('fn_dashboard_montos', {
+          p_tenant_id:   tid,
+          p_today_start: todayStart.toISOString(),
+          p_month_start: monthStart.toISOString(),
+          p_prev_start:  prevMonthStart.toISOString(),
+          p_prev_end:    prevMonthEnd.toISOString(),
+        })
+      : Promise.resolve({ data: null }),
 
     // Conversaciones (contactos únicos con algún mensaje en el período) — 1 pasada agregada
     supabaseAdmin.rpc('fn_dashboard_conv_counts', {
@@ -183,5 +194,10 @@ export async function GET() {
     sinResponder,
     pendingOrange,
     pendingRed,
+
+    // ¿El plan incluye Caja? Con false, todo lo de recargas/montos/comprobantes
+    // de arriba viene en 0 porque no se consultó: el cliente esconde esas
+    // tarjetas en vez de mostrar ceros permanentes.
+    cajaEnabled,
   });
 }

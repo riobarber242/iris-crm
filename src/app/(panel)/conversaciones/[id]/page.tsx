@@ -6,6 +6,8 @@ import { getSessionAgent } from '@/lib/current-agent';
 import ChatWindow from '@/components/ChatWindow';
 import ContactHeader from '@/components/ContactHeader';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { planForTenant } from '@/lib/plan-guard';
+import { hasFeature } from '@/lib/plan';
 
 async function fetchContact(id: string) {
   const { data, error } = await supabaseAdmin
@@ -73,13 +75,23 @@ export default async function ConversationPage({ params }: any) {
     .eq('id', id)
     .eq('tenant_id', session.tenant_id);
 
-  const recargas = await fetchRecargasResumen(id);
+  // Conversaciones es núcleo (está en todos los planes), pero lo que cuelga de
+  // Caja no: sin esa feature no hay comprobantes, así que no consultamos el
+  // resumen de recargas (con 0 el header ya no lo muestra) y el chat no ofrece
+  // "Enviar a verificar" —su endpoint devuelve 404 en esos planes—.
+  const plan        = await planForTenant(session.tenant_id);
+  const cajaEnabled = hasFeature(plan, 'caja');
+
+  const recargas = cajaEnabled ? await fetchRecargasResumen(id) : { count: 0, montoTotal: 0 };
 
   // ¿El casino está activado para este tenant? Gatea el botón "Crear usuario
-  // casino" en el header (mismo flag que usa /api/casino/balance).
-  const { data: casinoFlag } = await supabaseAdmin
-    .from('settings').select('value')
-    .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
+  // casino" en el header (mismo flag que usa /api/casino/balance). El flag por
+  // tenant sigue mandando, pero un plan sin casino lo apaga igual.
+  const { data: casinoFlag } = hasFeature(plan, 'casino')
+    ? await supabaseAdmin
+        .from('settings').select('value')
+        .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle()
+    : { data: null };
   const casinoDepositEnabled = casinoFlag?.value === 'true';
 
   return (
@@ -135,6 +147,7 @@ export default async function ConversationPage({ params }: any) {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <ChatWindow
           contactId={contact.id}
+          cajaEnabled={cajaEnabled}
           casinoDepositEnabled={casinoDepositEnabled}
           casinoUsername={contact.casino_username}
           contactName={contact.name ?? null}

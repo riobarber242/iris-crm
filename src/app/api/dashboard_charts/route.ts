@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { planForTenant } from '@/lib/plan-guard';
+import { hasFeature } from '@/lib/plan';
 
 const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -14,14 +16,23 @@ export async function GET() {
   sixMonthsAgo.setDate(1);
   sixMonthsAgo.setHours(0, 0, 0, 0);
 
+  // Sin Caja en el plan no hay comprobantes: ni se consultan (dos queries menos)
+  // y los gráficos que dependen de ellos vuelven vacíos con cajaEnabled=false,
+  // que es lo que el cliente usa para no dibujar esos paneles.
+  const cajaEnabled = hasFeature(await planForTenant(tid), 'caja');
+
   const [contactsRes, comprobantesRes, recargasRes] = await Promise.all([
     supabaseAdmin.from('contacts').select('status, provincia').eq('tenant_id', tid),
-    supabaseAdmin.from('comprobantes').select('estado').eq('tenant_id', tid),
-    supabaseAdmin.from('comprobantes')
-      .select('monto, created_at')
-      .eq('tenant_id', tid)
-      .eq('estado', 'verificado')
-      .gte('created_at', sixMonthsAgo.toISOString()),
+    cajaEnabled
+      ? supabaseAdmin.from('comprobantes').select('estado').eq('tenant_id', tid)
+      : Promise.resolve({ data: [] as any[] }),
+    cajaEnabled
+      ? supabaseAdmin.from('comprobantes')
+          .select('monto, created_at')
+          .eq('tenant_id', tid)
+          .eq('estado', 'verificado')
+          .gte('created_at', sixMonthsAgo.toISOString())
+      : Promise.resolve({ data: [] as any[] }),
   ]);
 
   // Contact status breakdown
@@ -83,5 +94,12 @@ export async function GET() {
     return { provincia, total, dominant, counts };
   });
 
-  return NextResponse.json({ contactsByStatus, comprobantesByEstado, revenueByMonth, provinceData });
+  return NextResponse.json({
+    contactsByStatus,
+    comprobantesByEstado,
+    // Con Caja apagada quedan en 0 (no se consultó nada): se mandan vacíos.
+    revenueByMonth: cajaEnabled ? revenueByMonth : [],
+    provinceData,
+    cajaEnabled,
+  });
 }

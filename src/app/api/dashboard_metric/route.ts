@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { getMetric, isValidPeriod, metricKey, type PeriodId } from '@/lib/dashboard-metrics';
+import { planForTenant } from '@/lib/plan-guard';
+import { isMetricAllowedFor } from '@/lib/plan';
 
 // Cálculo on-demand de un widget personalizado (métrica × período), validado
 // contra el catálogo cerrado de dashboard-metrics. El tenant SIEMPRE sale de la
@@ -126,12 +128,17 @@ export async function POST(request: Request) {
   const rawPairs: any[] = Array.isArray(body?.pairs) ? body.pairs : [];
 
   // Normalizar + validar contra el catálogo; descartar lo inválido y deduplicar.
+  // Las métricas fuera del plan se descartan igual que un id inexistente: no se
+  // calculan (son queries a comprobantes que en Lite no tienen sentido) y no
+  // vuelven en la respuesta, aunque el layout guardado del tenant las pida.
+  const plan = await planForTenant(session.tenant_id);
   const seen = new Set<string>();
   const pairs: { metric: string; period: PeriodId | null; key: string }[] = [];
   for (const p of rawPairs) {
     const metric = typeof p?.metric === 'string' ? p.metric : '';
     const def = getMetric(metric);
     if (!def) continue;
+    if (!isMetricAllowedFor(plan, metric)) continue;
     const period: PeriodId | null = def.supportsPeriod && isValidPeriod(p?.period) ? p.period : null;
     if (def.supportsPeriod && !period) continue; // métrica con período pero período inválido
     const key = metricKey(metric, period);

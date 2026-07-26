@@ -12,6 +12,9 @@ export type ChartsData = {
   comprobantesByEstado: EstadoItem[];
   revenueByMonth:       MonthItem[];
   provinceData:         ProvinceItem[];
+  // false = el plan no incluye Caja: los dos paneles de comprobantes no se
+  // dibujan (sus datos llegan vacíos porque el endpoint no los consulta).
+  cajaEnabled?:         boolean;
 };
 
 // Province center coordinates in the Argentina SVG (viewBox "0 0 280 480")
@@ -281,9 +284,13 @@ export default function DashboardCharts() {
   return (
     <div className="dash-charts" style={{ background: '#fff', borderRadius: '20px', padding: '24px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', marginTop: '8px', display: 'flex', gap: '32px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
       <DonutChart data={contactData}     title="Estado de contactos"  emptyLabel="Sin contactos" />
-      <DonutChart data={comprobanteData} title="Comprobantes"         emptyLabel="Sin comprobantes" />
+      {data.cajaEnabled !== false && (
+        <DonutChart data={comprobanteData} title="Comprobantes" emptyLabel="Sin comprobantes" />
+      )}
       <ArgentinaMap data={data.provinceData ?? []} />
-      <BarChart   data={twoMonths} title="Mes anterior vs actual" />
+      {data.cajaEnabled !== false && (
+        <BarChart data={twoMonths} title="Mes anterior vs actual" />
+      )}
     </div>
   );
 }

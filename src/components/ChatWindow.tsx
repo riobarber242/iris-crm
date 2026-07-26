@@ -299,8 +299,12 @@ function reconcileSent(list: Message[], temp: Message, saved: Message | null): M
   });
 }
 
-export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUsername, contactName }: {
+export default function ChatWindow({ contactId, cajaEnabled = true, casinoDepositEnabled, casinoUsername, contactName }: {
   contactId: string;
+  // ¿El plan del cliente incluye Caja? Sin ella no hay comprobantes: se esconde
+  // "Enviar a verificar" y no se consulta /api/comprobantes (que en esos planes
+  // responde 404). Default true = comportamiento de siempre para quien no lo pasa.
+  cajaEnabled?: boolean;
   casinoDepositEnabled?: boolean;
   casinoUsername?: string | null;
   contactName?: string | null;
@@ -444,6 +448,9 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
   // Carga qué mensajes de este contacto ya fueron enviados a verificar, para
   // marcar el botón. Usa source_message_id de los comprobantes del contacto.
   const fetchVerifSent = useCallback(async () => {
+    // Sin Caja en el plan no hay comprobantes que consultar: el endpoint
+    // devuelve 404 y esto corre cada 8s con el polling, así que ni lo pedimos.
+    if (!cajaEnabled) return;
     try {
       const res = await fetchWithTimeout(`/api/comprobantes?contactId=${contactId}`);
       if (!res.ok) return;
@@ -452,7 +459,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
       const ids = rows.map((c: any) => c.source_message_id).filter(Boolean) as string[];
       setVerifSentIds(new Set(ids));
     } catch {}
-  }, [contactId]);
+  }, [contactId, cajaEnabled]);
 
   // "Enviar a verificar": crea un comprobante (carga si es del cliente, pago si
   // lo mandamos nosotros) a partir del mensaje. Optimista + reconciliación.
@@ -1065,7 +1072,7 @@ export default function ChatWindow({ contactId, casinoDepositEnabled, casinoUser
           // pending/failed no tienen url: no aplican el estilo de burbuja de media.
           const hasImage   = (media?._type === 'image' && !!media.url) || body.kind === 'image';
           const isPdfDoc   = media?._type === 'document' && !!media.url && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
-          const canVerify  = (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
+          const canVerify  = cajaEnabled && (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
           const verifSent  = !!m.id && verifSentIds.has(m.id);
           const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
           return (
