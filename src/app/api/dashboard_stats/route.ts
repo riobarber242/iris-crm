@@ -64,6 +64,7 @@ export async function GET() {
     comprobantesPendingRes,
     montosRes,
     convCountsRes, slaRes, chatsHoyRes, pendSnapRes,
+    campActivasRes, campEnviadosRes, campEntregadosRes, campRespondieronRes,
   ] = await Promise.all([
     // Contactos nuevos — creados en el período
     supabaseAdmin.from('contacts').select('id', { count: 'exact', head: true }).eq('tenant_id', tid).gte('created_at', todayStart.toISOString()),
@@ -113,6 +114,23 @@ export async function GET() {
     supabaseAdmin.rpc('fn_dashboard_chats_activos_hoy', { p_tenant_id: tid, p_today_start: todayStart.toISOString() }),
     // Snapshot por contacto (contacto + su último mensaje) para clasificar pendientes
     supabaseAdmin.rpc('fn_contacts_pending_snapshot', { p_tenant_id: tid }),
+
+    // ── Campañas (widget "Campañas") ────────────────────────────────────────
+    // Activas = en curso o pausadas AHORA (una campaña se autopausa por cupo
+    // diario o por horario, y eso hay que poder verlo de un vistazo).
+    supabaseAdmin.from('campaigns').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).in('status', ['enviando', 'pausada']),
+    // Enviados / entregados / respondieron: se cuentan por la fecha DEL MENSAJE
+    // (campaign_message_status), no por la fecha de la campaña. Una campaña con
+    // cronograma creada el mes pasado sigue mandando este mes, y esos envíos
+    // tienen que caer en el mes en el que salieron. Son head-counts baratos.
+    supabaseAdmin.from('campaign_message_status').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).gte('created_at', monthStart.toISOString()),
+    supabaseAdmin.from('campaign_message_status').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).gte('delivered_at', monthStart.toISOString()),
+    // "Respondieron" = clickeó cualquiera de los botones de la plantilla.
+    supabaseAdmin.from('campaign_message_status').select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tid).not('btn_payload', 'is', null).gte('created_at', monthStart.toISOString()),
   ]);
 
   // ── Tasa de conversión: clientes activos / total de contactos ───────────────
@@ -189,6 +207,12 @@ export async function GET() {
     ticketPromedio,
     recargasMesAnterior,
     ticketPromedioMesAnterior,
+
+    // Campañas (del mes, salvo campActivas que es estado actual)
+    campActivas:      campActivasRes.count      ?? 0,
+    campEnviados:     campEnviadosRes.count     ?? 0,
+    campEntregados:   campEntregadosRes.count   ?? 0,
+    campRespondieron: campRespondieronRes.count ?? 0,
 
     // Hero
     sinResponder,

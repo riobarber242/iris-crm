@@ -9,6 +9,7 @@ export type WidgetId =
   | 'sin_responder'
   | 'conversaciones'
   | 'contactos_nuevos'
+  | 'campanas'
   | 'embudo_conversion'
   | 'finanzas'
   | 'operacion'
@@ -54,6 +55,7 @@ export const WIDGET_GROUP: Record<WidgetId, WidgetGroup> = {
   sin_responder:          'hero',
   conversaciones:         'metric',
   contactos_nuevos:       'metric',
+  campanas:               'metric',
   embudo_conversion:      'metric',
   finanzas:               'metric',
   operacion:              'metric',
@@ -67,6 +69,7 @@ export const DEFAULT_LABELS: Record<WidgetId, string> = {
   sin_responder:          'Sin Responder',
   conversaciones:         'Conversaciones',
   contactos_nuevos:       'Contactos Nuevos',
+  campanas:               'Campañas',
   embudo_conversion:      'Embudo & Conversión',
   finanzas:               'Finanzas',
   operacion:              'Operación',
@@ -81,6 +84,7 @@ export const WIDGET_ORDER: WidgetId[] = [
   'sin_responder',
   'conversaciones',
   'contactos_nuevos',
+  'campanas',
   'embudo_conversion',
   'finanzas',
   'operacion',

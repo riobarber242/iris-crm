@@ -22,6 +22,8 @@ type Stats = {
   sinResponder: number;
   pendingOrange: number;
   pendingRed: number;
+  // Campañas: activas es estado actual; el resto, del mes en curso.
+  campActivas?: number; campEnviados?: number; campEntregados?: number; campRespondieron?: number;
   // false = el plan no incluye Caja: los campos de recargas/montos/comprobantes
   // de arriba vienen en 0 porque el endpoint no los consultó.
   cajaEnabled?: boolean;
@@ -429,6 +431,19 @@ export default function DashboardClient({ initialPlan }: { initialPlan?: string 
             <MetricCard label="Esta semana"  value={fmt(s.newWeek)}      href="/conversaciones" />
             <MetricCard label="Este mes"     value={fmt(s.newMonth)}     href="/conversaciones" />
             <MetricCard label="Mes anterior" value={fmt(s.newPrevMonth)} href="/conversaciones" />
+          </Column>
+        );
+
+      case 'campanas':
+        // Activas = ahora; el resto, del mes en curso (contado por la fecha de
+        // cada mensaje, no de la campaña). "Enviados" son intentos: incluye los
+        // que fallaron, así las filas cierran entre sí.
+        return (
+          <Column title={w.label} icon="📣">
+            <MetricCard label="Activas"      value={fmt(s.campActivas ?? 0)}      highlight={(s.campActivas ?? 0) > 0} href="/campanas" />
+            <MetricCard label="Enviados"     value={fmt(s.campEnviados ?? 0)}     href="/campanas" />
+            <MetricCard label="Entregados"   value={fmt(s.campEntregados ?? 0)}   href="/campanas" />
+            <MetricCard label="Respondieron" value={fmt(s.campRespondieron ?? 0)} href="/campanas" />
           </Column>
         );
 

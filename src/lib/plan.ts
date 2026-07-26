@@ -135,8 +135,9 @@ export const METRICS_BY_PLAN: Record<Plan, string[] | null> = {
 
 // Widgets FIJOS del dashboard (ids de lib/dashboard-layout.ts) que no tienen
 // sentido sin Caja. Los tres primeros son puro comprobante; 'embudo_conversion'
-// entra por el mismo motivo que las métricas de status: sin comprobantes
-// verificados ningún contacto sale de 'nuevo' y mostraría 0 / 0 / todos / 0%.
+// y 'estado_contactos' entran por el mismo motivo que las métricas de status:
+// sin comprobantes verificados ningún contacto sale de 'nuevo', así que el
+// embudo marcaría 0 / 0 / todos / 0% y la dona sería un único color al 100%.
 //
 // 'operacion' NO está acá porque es mixto: su tarjeta de "Tiempo 1ra respuesta"
 // sí aplica a Lite. Ese widget se queda y esconde por dentro las 3 tarjetas de
@@ -146,6 +147,7 @@ export const CAJA_WIDGETS: string[] = [
   'comprobantes_chart',
   'mes_anterior_actual',
   'embudo_conversion',
+  'estado_contactos',
 ];
 
 // Widgets del dashboard que este plan no debe mostrar.
