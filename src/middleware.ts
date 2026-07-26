@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { verifySession, COOKIE_NAME } from '@/lib/session';
+import { isPathBlockedFor } from '@/lib/plan';
 
 // Paths reachable WITHOUT a session.
 // ⚠️ CRÍTICO: /api/webhook (Meta) y /api/cron (Vercel) los llaman sistemas
@@ -51,6 +52,13 @@ const CAMPAIGNS_PREFIXES = ['/campanas', '/api/campaigns'];
 // Top Clientes: admin + agent siempre; operator solo con can_see_top_clients.
 const LEADS_PREFIXES = ['/top-clientes'];
 
+// Destino del rewrite para las secciones fuera del plan del cliente. NO tiene
+// que existir nunca como page ni como route: al no matchear nada, Next sirve su
+// 404 estándar, así que la sección se comporta igual que una URL inventada
+// (mismo status, mismo cuerpo). A propósito NO devolvemos 403 ni un "esto es
+// Premium": un 403 confirma que la ruta existe y está bloqueada.
+const NOT_FOUND_PATH = '/_no-existe';
+
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
@@ -79,6 +87,22 @@ export async function middleware(req: NextRequest) {
   }
 
   const { role } = session;
+
+  // ── Gate por PLAN ───────────────────────────────────────────────────────────
+  // Va ANTES que los permisos por rol a propósito: si la sección no está en el
+  // plan del cliente, no tiene que existir para NINGUNO de sus roles. Si el rol
+  // se evaluara primero, un operador de un cliente Lite recibiría el redirect
+  // del gate de rol y con eso ya sabría que la ruta existe.
+  //
+  // El plan sale del token (el Edge runtime no puede consultar la base por
+  // request). Los tokens viejos no lo traen y se tratan como 'premium', así que
+  // los clientes actuales no pierden nada mientras rotan sus sesiones; el guard
+  // server-side de cada página/handler (PR4) lee la base y es el autoritativo.
+  if (isPathBlockedFor(session.plan, pathname)) {
+    const url = req.nextUrl.clone();
+    url.pathname = NOT_FOUND_PATH;
+    return NextResponse.rewrite(url);
+  }
 
   // Helper: deniega según sea API (403) o página (redirect al home del rol).
   function deny(message: string) {
