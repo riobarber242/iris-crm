@@ -134,8 +134,10 @@ export function BarChart({ data, title }: { data: MonthItem[]; title: string }) 
   const max    = Math.max(...data.map((d) => d.monto), 1);
   // Lienzo angosto y barras finas: antes el viewBox era de 420 con barras de
   // ~172, que ocupaban casi todo el ancho y se veían como dos bloques enormes.
+  // H=230 para que el gráfico ocupe el mismo alto que el mapa y las donas (con
+  // H=140 quedaba de ~120px y se veía apretado arriba).
   const W      = 240;
-  const H      = 140;
+  const H      = 230;
   const PAD    = 24;
   const slot   = (W - PAD * 2) / data.length;   // espacio por barra
   const barW   = Math.min(52, Math.floor(slot) - 12);
@@ -152,7 +154,12 @@ export function BarChart({ data, title }: { data: MonthItem[]; title: string }) 
       {/* Título centrado, para que quede alineado con las barras (que van
           centradas en el lienzo) y no pegado a la izquierda. Igual que las donas. */}
       <p style={{ fontSize: '13px', fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0, textAlign: 'center' }}>{title}</p>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
+      {/* Alto FIJO, no por proporción: con `width:100%` sin height, el alto sale
+          del ancho del contenedor, y cuando este gráfico cae solo a un renglón
+          (la franja tiene flex-wrap) se estiraba a todo el ancho y el alto se
+          iba a más de 1000px. Con height fijo + meet, las barras miden siempre
+          lo mismo y sólo se achican si el contenedor es más angosto que 240. */}
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ overflow: 'visible' }}>
         {/* Zero line */}
         <line x1={PAD} y1={barArea} x2={W - PAD} y2={barArea} stroke="#e0e0e0" strokeWidth="1" />
 
