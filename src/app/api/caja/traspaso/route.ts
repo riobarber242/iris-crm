@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSessionAgent } from '@/lib/current-agent';
 import { verificarTraspaso, rechazarTraspaso } from '@/lib/caja';
 import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verificación / rechazo de un CIERRE DE TURNO (traspaso) por el RECEPTOR.
@@ -18,6 +19,9 @@ import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 //                       revierte el cierre del que cerró).
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   if (session.role !== 'agent' && session.role !== 'operator' && session.role !== 'admin') {

@@ -10,6 +10,7 @@ import {
   validateBotText, SYSTEM_PROMPT_MAX_LEN,
 } from '@/lib/bot-config';
 import { HELP_SECTIONS, helpSectionsForRole } from '@/lib/iris-help';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Modelo de Anthropic. Se usa el alias vigente de Sonnet (claude-sonnet-4-6);
 // el ID con fecha claude-sonnet-4-20250514 está deprecado y se retira el
@@ -1221,6 +1222,9 @@ async function runTool(
 }
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('iris_ai');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 

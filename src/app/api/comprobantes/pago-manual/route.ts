@@ -4,6 +4,7 @@ import { getSessionAgent } from '@/lib/current-agent';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { broadcastComprobanteChange } from '@/lib/realtime-broadcast';
 import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Carga manual de un pago hecho por el agente desde afuera (premio grande pagado
 // por fuera del sistema). SOLO admin/agent. Sube la imagen del comprobante y
@@ -11,6 +12,9 @@ import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 // bandeja Pagos suben las fichas al pozo, pero NO baja la billetera de ningún
 // operador (la lógica vive en aplicarPagoComprobante / PATCH de comprobantes).
 export async function POST(req: NextRequest) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 

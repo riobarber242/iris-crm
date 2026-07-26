@@ -6,6 +6,7 @@ import { resolveCasinoCreds } from '@/lib/casino/account';
 import { renderCredentials } from '@/lib/casino/credentials';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Solo admin/agent: crear un usuario en el casino es una acción de staff.
 function requireStaff(session: SessionPayload | null): session is SessionPayload {
@@ -36,6 +37,9 @@ function nextUsername(username: string): string {
 // El `message` es el texto de credenciales (armado con el template editable del
 // tenant) para que el operador lo mande desde el chat. Ya NO se auto-envía.
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('casino');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   if (!requireStaff(session)) return new NextResponse('No autorizado', { status: 403 });

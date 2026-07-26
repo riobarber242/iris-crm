@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { getAgentBalance } from '@/lib/casino/client';
 import { resolveCasinoCreds } from '@/lib/casino/account';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Cache en memoria del saldo (por instancia/lambda) para no martillar el casino
 // si varios agentes miran Fichas a la vez. Keyed por tenant: el saldo es el del
@@ -16,6 +17,9 @@ const balanceCache = new Map<string, { balance: number; expiresAt: number }>();
 //   { enabled: true, balance, cached }      si está activado
 //   { enabled: true, balance: null, error } si el casino no respondió
 export async function GET() {
+  const blocked = await featureBlocked('casino');
+  if (blocked) return blocked;
+
   // Cualquier usuario autenticado del tenant puede ver el saldo del casino
   // (los operadores también lo necesitan en su panel "Mi Caja").
   const session = await getSessionAgent();

@@ -3,11 +3,14 @@ export const dynamic = 'force-dynamic';
 import { SectionCard } from '@/components/ui/SectionCard';
 import InternalChatClient from '@/components/InternalChatClient';
 import { getSessionAgent } from '@/lib/current-agent';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
 // Chat interno del equipo (Etapa 1). Sala grupal por tenant: agente + sus
 // operadores. NO sale a WhatsApp/Meta. El admin de plataforma NO participa
 // (defensa server-side, además del filtrado del menú en AdminShell).
 export default async function ChatInternoPage() {
+  await requireFeaturePage('chat_interno');
+
   const session = await getSessionAgent();
   const isMember = session?.role === 'agent' || session?.role === 'operator';
 

@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
 import { broadcastNewInternalMessage } from '@/lib/realtime-broadcast';
+import { planForTenant } from '@/lib/plan-guard';
+import { hasFeature } from '@/lib/plan';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat interno del equipo (Etapa 1) — helpers compartidos.
@@ -26,10 +28,18 @@ const ROOM_COLS = 'id, name, kind, participant_a, participant_b';
 
 // Devuelve la sesión si es miembro del chat interno (agent/operator), o null.
 // El admin de plataforma queda fuera por diseño.
+//
+// Acá va también el guard de PLAN: las 7 rutas de /api/internal pasan todas por
+// esta función, así que un solo chequeo las cubre a todas. Lee el plan de la
+// base (autoritativo) para cerrar la ventana del token viejo que el middleware
+// no puede ver. Devuelve null igual que los otros rechazos, así que las rutas
+// responden su 403 de siempre sin cambios; el 404 "no existe" ya lo da el
+// middleware, esto es el backstop.
 export async function requireInternalMember(): Promise<SessionPayload | null> {
   const session = await getSessionAgent();
   if (!session) return null;
   if (session.role !== 'agent' && session.role !== 'operator') return null;
+  if (!hasFeature(await planForTenant(session.tenant_id), 'chat_interno')) return null;
   return session;
 }
 

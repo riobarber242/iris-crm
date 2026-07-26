@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSessionAgent } from '@/lib/current-agent';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Transcripción de audio del chat de Iris AI vía Groq Whisper.
 // Recibe multipart/form-data con el campo "audio" (blob webm/ogg) y devuelve { text }.
@@ -9,6 +10,9 @@ const GROQ_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions
 const WHISPER_MODEL = 'whisper-large-v3-turbo';
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('iris_ai');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 

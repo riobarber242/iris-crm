@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
+import { featureBlocked } from '@/lib/plan-guard';
 
 const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
@@ -19,6 +20,9 @@ function parseTimeoutMinutes(raw: any): number | null {
 // El aislamiento por tenant_id aplica a todos los roles (un usuario nunca debe
 // ver usuarios de otro tenant).
 export async function GET() {
+  const blocked = await featureBlocked('operadores');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
@@ -45,6 +49,9 @@ export async function GET() {
 //  - admin: cualquier rol, en su tenant.
 //  - agent: solo operadores, en su propio tenant.
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('operadores');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 403 });

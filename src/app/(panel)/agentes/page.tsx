@@ -1,8 +1,12 @@
 export const dynamic = 'force-dynamic';
 
 import AgentsClient from '@/components/AgentsClient';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
-export default function AgentesPage() {
+export default async function AgentesPage() {
+  // En los planes de una sola cuenta compartida, esta sección no existe.
+  await requireFeaturePage('operadores');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div>

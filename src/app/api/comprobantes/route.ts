@@ -12,6 +12,7 @@ import { AUTO_MSG_FLAG_KEY, AUTO_MSG_TEMPLATE_KEY, AUTO_MSG_DEFAULT_TEMPLATE, re
 import { insertMessage } from '@/lib/messages';
 import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import type { SessionPayload } from '@/lib/session';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
 // null ("0 no se guarda como bono"); entero > 0 → ese valor.
@@ -30,6 +31,9 @@ function canEditComprobante(session: SessionPayload, resolvedBy: string | null |
 }
 
 export async function GET(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -130,6 +134,9 @@ function imageUrlFromMessage(content: string | null): string | null {
 //   saliente (role 'human'/'assistant', la mandamos)   → 'pago'   (bandeja Pagos)
 // Anti-duplicado: un mensaje genera UN solo comprobante (source_message_id único).
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -209,6 +216,9 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -498,6 +508,9 @@ export async function PATCH(request: Request) {
 // DELETE /api/comprobantes?id=<uuid> — borra un comprobante del tenant.
 // Scope estricto por tenant_id (no se puede borrar uno de otro tenant).
 export async function DELETE(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 

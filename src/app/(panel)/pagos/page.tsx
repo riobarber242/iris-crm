@@ -3,8 +3,11 @@ export const dynamic = 'force-dynamic';
 import { SectionCard } from '@/components/ui/SectionCard';
 import ComprobantesClient from '@/components/ComprobantesClient';
 import { getSessionAgent } from '@/lib/current-agent';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
 export default async function PagosPage() {
+  await requireFeaturePage('caja');
+
   const session = await getSessionAgent();
   // Solo admin/agent pueden cargar pagos manuales (premios pagados por afuera) y
   // eliminar comprobantes.

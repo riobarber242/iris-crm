@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { hashPassword } from '@/lib/auth';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // POST /api/agents/[id]/password — resetear contraseña de un agente
 //  - admin: cualquier usuario de SU tenant.
 //  - agent: solo operadores de su propio tenant.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const blocked = await featureBlocked('operadores');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 403 });

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
 import { testCasinoConnection } from '@/lib/casino/client';
 import { loadCasinoAccount, type CasinoCreds } from '@/lib/casino/account';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // POST /api/casino/test-connection — Etapa 2, PR 4.
 // Prueba real de credenciales: Authenticate → GetAgentBalance, vía proxy. Modos:
@@ -37,6 +38,9 @@ function deriveHost(skinDomain?: unknown, apiBaseUrl?: unknown): string | null {
 }
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('casino');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
 

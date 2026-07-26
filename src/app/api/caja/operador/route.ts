@@ -5,6 +5,7 @@ import { isCajaEnabled, isCasinoEnabled, cobrarSueldo, crearDescarga, cerrarTurn
 import { postInternalSystemMessage } from '@/lib/internal-chat';
 import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -59,6 +60,9 @@ function rangoHoyArgentina(): { startISO: string; endISO: string } {
 }
 
 export async function GET(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
 
@@ -346,6 +350,9 @@ export async function GET(request: Request) {
 // La verificación/rechazo del cierre vive en /api/caja/traspaso (agent u operador
 // destino). Todas exigen role==='operator' (defensa server-side + middleware).
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   if (session.role !== 'operator') {

@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { generateAmountFromImage } from '@/lib/groq';
 import { getSessionAgent } from '@/lib/current-agent';
+import { featureBlocked } from '@/lib/plan-guard';
 
 export async function GET(req: NextRequest) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 });
 

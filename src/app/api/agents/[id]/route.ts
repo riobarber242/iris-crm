@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
 import type { SessionPayload } from '@/lib/session';
+import { featureBlocked } from '@/lib/plan-guard';
 
 const AGENT_FIELDS = 'id, username, name, email, role, active, schedule_start, schedule_end, system_prompt, can_see_top_clients, can_see_campaigns, session_timeout_enabled, session_timeout_minutes, sueldo_diario, created_at';
 
@@ -31,6 +32,9 @@ async function denyIfNotOwnOperator(session: SessionPayload, id: string): Promis
 // session_timeout_enabled, session_timeout_minutes.
 // (username inmutable; password se cambia en /api/agents/[id]/password)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const blocked = await featureBlocked('operadores');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 
@@ -111,6 +115,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 // mensajes (messages.agent_id) quedan en null. El nombre del agente en cada
 // mensaje (agent_name) se conserva como snapshot histórico.
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const blocked = await featureBlocked('operadores');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
 

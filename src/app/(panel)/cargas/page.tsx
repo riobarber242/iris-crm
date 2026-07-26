@@ -3,8 +3,12 @@ export const dynamic = 'force-dynamic';
 import { SectionCard } from '@/components/ui/SectionCard';
 import ComprobantesClient from '@/components/ComprobantesClient';
 import { getSessionAgent } from '@/lib/current-agent';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
 export default async function CargasPage() {
+  // Caja no entra en todos los planes: fuera del plan, 404 real (no "es Premium").
+  await requireFeaturePage('caja');
+
   const session = await getSessionAgent();
   // Solo admin/agent pueden eliminar comprobantes.
   const canDelete = session?.role === 'admin' || session?.role === 'agent';

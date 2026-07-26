@@ -1,8 +1,11 @@
 export const dynamic = 'force-dynamic';
 
 import LeadsClient from '@/components/LeadsClient';
+import { requireFeaturePage } from '@/lib/plan-guard';
 
-export default function LeadsPage() {
+export default async function LeadsPage() {
+  await requireFeaturePage('top_clientes');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 

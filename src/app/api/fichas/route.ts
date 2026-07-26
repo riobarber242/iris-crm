@@ -10,6 +10,7 @@ import {
   traspasarEntreOperadores,
 } from '@/lib/caja';
 import type { SessionPayload } from '@/lib/session';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Caja de fichas — solo admin/agent. El operator NO entra (middleware lo frena
 // igual; acá va la defensa server-side, fuente de verdad de los permisos).
@@ -29,6 +30,9 @@ function isMissingCajaTable(err: any): boolean {
 // GET /api/fichas — resumen de caja: stock, billeteras por operador y últimos
 // movimientos. Reutilizado por la pantalla /fichas y por el dashboard.
 export async function GET() {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   if (!requireStaff(session)) return new NextResponse('No autorizado', { status: 403 });
@@ -172,6 +176,9 @@ export async function GET() {
 // POST /api/fichas — acciones de caja. Parte 2: recargar pozo + on/off del flag.
 // (Las acciones manuales/destructivas del agente se agregan en la Parte 4.)
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('caja');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   if (!requireStaff(session)) return new NextResponse('No autorizado', { status: 403 });

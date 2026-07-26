@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // Ranking de Top Clientes por monto de recargas verificadas, filtrable por
 // rango de fechas (sobre comprobantes.created_at). Scope por tenant.
 export async function GET(request: Request) {
+  const blocked = await featureBlocked('top_clientes');
+  if (blocked) return blocked;
+
   const session = await getSessionAgent();
   if (!session) return new NextResponse('No autenticado', { status: 401 });
   // Top Clientes: el operador solo con el flag habilitado (admin/agente siempre).

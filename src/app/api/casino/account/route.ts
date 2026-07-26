@@ -4,6 +4,7 @@ import { requireAgentOrAdmin } from '@/lib/current-agent';
 import { encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
 import { DEFAULT_CASINO_CREDENTIALS_TEMPLATE } from '@/lib/casino/credentials';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { featureBlocked } from '@/lib/plan-guard';
 
 // GET/POST /api/casino/account — Etapa 2, PR 5. Config self-service de la conexión
 // de casino del tenant. Las CREDENCIALES viven en casino_accounts (cifradas); el
@@ -73,6 +74,9 @@ function publicState(row: any, enabled: boolean) {
 }
 
 export async function GET() {
+  const blocked = await featureBlocked('casino');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
   const tid = session.tenant_id;
@@ -81,6 +85,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const blocked = await featureBlocked('casino');
+  if (blocked) return blocked;
+
   const session = await requireAgentOrAdmin();
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
   const tid = session.tenant_id;
