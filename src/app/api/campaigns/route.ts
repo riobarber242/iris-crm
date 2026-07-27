@@ -201,6 +201,21 @@ export async function GET() {
     const tally = new Map<string, number>();
     for (const r of recs ?? []) tally.set(r.campaign_id, (tally.get(r.campaign_id) ?? 0) + 1);
     for (const c of rampedActive) (c as any).ramp_used_today = tally.get(c.id) ?? 0;
+
+    // Progreso TOTAL acumulado (todos los días desde que arrancó), para el chip de
+    // la tarjeta. Misma fuente que el conteo de hoy → el número del día nunca puede
+    // ser mayor que el total, y avanza por mensaje (campaign_recipients se inserta
+    // en el momento) y no recién al cerrar la tanda como sent_count. Va con
+    // head:true: devuelve SOLO el count, sin traer una fila — son campañas de miles
+    // de destinatarios y esto lo pide el polling cada 10s.
+    await Promise.all(rampedActive.map(async (c: any) => {
+      const { count, error: pdErr } = await supabaseAdmin
+        .from('campaign_recipients')
+        .select('*', { count: 'exact', head: true })
+        .eq('campaign_id', c.id);
+      if (pdErr) console.warn('[campaigns GET] No se pudo contar el progreso total:', pdErr.message);
+      c.progress_done = count ?? null;
+    }));
   }
 
   // ── Desglose de motivos de fallo (para el panel) ─────────────────────────────

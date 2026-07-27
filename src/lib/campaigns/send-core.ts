@@ -363,6 +363,21 @@ export async function runCampaignBatch(
   if (sendLimit) contacts = contacts.slice(0, sendLimit);
   const totalTarget = contacts.length;
 
+  // Universo objetivo persistido (supabase-campaign-target-total.sql): es el
+  // denominador del progreso TOTAL en la tarjeta ("X de Y de toda la campaña").
+  // Se calcula acá y en ningún otro lado, así que sin guardarlo la UI no tiene con
+  // qué comparar. Se escribe en CADA tanda con el valor recalculado: si el filtro
+  // sumó contactos nuevos entre días, el total se corrige solo. Va ANTES del loop
+  // —no en el cierre de la tanda— para que sobreviva a un kill de Vercel a mitad de
+  // camino. Best-effort: si la columna no está migrada, seguimos igual (la UI cae a
+  // mostrar solo el acumulado).
+  if (Number(campaign.target_total) !== totalTarget) {
+    const { error: ttErr } = await supabaseAdmin
+      .from('campaigns').update({ target_total: totalTarget })
+      .eq('id', campaignId).eq('tenant_id', tenantId);
+    if (ttErr) console.warn('[campaign send] No se pudo guardar target_total (¿columna migrada?):', ttErr.message);
+  }
+
   // ── Reanudación: saltear a quienes YA se intentó en ESTA campaña ──────────────
   // campaign_recipients registra cada intento (éxito o fallo, ver más abajo). Tras un
   // corte por presupuesto de tiempo, filtramos esos: no reenviamos y el avance es

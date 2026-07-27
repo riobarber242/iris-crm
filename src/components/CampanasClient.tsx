@@ -34,6 +34,13 @@ type Campaign = {
   ramp_schedule: number[] | null;
   ramp_anchor: string | null;
   ramp_used_today?: number | null; // enviados hoy (día AR) de esta campaña; lo calcula el GET solo para ramped activas
+  // Progreso TOTAL acumulado: mensajes ya salidos sumando TODOS los días, sobre el
+  // universo programado. progress_done lo cuenta el GET (campaign_recipients) para
+  // las ramped activas; target_total lo persiste cada tanda de envío
+  // (supabase-campaign-target-total.sql) y queda null en las campañas anteriores a
+  // esa migración hasta que corran una tanda nueva.
+  progress_done?: number | null;
+  target_total: number | null;
   recipient_ids: string[] | null;
   exclude_campaign_ids: string[] | null;
   // Config de ritmo (para precargar el wizard al editar/relanzar). Vienen del select('*').
@@ -1865,6 +1872,47 @@ export default function CampanasClient() {
               <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, ...chipColor, borderRadius: '8px', padding: '3px 10px' }}>
                 📆 Cronograma · semana {r.week} · {used}/{r.limit} hoy
               </span>
+            );
+          })()}
+
+          {/* Progreso TOTAL de la campaña: lo que lleva enviado sumando TODOS los
+              días desde que arrancó, sobre el universo programado. El chip de arriba
+              contesta "¿cuánto va hoy?"; este contesta "¿cuánto falta para que
+              termine?", que con un cronograma de semanas es lo que no se podía ver.
+              Se refresca solo con el polling de 10s.
+
+              Sin target_total (campañas anteriores a la migración, hasta su próxima
+              tanda) mostramos solo el acumulado: mejor un dato parcial que un
+              denominador inventado. */}
+          {c.status !== 'completada' && currentRampInfo(c) && (() => {
+            const done = c.progress_done ?? c.sent_count ?? 0;
+            const total = c.target_total ?? null;
+            if (!total || total <= 0) {
+              return (
+                <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, color: '#5b7a00', background: '#f4ffd1', borderRadius: '8px', padding: '3px 10px' }}>
+                  📊 Total · {done.toLocaleString('es-AR')} enviados
+                </span>
+              );
+            }
+            const pct = Math.min(100, Math.round((done / total) * 100));
+            const faltan = Math.max(0, total - done);
+            // Estimación de fin con lo que FALTA y el cronograma vigente: se corrige
+            // sola día a día (misma función que el preview del asistente).
+            const est = Array.isArray(c.ramp_schedule) && c.ramp_schedule.length > 0 && c.ramp_anchor
+              ? estimateFinish(faltan, c.ramp_schedule, mondayOf(new Date(c.ramp_anchor + 'T00:00:00')), new Date())
+              : null;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                <span style={{ alignSelf: 'flex-start', fontSize: '11px', fontWeight: 700, color: '#5b7a00', background: '#f4ffd1', borderRadius: '8px', padding: '3px 10px' }}>
+                  📊 Total · {done.toLocaleString('es-AR')}/{total.toLocaleString('es-AR')} · {pct}%
+                </span>
+                <div style={{ height: '8px', background: '#eee', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: '#C8FF00', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                </div>
+                <p style={{ fontSize: '11px', color: '#999', margin: 0 }}>
+                  Faltan {faltan.toLocaleString('es-AR')}{est ? ` · estimado de fin ~${est}` : ''}
+                </p>
+              </div>
             );
           })()}
 

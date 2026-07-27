@@ -1,0 +1,13 @@
+-- Total de destinatarios programados de una campaña. Correr en Supabase → SQL editor.
+-- Este proyecto NO tiene la RPC exec_sql, así que la DDL se ejecuta a mano.
+--
+-- Por qué hace falta: el universo de la campaña (contactos que matchean el filtro,
+-- menos exclusiones, acotado por send_limit) se resolvía SOLO en memoria durante cada
+-- tanda de envío y no quedaba en ningún lado. Sin ese número no hay denominador para
+-- el progreso total ("X de Y de toda la campaña") en la tarjeta: solo se sabía cuántos
+-- se mandaron, nunca sobre cuántos.
+--
+-- Lo escribe runCampaignBatch en cada tanda con el universo recalculado, así que se
+-- mantiene al día si el filtro suma contactos nuevos. Las campañas viejas lo tienen
+-- en null hasta su próxima tanda; la UI muestra solo el acumulado mientras tanto.
+alter table campaigns add column if not exists target_total integer;
