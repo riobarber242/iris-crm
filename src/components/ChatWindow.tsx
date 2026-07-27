@@ -265,6 +265,468 @@ function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// ─── Lista de burbujas (memoizada) ───────────────────────────────────────────
+// Vive FUERA de ChatWindow y va envuelta en React.memo. Abrir o cerrar el panel ⚡
+// de respuestas rápidas, el emoji picker o el menú "+" es estado del PADRE, y cada
+// uno de esos toggles re-renderizaba las N burbujas del hilo: el useMemo de `rows`
+// ahorra el parse/regex por fila, pero no la creación ni el diff de los elementos.
+// En una conversación larga eso bloqueaba el hilo principal ~3s — elegías una
+// respuesta rápida, el texto aparecía en el composer y el botón "Enviar" no
+// respondía hasta que terminaba la reconciliación. Con el memo, un toggle de panel
+// no toca la lista: ninguna de sus props cambió.
+//
+// Para que el memo NO se rompa, todo lo que baja acá tiene que ser estable entre
+// renders: `rows` está memoizado por `messages`, los estados son primitivos (o
+// Set/ref con identidad propia) y los handlers viajan en `h`, un objeto construido
+// UNA sola vez (ver `listHandlers` en el padre). Si sumás una prop nueva, que sea
+// de ese mismo tipo: un objeto o una función literal por render devuelve el bug.
+type Row = {
+  m: Message;
+  i: number;
+  media: MediaContent | null;
+  event: { text: string | null; payload?: string } | null;
+  body: ReturnType<typeof classifyBody>;
+  rel: string;
+  fullDate?: string;
+  text: React.ReactNode;
+};
+
+// Acciones de la lista. El padre las pasa envueltas en wrappers de identidad fija
+// (leen la versión fresca desde un ref), así agregar estado al padre nunca rompe
+// el memo de acá.
+type ListHandlers = {
+  setEditingContent: (v: string) => void;
+  startEdit:      (m: Message) => void;
+  cancelEdit:     () => void;
+  saveEdit:       () => void;
+  deleteMessage:  (id: string) => void;
+  retrySend:      (m: Message) => void;
+  sendToVerify:   (m: Message) => void;
+  sendReaction:   (m: Message, emoji: string) => void;
+  openReactBar:   (id: string, el: HTMLElement | null) => void;
+  setReactBarFor: (id: string | null) => void;
+  startLongPress: (id: string, el: HTMLElement | null) => void;
+  cancelLongPress: () => void;
+  onMediaLoad:    () => void;
+  openLightbox:   (url: string) => void;
+  openTemplates:  () => void;
+};
+
+interface MessageListProps {
+  rows: Row[];
+  cajaEnabled: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  editingId: string | null;
+  editingContent: string;
+  savingEdit: boolean;
+  deletingMessageId: string | null;
+  verifSentIds: Set<string>;
+  verifSendingId: string | null;
+  reactBarFor: string | null;
+  reactBarDir: 'up' | 'down';
+  reactBarLeaveTimer: React.RefObject<ReturnType<typeof setTimeout> | null>;
+  h: ListHandlers;
+}
+
+const MessageList = React.memo(function MessageList({
+  rows, cajaEnabled, canEdit, canDelete, editingId, editingContent, savingEdit,
+  deletingMessageId, verifSentIds, verifSendingId, reactBarFor, reactBarDir,
+  reactBarLeaveTimer, h,
+}: MessageListProps) {
+  return (
+    <>
+    {rows.map(({ m, i, media, body, rel, fullDate, text, event }) => {
+      // Evento de sistema (p.ej. click de botón de campaña): chip centrado, no
+      // burbuja. Cae en su lugar cronológico dentro del hilo (por created_at).
+      if (event) {
+        return (
+          <div key={m.id ?? i} style={{ alignSelf: 'center', maxWidth: '85%', margin: '2px 0' }}>
+            <div style={{
+              background: '#EDEDED', color: '#555', borderRadius: '12px',
+              padding: '5px 12px', fontSize: '12px', fontWeight: 600, textAlign: 'center',
+            }}>
+              ✅ Apretó: {event.text || 'el botón'}
+            </div>
+          </div>
+        );
+      }
+      const isBot   = m.role === 'assistant';
+      const isHuman = m.role === 'human';
+      // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.
+      const roleLabel = isBot ? 'Iris 🤖' : 'Cliente';
+      // Firma del operador/agente debajo del mensaje manual (ej: "jessica · operador").
+      // Si el mensaje no tiene autor guardado (mensajes viejos), no se muestra
+      // firma (nada de "null" ni un genérico raro).
+      const humanSignature = isHuman && m.agent_name
+        ? `${m.agent_name}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
+        : '';
+      // `media`, `body`, `rel`, `fullDate`, `text` vienen precomputados (useMemo).
+      // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
+      const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
+      // Motivo por el que Meta rechazó el envío. null en los fallos viejos
+      // (anteriores a las columnas error_*) → se muestra el aviso genérico.
+      const motivoFallo = m.status === 'failed'
+        ? motivoDeFallo(m.error_code, m.error_title, m.error_message)
+        : null;
+      // "Enviar a verificar": solo en mensajes con imagen ya guardados (con id).
+      //   entrante (cliente, role 'user')  → Cargas
+      //   saliente del staff (role 'human', operador/agente) → Pagos
+      // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
+      // un pago lo origina una imagen que mandó una persona del equipo.
+      // pending/failed no tienen url: no aplican el estilo de burbuja de media.
+      const hasImage   = (media?._type === 'image' && !!media.url) || body.kind === 'image';
+      const isPdfDoc   = media?._type === 'document' && !!media.url && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
+      const canVerify  = cajaEnabled && (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
+      const verifSent  = !!m.id && verifSentIds.has(m.id);
+      const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
+      return (
+        <div
+          key={m.id ?? i}
+          className="chat-msg"
+          onMouseEnter={(e) => {
+            if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+            if (reactable) h.openReactBar(m.id!, e.currentTarget);
+          }}
+          onMouseLeave={() => {
+            if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+            reactBarLeaveTimer.current = setTimeout(() => h.setReactBarFor(null), 300);
+          }}
+          onTouchStart={(e) => { if (reactable) h.startLongPress(m.id!, e.currentTarget); }}
+          onTouchEnd={h.cancelLongPress}
+          onTouchMove={h.cancelLongPress}
+          style={{
+            position: 'relative',
+            maxWidth: '78%',
+            // Chat invertido: cliente (user) a la izquierda; bot y operador
+            // (human) a la derecha. La colita de la burbuja sigue al lado.
+            alignSelf: isBot || isHuman ? 'flex-end' : 'flex-start',
+            background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
+            color: isBot ? '#333' : isHuman ? '#000' : '#fff',
+            borderRadius: isBot || isHuman ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+            padding: '10px 14px',
+            wordBreak: 'break-word',
+          }}
+        >
+          {!isHuman && (
+            <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
+              {roleLabel}
+            </p>
+          )}
+
+          {/* Respuesta citada (reply-to): a qué mensaje está respondiendo el
+              cliente. Solo aparece en entrantes (burbuja oscura), por eso el
+              estilo claro-sobre-oscuro. */}
+          {(m.reply_to_preview || m.reply_to_wamid) && (
+            <div style={{
+              borderLeft: '3px solid rgba(255,255,255,0.45)',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '6px', padding: '4px 8px', marginBottom: '6px',
+              fontSize: '12px', maxWidth: '100%', overflow: 'hidden',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              <span style={{ opacity: 0.7 }}>↩ Respondiendo a:</span> {m.reply_to_preview || 'un mensaje'}
+            </div>
+          )}
+
+          {editingId === m.id ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '220px' }}>
+              <textarea
+                value={editingContent}
+                onChange={(e) => h.setEditingContent(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') h.cancelEdit();
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) h.saveEdit();
+                }}
+                autoFocus
+                rows={3}
+                style={{ width: '100%', resize: 'vertical', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.25)', padding: '6px 8px', fontSize: '14px', fontFamily: 'inherit', lineHeight: 1.4, background: '#fff', color: '#111' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={h.cancelEdit} disabled={savingEdit} style={{ background: 'rgba(0,0,0,0.12)', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', color: 'inherit' }}>Cancelar</button>
+                <button type="button" onClick={h.saveEdit} disabled={savingEdit} style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 800, cursor: savingEdit ? 'wait' : 'pointer' }}>{savingEdit ? 'Guardando…' : 'Guardar'}</button>
+              </div>
+            </div>
+          ) : media?.pending ? (
+            <span style={{ fontSize: '14px', opacity: 0.85 }}>
+              {MEDIA_LABEL[media._type] ?? '📎 Archivo'} · procesando…
+            </span>
+          ) : media?.failed ? (
+            <span style={{ fontSize: '14px', opacity: 0.7, fontStyle: 'italic' }}>
+              {MEDIA_LABEL[media._type] ?? '📎 Archivo'} no disponible
+            </span>
+          ) : media?._type === 'image' ? (
+            <div>
+              <img
+                // Miniatura estática (.thumb.webp); el full-res se ve al hacer
+                // click (lightbox). onError cae al original si falta el thumb.
+                src={thumbUrl(media.url, 480) ?? media.url}
+                alt={media.caption || 'imagen'}
+                loading="lazy"
+                style={{
+                  maxWidth: '280px', maxHeight: '320px', width: '100%',
+                  objectFit: 'contain', borderRadius: '10px',
+                  display: 'block', cursor: 'pointer', background: '#00000010',
+                }}
+                onLoad={h.onMediaLoad}
+                onError={fallbackToOriginal(media.url)}
+                onClick={() => h.openLightbox(media.url)}
+              />
+              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+            </div>
+          ) : media?._type === 'audio' ? (
+            <audio
+              controls
+              src={media.url}
+              style={{ width: '100%', minWidth: '200px', marginTop: '2px' }}
+            />
+          ) : media?._type === 'sticker' ? (
+            <img
+              src={media.url}
+              alt="sticker"
+              style={{
+                maxWidth: '120px', width: '100%', objectFit: 'contain',
+                display: 'block', background: 'transparent', cursor: 'pointer',
+              }}
+              onLoad={h.onMediaLoad}
+              onClick={() => h.openLightbox(media.url)}
+            />
+          ) : media?._type === 'document' ? (
+            (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url)) ? (
+              <div>
+                <PdfPreview url={media.url} filename={media.filename} />
+                {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+              </div>
+            ) : (
+              <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
+            )
+          ) : media?._type === 'video' ? (
+            <div>
+              <video
+                controls
+                src={media.url}
+                style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', borderRadius: '10px', display: 'block', background: '#000' }}
+                onLoadedData={h.onMediaLoad}
+              />
+              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+            </div>
+          ) : media?._type === 'location' ? (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${media.lat},${media.lng}`}
+              target="_blank" rel="noreferrer"
+              style={{ display: 'flex', flexDirection: 'column', gap: '2px', textDecoration: 'none', color: 'inherit' }}
+            >
+              <span style={{ fontSize: '14px', fontWeight: 700 }}>📍 {media.name || 'Ubicación compartida'}</span>
+              {media.address && <span style={{ fontSize: '12px', opacity: 0.75 }}>{media.address}</span>}
+              <span style={{ fontSize: '12px', textDecoration: 'underline', opacity: 0.9, marginTop: '2px' }}>Ver en Google Maps ↗</span>
+            </a>
+          ) : media?._type === 'contacts' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(media.contacts ?? []).map((c, ci) => (
+                <div key={ci} style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '14px', fontWeight: 700 }}>👤 {c.name || 'Contacto'}</span>
+                  {c.phone && <a href={`tel:${c.phone}`} style={{ fontSize: '13px', textDecoration: 'underline', color: 'inherit', opacity: 0.9 }}>{c.phone}</a>}
+                </div>
+              ))}
+            </div>
+          ) : (() => {
+            const b = body;
+            if (b.kind === 'image' && b.url) {
+              const url = b.url;
+              return (
+                <img
+                  // Miniatura estática (.thumb.webp); el full-res se ve al hacer
+                  // click. onError cae al original si falta el thumb.
+                  src={thumbUrl(url, 480) ?? url}
+                  alt="imagen"
+                  loading="lazy"
+                  style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
+                  onLoad={h.onMediaLoad}
+                  onError={fallbackToOriginal(url)}
+                  onClick={() => h.openLightbox(url)}
+                />
+              );
+            }
+            if (b.kind === 'image-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🖼️ Imagen</span>;
+            if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
+            if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
+            if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
+            if (b.kind === 'unsupported') return <span style={{ fontSize: '14px', opacity: 0.85, fontStyle: 'italic' }}>⚠️ Mensaje no compatible (encuesta, mensaje efímero u otro tipo que WhatsApp no permite recibir por API)</span>;
+            return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{text}</p>;
+          })()}
+
+          {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →
+              Cargas; saliente → Pagos. Si ya se envió, queda marcado. */}
+          {canVerify && (
+            <div style={{ marginTop: '8px' }}>
+              {verifSent ? (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                  fontSize: '12px', fontWeight: 700,
+                  color: isBot || isHuman ? '#3a7a00' : '#C8FF00',
+                  background: isBot || isHuman ? '#eaffd0' : '#2a2a2a',
+                  borderRadius: '8px', padding: '5px 10px',
+                }}>
+                  ✓ En verificación · {verifDest}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => h.sendToVerify(m)}
+                  disabled={verifSendingId === m.id}
+                  title={`Mandar este comprobante a la bandeja de ${verifDest}`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    fontSize: '12px', fontWeight: 800, cursor: verifSendingId === m.id ? 'wait' : 'pointer',
+                    color: '#000', background: '#C8FF00',
+                    border: 'none', borderRadius: '8px', padding: '6px 12px',
+                    boxShadow: '0 2px 0 #8ab000',
+                  }}
+                >
+                  {verifSendingId === m.id ? 'Enviando…' : `📤 Enviar a verificar`}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Hora + ticks (ticks solo en salientes) */}
+          <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-end' : 'flex-start' }}
+             title={fullDate}>
+            {m.created_at && <span>{rel}</span>}
+            {(isBot || isHuman) && <Ticks status={m.status} motivo={motivoFallo} />}
+            {/* Acciones de mensaje fallido: reintentar texto libre o usar plantilla. */}
+            {isHuman && m.status === 'failed' && (
+              <>
+                {!media && (
+                  <button
+                    type="button"
+                    onClick={() => h.retrySend(m)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E53935', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+                  >
+                    Reintentar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => h.openTemplates()}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1a7a3a', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+                >
+                  Usar plantilla
+                </button>
+              </>
+            )}
+            {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
+                texto plano (no media). Oculto mientras se edita esta burbuja. */}
+            {SHOW_EDIT_DELETE_BUTTONS && canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && body.kind === 'text' && (
+              <button
+                type="button"
+                onClick={() => h.startEdit(m)}
+                title="Editar mensaje (solo en el CRM)"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '12px', lineHeight: 1, padding: 0 }}
+              >
+                ✏️
+              </button>
+            )}
+            {/* Eliminar mensaje: solo staff (admin/agent) y solo en mensajes
+                del equipo (human/internal), no en los entrantes del cliente. */}
+            {SHOW_EDIT_DELETE_BUTTONS && canDelete && (m.role === 'human' || m.role === 'internal') && m.id && (
+              <button
+                type="button"
+                onClick={() => h.deleteMessage(m.id!)}
+                disabled={deletingMessageId === m.id}
+                title="Eliminar mensaje"
+                style={{ background: 'none', border: 'none', cursor: deletingMessageId === m.id ? 'not-allowed' : 'pointer', color: '#c0392b', fontSize: '12px', lineHeight: 1, padding: 0 }}
+              >
+                🗑️
+              </button>
+            )}
+          </p>
+
+          {/* Motivo del rechazo de Meta, en texto. Antes el operador veía
+              "⚠ No entregado" y no tenía forma de saber por qué (el detalle
+              moría en los logs de Vercel). Solo en salientes fallidos y solo
+              si Meta mandó un motivo. */}
+          {(isBot || isHuman) && m.status === 'failed' && motivoFallo && (
+            <span style={{
+              display: 'block', margin: '4px 0 0 0', fontSize: '11px', lineHeight: 1.45,
+              color: '#C62828', background: '#FDECEA', border: '1px solid #F5C6C2',
+              borderRadius: '8px', padding: '6px 9px', maxWidth: '340px',
+              textAlign: 'left', whiteSpace: 'normal',
+            }}>
+              {motivoFallo}
+            </span>
+          )}
+
+          {/* Firma de quién envió el mensaje manual (operador/agente/admin),
+              con su avatar (foto o iniciales). Solo si hay autor guardado;
+              los mensajes viejos sin autor no la muestran. */}
+          {isHuman && humanSignature && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px', margin: '4px 0 0 0' }}>
+              <Avatar url={m.agent_avatar} name={m.agent_name ?? ''} size={16} />
+              <span style={{ fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
+                {humanSignature}
+              </span>
+            </span>
+          )}
+
+          {/* Reacción aplicada */}
+          {m.reaction && (
+            <span style={{
+              position: 'absolute', bottom: '-9px', left: '8px',
+              background: '#fff', borderRadius: '999px', padding: '1px 5px',
+              fontSize: '13px', lineHeight: 1, boxShadow: '0 1px 4px rgba(0,0,0,0.22)',
+            }}>
+              {m.reaction}
+            </span>
+          )}
+
+          {/* Barra de reacciones (hover desktop / long-press mobile).
+              Wrapper exterior TRANSPARENTE: es la zona de hover y puentea el
+              gap entre la burbuja y el pill (con padding), para que el mouse no
+              cruce "aire muerto" —ahí se colaba el hover del mensaje vecino y la
+              barra se escapaba—. `reactBarDir` decide arriba/abajo: hacia abajo
+              cuando el mensaje está pegado al borde superior (si no, top:-44px
+              quedaría clipeado por el overflow de la lista). */}
+          {reactable && reactBarFor === m.id && (
+            <div
+              onMouseEnter={() => {
+                if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
+                h.setReactBarFor(m.id!);
+              }}
+              onMouseLeave={() => h.setReactBarFor(null)}
+              style={{
+                position: 'absolute', left: 0, zIndex: 5,
+                ...(reactBarDir === 'down'
+                  ? { top: '100%', paddingTop: '12px' }
+                  : { bottom: '100%', paddingBottom: '10px' }),
+              }}
+            >
+              <div style={{
+                display: 'flex', gap: '2px', width: 'fit-content',
+                background: '#fff', borderRadius: '999px', padding: '4px 6px',
+                boxShadow: '0 3px 12px rgba(0,0,0,0.18)',
+              }}>
+                {REACTION_EMOJIS.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => h.sendReaction(m, e)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '2px 4px' }}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    })}
+    </>
+  );
+});
+
+
 // Reemplaza el mensaje optimista `temp` por el guardado y deduplica por id.
 // Evita el doble mensaje cuando el evento realtime de Supabase ya appendeó la
 // misma fila antes de que volviera la respuesta del POST (race condition).
@@ -1014,6 +1476,46 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
       })),
     [messages]);
 
+  // Handlers de la lista con identidad FIJA. Las funciones de arriba se recrean en
+  // cada render (cierran sobre estado), así que pasarlas derecho a <MessageList/>
+  // rompería su memo en cada render del padre —justo lo que estamos evitando—. El
+  // ref guarda siempre las últimas y los wrappers, creados una sola vez, delegan en
+  // ellas: la lista recibe la misma referencia toda la vida del componente y las
+  // acciones igual corren contra el estado fresco. Envolver cada función en
+  // useCallback sería equivalente, pero arrastraría a media pantalla (sendText,
+  // handleSendImage…) a la cadena de dependencias.
+  const listFnsRef = useRef({
+    setEditingContent, startEdit, cancelEdit, saveEdit, handleDeleteMessage,
+    retrySend, sendToVerify, sendReaction, openReactBar, setReactBarFor,
+    startLongPress, cancelLongPress, handleMediaLoad, setLightboxUrl, setShowTemplates,
+  });
+  // Se refresca DESPUÉS de cada commit (no durante el render): para cuando el
+  // usuario puede tocar algo, el ref ya apunta a los closures de ese commit.
+  useEffect(() => {
+    listFnsRef.current = {
+      setEditingContent, startEdit, cancelEdit, saveEdit, handleDeleteMessage,
+      retrySend, sendToVerify, sendReaction, openReactBar, setReactBarFor,
+      startLongPress, cancelLongPress, handleMediaLoad, setLightboxUrl, setShowTemplates,
+    };
+  });
+  const listHandlers = useMemo<ListHandlers>(() => ({
+    setEditingContent: (v)      => listFnsRef.current.setEditingContent(v),
+    startEdit:         (m)      => listFnsRef.current.startEdit(m),
+    cancelEdit:        ()       => listFnsRef.current.cancelEdit(),
+    saveEdit:          ()       => listFnsRef.current.saveEdit(),
+    deleteMessage:     (id)     => listFnsRef.current.handleDeleteMessage(id),
+    retrySend:         (m)      => listFnsRef.current.retrySend(m),
+    sendToVerify:      (m)      => listFnsRef.current.sendToVerify(m),
+    sendReaction:      (m, e)   => listFnsRef.current.sendReaction(m, e),
+    openReactBar:      (id, el) => listFnsRef.current.openReactBar(id, el),
+    setReactBarFor:    (id)     => listFnsRef.current.setReactBarFor(id),
+    startLongPress:    (id, el) => listFnsRef.current.startLongPress(id, el),
+    cancelLongPress:   ()       => listFnsRef.current.cancelLongPress(),
+    onMediaLoad:       ()       => listFnsRef.current.handleMediaLoad(),
+    openLightbox:      (url)    => listFnsRef.current.setLightboxUrl(url),
+    openTemplates:     ()       => listFnsRef.current.setShowTemplates(true),
+  }), []);
+
   return (
     <div style={{ background: '#FFFFFF', borderRadius: '20px', padding: '12px', boxShadow: '0 2px 16px rgba(0,0,0,0.07)', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
 
@@ -1031,392 +1533,22 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
             <button type="button" onClick={() => fetchMessages()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#B71C1C', fontWeight: 700, textDecoration: 'underline', fontSize: '13px', padding: 0 }}>Reintentar</button>
           </div>
         )}
-        {rows.map(({ m, i, media, body, rel, fullDate, text, event }) => {
-          // Evento de sistema (p.ej. click de botón de campaña): chip centrado, no
-          // burbuja. Cae en su lugar cronológico dentro del hilo (por created_at).
-          if (event) {
-            return (
-              <div key={m.id ?? i} style={{ alignSelf: 'center', maxWidth: '85%', margin: '2px 0' }}>
-                <div style={{
-                  background: '#EDEDED', color: '#555', borderRadius: '12px',
-                  padding: '5px 12px', fontSize: '12px', fontWeight: 600, textAlign: 'center',
-                }}>
-                  ✅ Apretó: {event.text || 'el botón'}
-                </div>
-              </div>
-            );
-          }
-          const isBot   = m.role === 'assistant';
-          const isHuman = m.role === 'human';
-          // Etiqueta superior solo para bot y cliente; el humano lleva firma abajo.
-          const roleLabel = isBot ? 'Iris 🤖' : 'Cliente';
-          // Firma del operador/agente debajo del mensaje manual (ej: "jessica · operador").
-          // Si el mensaje no tiene autor guardado (mensajes viejos), no se muestra
-          // firma (nada de "null" ni un genérico raro).
-          const humanSignature = isHuman && m.agent_name
-            ? `${m.agent_name}${m.agent_role ? ` · ${ROLE_LABEL[m.agent_role] ?? m.agent_role}` : ''}`
-            : '';
-          // `media`, `body`, `rel`, `fullDate`, `text` vienen precomputados (useMemo).
-          // Solo se puede reaccionar a mensajes del cliente (tienen wamid).
-          const reactable = m.role === 'user' && !!m.id && !!m.whatsapp_message_id;
-          // Motivo por el que Meta rechazó el envío. null en los fallos viejos
-          // (anteriores a las columnas error_*) → se muestra el aviso genérico.
-          const motivoFallo = m.status === 'failed'
-            ? motivoDeFallo(m.error_code, m.error_title, m.error_message)
-            : null;
-          // "Enviar a verificar": solo en mensajes con imagen ya guardados (con id).
-          //   entrante (cliente, role 'user')  → Cargas
-          //   saliente del staff (role 'human', operador/agente) → Pagos
-          // El bot (role 'assistant') y las promos sin imagen NO llevan botón:
-          // un pago lo origina una imagen que mandó una persona del equipo.
-          // pending/failed no tienen url: no aplican el estilo de burbuja de media.
-          const hasImage   = (media?._type === 'image' && !!media.url) || body.kind === 'image';
-          const isPdfDoc   = media?._type === 'document' && !!media.url && (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url));
-          const canVerify  = cajaEnabled && (hasImage || isPdfDoc) && !!m.id && (m.role === 'user' || m.role === 'human');
-          const verifSent  = !!m.id && verifSentIds.has(m.id);
-          const verifDest  = m.role === 'user' ? 'Cargas' : 'Pagos';
-          return (
-            <div
-              key={m.id ?? i}
-              className="chat-msg"
-              onMouseEnter={(e) => {
-                if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
-                if (reactable) openReactBar(m.id!, e.currentTarget);
-              }}
-              onMouseLeave={() => {
-                if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
-                reactBarLeaveTimer.current = setTimeout(() => setReactBarFor(null), 300);
-              }}
-              onTouchStart={(e) => { if (reactable) startLongPress(m.id!, e.currentTarget); }}
-              onTouchEnd={cancelLongPress}
-              onTouchMove={cancelLongPress}
-              style={{
-                position: 'relative',
-                maxWidth: '78%',
-                // Chat invertido: cliente (user) a la izquierda; bot y operador
-                // (human) a la derecha. La colita de la burbuja sigue al lado.
-                alignSelf: isBot || isHuman ? 'flex-end' : 'flex-start',
-                background: isBot ? '#F0F0F0' : isHuman ? '#C8FF00' : '#1a1a1a',
-                color: isBot ? '#333' : isHuman ? '#000' : '#fff',
-                borderRadius: isBot || isHuman ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
-                padding: '10px 14px',
-                wordBreak: 'break-word',
-              }}
-            >
-              {!isHuman && (
-                <p style={{ fontSize: '11px', fontWeight: 600, opacity: 0.6, margin: '0 0 4px 0' }}>
-                  {roleLabel}
-                </p>
-              )}
-
-              {/* Respuesta citada (reply-to): a qué mensaje está respondiendo el
-                  cliente. Solo aparece en entrantes (burbuja oscura), por eso el
-                  estilo claro-sobre-oscuro. */}
-              {(m.reply_to_preview || m.reply_to_wamid) && (
-                <div style={{
-                  borderLeft: '3px solid rgba(255,255,255,0.45)',
-                  background: 'rgba(255,255,255,0.1)',
-                  borderRadius: '6px', padding: '4px 8px', marginBottom: '6px',
-                  fontSize: '12px', maxWidth: '100%', overflow: 'hidden',
-                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  <span style={{ opacity: 0.7 }}>↩ Respondiendo a:</span> {m.reply_to_preview || 'un mensaje'}
-                </div>
-              )}
-
-              {editingId === m.id ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '220px' }}>
-                  <textarea
-                    value={editingContent}
-                    onChange={(e) => setEditingContent(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') cancelEdit();
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveEdit();
-                    }}
-                    autoFocus
-                    rows={3}
-                    style={{ width: '100%', resize: 'vertical', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.25)', padding: '6px 8px', fontSize: '14px', fontFamily: 'inherit', lineHeight: 1.4, background: '#fff', color: '#111' }}
-                  />
-                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                    <button type="button" onClick={cancelEdit} disabled={savingEdit} style={{ background: 'rgba(0,0,0,0.12)', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', color: 'inherit' }}>Cancelar</button>
-                    <button type="button" onClick={saveEdit} disabled={savingEdit} style={{ background: '#1a1a1a', color: '#C8FF00', border: 'none', borderRadius: '8px', padding: '5px 12px', fontSize: '12px', fontWeight: 800, cursor: savingEdit ? 'wait' : 'pointer' }}>{savingEdit ? 'Guardando…' : 'Guardar'}</button>
-                  </div>
-                </div>
-              ) : media?.pending ? (
-                <span style={{ fontSize: '14px', opacity: 0.85 }}>
-                  {MEDIA_LABEL[media._type] ?? '📎 Archivo'} · procesando…
-                </span>
-              ) : media?.failed ? (
-                <span style={{ fontSize: '14px', opacity: 0.7, fontStyle: 'italic' }}>
-                  {MEDIA_LABEL[media._type] ?? '📎 Archivo'} no disponible
-                </span>
-              ) : media?._type === 'image' ? (
-                <div>
-                  <img
-                    // Miniatura estática (.thumb.webp); el full-res se ve al hacer
-                    // click (lightbox). onError cae al original si falta el thumb.
-                    src={thumbUrl(media.url, 480) ?? media.url}
-                    alt={media.caption || 'imagen'}
-                    loading="lazy"
-                    style={{
-                      maxWidth: '280px', maxHeight: '320px', width: '100%',
-                      objectFit: 'contain', borderRadius: '10px',
-                      display: 'block', cursor: 'pointer', background: '#00000010',
-                    }}
-                    onLoad={handleMediaLoad}
-                    onError={fallbackToOriginal(media.url)}
-                    onClick={() => setLightboxUrl(media.url)}
-                  />
-                  {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
-                </div>
-              ) : media?._type === 'audio' ? (
-                <audio
-                  controls
-                  src={media.url}
-                  style={{ width: '100%', minWidth: '200px', marginTop: '2px' }}
-                />
-              ) : media?._type === 'sticker' ? (
-                <img
-                  src={media.url}
-                  alt="sticker"
-                  style={{
-                    maxWidth: '120px', width: '100%', objectFit: 'contain',
-                    display: 'block', background: 'transparent', cursor: 'pointer',
-                  }}
-                  onLoad={handleMediaLoad}
-                  onClick={() => setLightboxUrl(media.url)}
-                />
-              ) : media?._type === 'document' ? (
-                (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url)) ? (
-                  <div>
-                    <PdfPreview url={media.url} filename={media.filename} />
-                    {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
-                  </div>
-                ) : (
-                  <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
-                )
-              ) : media?._type === 'video' ? (
-                <div>
-                  <video
-                    controls
-                    src={media.url}
-                    style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', borderRadius: '10px', display: 'block', background: '#000' }}
-                    onLoadedData={handleMediaLoad}
-                  />
-                  {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
-                </div>
-              ) : media?._type === 'location' ? (
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${media.lat},${media.lng}`}
-                  target="_blank" rel="noreferrer"
-                  style={{ display: 'flex', flexDirection: 'column', gap: '2px', textDecoration: 'none', color: 'inherit' }}
-                >
-                  <span style={{ fontSize: '14px', fontWeight: 700 }}>📍 {media.name || 'Ubicación compartida'}</span>
-                  {media.address && <span style={{ fontSize: '12px', opacity: 0.75 }}>{media.address}</span>}
-                  <span style={{ fontSize: '12px', textDecoration: 'underline', opacity: 0.9, marginTop: '2px' }}>Ver en Google Maps ↗</span>
-                </a>
-              ) : media?._type === 'contacts' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {(media.contacts ?? []).map((c, ci) => (
-                    <div key={ci} style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 700 }}>👤 {c.name || 'Contacto'}</span>
-                      {c.phone && <a href={`tel:${c.phone}`} style={{ fontSize: '13px', textDecoration: 'underline', color: 'inherit', opacity: 0.9 }}>{c.phone}</a>}
-                    </div>
-                  ))}
-                </div>
-              ) : (() => {
-                const b = body;
-                if (b.kind === 'image' && b.url) {
-                  const url = b.url;
-                  return (
-                    <img
-                      // Miniatura estática (.thumb.webp); el full-res se ve al hacer
-                      // click. onError cae al original si falta el thumb.
-                      src={thumbUrl(url, 480) ?? url}
-                      alt="imagen"
-                      loading="lazy"
-                      style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', objectFit: 'contain', borderRadius: '10px', display: 'block', cursor: 'pointer', background: '#00000010' }}
-                      onLoad={handleMediaLoad}
-                      onError={fallbackToOriginal(url)}
-                      onClick={() => setLightboxUrl(url)}
-                    />
-                  );
-                }
-                if (b.kind === 'image-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🖼️ Imagen</span>;
-                if (b.kind === 'doc-missing')   return <span style={{ fontSize: '14px', opacity: 0.85 }}>📄 Documento</span>;
-                if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
-                if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
-                if (b.kind === 'unsupported') return <span style={{ fontSize: '14px', opacity: 0.85, fontStyle: 'italic' }}>⚠️ Mensaje no compatible (encuesta, mensaje efímero u otro tipo que WhatsApp no permite recibir por API)</span>;
-                return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{text}</p>;
-              })()}
-
-              {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →
-                  Cargas; saliente → Pagos. Si ya se envió, queda marcado. */}
-              {canVerify && (
-                <div style={{ marginTop: '8px' }}>
-                  {verifSent ? (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '5px',
-                      fontSize: '12px', fontWeight: 700,
-                      color: isBot || isHuman ? '#3a7a00' : '#C8FF00',
-                      background: isBot || isHuman ? '#eaffd0' : '#2a2a2a',
-                      borderRadius: '8px', padding: '5px 10px',
-                    }}>
-                      ✓ En verificación · {verifDest}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => sendToVerify(m)}
-                      disabled={verifSendingId === m.id}
-                      title={`Mandar este comprobante a la bandeja de ${verifDest}`}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '6px',
-                        fontSize: '12px', fontWeight: 800, cursor: verifSendingId === m.id ? 'wait' : 'pointer',
-                        color: '#000', background: '#C8FF00',
-                        border: 'none', borderRadius: '8px', padding: '6px 12px',
-                        boxShadow: '0 2px 0 #8ab000',
-                      }}
-                    >
-                      {verifSendingId === m.id ? 'Enviando…' : `📤 Enviar a verificar`}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Hora + ticks (ticks solo en salientes) */}
-              <p style={{ margin: '6px 0 0 0', fontSize: '11px', opacity: 0.5, display: 'flex', alignItems: 'center', gap: '5px', justifyContent: isBot || isHuman ? 'flex-end' : 'flex-start' }}
-                 title={fullDate}>
-                {m.created_at && <span>{rel}</span>}
-                {(isBot || isHuman) && <Ticks status={m.status} motivo={motivoFallo} />}
-                {/* Acciones de mensaje fallido: reintentar texto libre o usar plantilla. */}
-                {isHuman && m.status === 'failed' && (
-                  <>
-                    {!media && (
-                      <button
-                        type="button"
-                        onClick={() => retrySend(m)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#E53935', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
-                      >
-                        Reintentar
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setShowTemplates(true)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1a7a3a', fontSize: '11px', fontWeight: 700, textDecoration: 'underline', padding: 0 }}
-                    >
-                      Usar plantilla
-                    </button>
-                  </>
-                )}
-                {/* Editar mensaje (solo CRM): staff, mensajes del equipo y solo
-                    texto plano (no media). Oculto mientras se edita esta burbuja. */}
-                {SHOW_EDIT_DELETE_BUTTONS && canEdit && (m.role === 'human' || m.role === 'internal') && m.id && editingId !== m.id && !media && body.kind === 'text' && (
-                  <button
-                    type="button"
-                    onClick={() => startEdit(m)}
-                    title="Editar mensaje (solo en el CRM)"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: '12px', lineHeight: 1, padding: 0 }}
-                  >
-                    ✏️
-                  </button>
-                )}
-                {/* Eliminar mensaje: solo staff (admin/agent) y solo en mensajes
-                    del equipo (human/internal), no en los entrantes del cliente. */}
-                {SHOW_EDIT_DELETE_BUTTONS && canDelete && (m.role === 'human' || m.role === 'internal') && m.id && (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteMessage(m.id!)}
-                    disabled={deletingMessageId === m.id}
-                    title="Eliminar mensaje"
-                    style={{ background: 'none', border: 'none', cursor: deletingMessageId === m.id ? 'not-allowed' : 'pointer', color: '#c0392b', fontSize: '12px', lineHeight: 1, padding: 0 }}
-                  >
-                    🗑️
-                  </button>
-                )}
-              </p>
-
-              {/* Motivo del rechazo de Meta, en texto. Antes el operador veía
-                  "⚠ No entregado" y no tenía forma de saber por qué (el detalle
-                  moría en los logs de Vercel). Solo en salientes fallidos y solo
-                  si Meta mandó un motivo. */}
-              {(isBot || isHuman) && m.status === 'failed' && motivoFallo && (
-                <span style={{
-                  display: 'block', margin: '4px 0 0 0', fontSize: '11px', lineHeight: 1.45,
-                  color: '#C62828', background: '#FDECEA', border: '1px solid #F5C6C2',
-                  borderRadius: '8px', padding: '6px 9px', maxWidth: '340px',
-                  textAlign: 'left', whiteSpace: 'normal',
-                }}>
-                  {motivoFallo}
-                </span>
-              )}
-
-              {/* Firma de quién envió el mensaje manual (operador/agente/admin),
-                  con su avatar (foto o iniciales). Solo si hay autor guardado;
-                  los mensajes viejos sin autor no la muestran. */}
-              {isHuman && humanSignature && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: '5px', margin: '4px 0 0 0' }}>
-                  <Avatar url={m.agent_avatar} name={m.agent_name ?? ''} size={16} />
-                  <span style={{ fontSize: '10px', fontWeight: 600, opacity: 0.55 }}>
-                    {humanSignature}
-                  </span>
-                </span>
-              )}
-
-              {/* Reacción aplicada */}
-              {m.reaction && (
-                <span style={{
-                  position: 'absolute', bottom: '-9px', left: '8px',
-                  background: '#fff', borderRadius: '999px', padding: '1px 5px',
-                  fontSize: '13px', lineHeight: 1, boxShadow: '0 1px 4px rgba(0,0,0,0.22)',
-                }}>
-                  {m.reaction}
-                </span>
-              )}
-
-              {/* Barra de reacciones (hover desktop / long-press mobile).
-                  Wrapper exterior TRANSPARENTE: es la zona de hover y puentea el
-                  gap entre la burbuja y el pill (con padding), para que el mouse no
-                  cruce "aire muerto" —ahí se colaba el hover del mensaje vecino y la
-                  barra se escapaba—. `reactBarDir` decide arriba/abajo: hacia abajo
-                  cuando el mensaje está pegado al borde superior (si no, top:-44px
-                  quedaría clipeado por el overflow de la lista). */}
-              {reactable && reactBarFor === m.id && (
-                <div
-                  onMouseEnter={() => {
-                    if (reactBarLeaveTimer.current) clearTimeout(reactBarLeaveTimer.current);
-                    setReactBarFor(m.id!);
-                  }}
-                  onMouseLeave={() => setReactBarFor(null)}
-                  style={{
-                    position: 'absolute', left: 0, zIndex: 5,
-                    ...(reactBarDir === 'down'
-                      ? { top: '100%', paddingTop: '12px' }
-                      : { bottom: '100%', paddingBottom: '10px' }),
-                  }}
-                >
-                  <div style={{
-                    display: 'flex', gap: '2px', width: 'fit-content',
-                    background: '#fff', borderRadius: '999px', padding: '4px 6px',
-                    boxShadow: '0 3px 12px rgba(0,0,0,0.18)',
-                  }}>
-                    {REACTION_EMOJIS.map((e) => (
-                      <button
-                        key={e}
-                        type="button"
-                        onClick={() => sendReaction(m, e)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: '2px 4px' }}
-                      >
-                        {e}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+        <MessageList
+          rows={rows}
+          cajaEnabled={cajaEnabled}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          editingId={editingId}
+          editingContent={editingContent}
+          savingEdit={savingEdit}
+          deletingMessageId={deletingMessageId}
+          verifSentIds={verifSentIds}
+          verifSendingId={verifSendingId}
+          reactBarFor={reactBarFor}
+          reactBarDir={reactBarDir}
+          reactBarLeaveTimer={reactBarLeaveTimer}
+          h={listHandlers}
+        />
       </div>
       </div>
 
