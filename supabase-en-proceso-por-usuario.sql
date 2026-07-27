@@ -92,3 +92,13 @@ where coalesce(trim(c.casino_username), '') = ''
 
 -- V3. El trigger existe y está activo.
 select tgname, tgenabled from pg_trigger where tgname = 'trg_contacts_sync_en_proceso';
+
+-- ── ERRATA (27/07/2026) ──────────────────────────────────────────────────────
+-- Este trigger quedó con un nombre que lo hace correr ANTES que
+-- trg_sync_casino_username (Postgres ordena los BEFORE alfabéticamente), y ese
+-- otro trigger completa el usuario a partir del name. Resultado: en un alta con
+-- name y sin usuario, este miraba el usuario todavía vacío y marcaba
+-- 'en_proceso' aunque el contacto terminara CON usuario.
+-- La corrección está en supabase-en-proceso-orden-trigger.sql: renombra el
+-- trigger a trg_zz_… para que corra último. Si estás creando la base desde cero,
+-- corré también ese archivo.
