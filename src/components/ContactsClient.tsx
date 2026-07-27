@@ -217,6 +217,10 @@ export default function ContactsClient() {
   const [showImportPanel, setShowImportPanel] = useState(false); // modal de import CSV
   const [sortDir,        setSortDir]        = useState<SortDir>('az'); // orden alfabético, A-Z por defecto
   const [category,       setCategory]       = useState<string>('');    // filtro por categoría; '' = todas
+  // Total de contactos que matchean el filtro de categoría, para el encabezado de
+  // la lista. Lo devuelve la primera página en el header X-Total-Count; null
+  // mientras carga o si no hay categoría elegida.
+  const [filterTotal,    setFilterTotal]    = useState<number | null>(null);
   // ── Selección POR FILTRO (todos los que matchean, no solo la página) ──
   // matchCount = total exacto del filtro actual (lo cuenta el server, incluye a
   // los contactos sin usuario de casino que la lista no muestra). matchSelected
@@ -243,8 +247,9 @@ export default function ContactsClient() {
   const loadingMoreRef = useRef(false); // guard para el poll / doble click
 
   // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango
-  // + categoría).
-  const fetchPage = useCallback(async (q: string, sort: SortDir, offset: number, cat: string): Promise<ContactRow[] | null> => {
+  // + categoría). Con categoría elegida, la primera página trae además el total
+  // del filtro en el header X-Total-Count (mismo request, sin round-trip extra).
+  const fetchPage = useCallback(async (q: string, sort: SortDir, offset: number, cat: string): Promise<{ rows: ContactRow[]; total: number | null } | null> => {
     const params = new URLSearchParams({ limit: String(CONTACTS_PAGE_SIZE), offset: String(offset), sort });
     const term = q.trim();
     if (term) params.set('q', term);
@@ -253,18 +258,23 @@ export default function ContactsClient() {
       const res = await fetch(`/api/contacts?${params.toString()}`);
       if (!res.ok) return null;
       const data = await res.json();
-      return Array.isArray(data) ? data : [];
+      const header = res.headers.get('X-Total-Count');
+      return {
+        rows:  Array.isArray(data) ? data : [],
+        total: header != null ? Number(header) : null,
+      };
     } catch { return null; }
   }, []);
 
   // Primera página (reset): reemplaza la lista. `silent` = sin spinner (poll).
   const loadFirst = useCallback(async (q: string, sort: SortDir, cat: string, silent = false) => {
     if (!silent) setLoading(true);
-    const rows = await fetchPage(q, sort, 0, cat);
-    if (rows) {
-      setContacts(rows);
-      setHasMore(rows.length === CONTACTS_PAGE_SIZE);
-      offsetRef.current = rows.length;
+    const page = await fetchPage(q, sort, 0, cat);
+    if (page) {
+      setContacts(page.rows);
+      setHasMore(page.rows.length === CONTACTS_PAGE_SIZE);
+      offsetRef.current = page.rows.length;
+      setFilterTotal(page.total);
     }
     if (!silent) setLoading(false);
   }, [fetchPage]);
@@ -277,14 +287,14 @@ export default function ContactsClient() {
   async function loadMore() {
     if (loadingMoreRef.current || !hasMore) return;
     loadingMoreRef.current = true; setLoadingMore(true);
-    const rows = await fetchPage(query, sortDir, offsetRef.current, category);
-    if (rows) {
-      offsetRef.current += rows.length;
+    const page = await fetchPage(query, sortDir, offsetRef.current, category);
+    if (page) {
+      offsetRef.current += page.rows.length;
       setContacts((prev) => {
         const seen = new Set(prev.map((c) => c.id));
-        return [...prev, ...rows.filter((r) => !seen.has(r.id))];
+        return [...prev, ...page.rows.filter((r) => !seen.has(r.id))];
       });
-      setHasMore(rows.length === CONTACTS_PAGE_SIZE);
+      setHasMore(page.rows.length === CONTACTS_PAGE_SIZE);
     }
     loadingMoreRef.current = false; setLoadingMore(false);
   }
@@ -796,6 +806,25 @@ export default function ContactsClient() {
           </div>
         );
       })()}
+
+      {/* Cuántos hay en el filtro. Mismo tono discreto que el "N campañas" del
+          Historial de envíos. Solo con categoría elegida: con búsqueda sola la
+          lista ya se explica y el número no aporta. El "Quitar filtro" está acá
+          porque es donde el operador se da cuenta de que está filtrando. */}
+      {category && !loading && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '-6px 0 -6px 2px' }}>
+          <span style={{ fontSize: '13px', color: '#999', fontWeight: 600 }}>
+            <strong style={{ color: '#000', fontWeight: 800 }}>{(filterTotal ?? contacts.length).toLocaleString('es-AR')}</strong>
+            {' '}contacto{(filterTotal ?? contacts.length) === 1 ? '' : 's'} en {STATUS_LABEL[category] ?? category}
+          </span>
+          <button
+            onClick={() => setCategory('')}
+            style={{ background: 'none', border: 'none', color: '#3a5bb8', fontSize: '12px', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}
+          >
+            Quitar filtro
+          </button>
+        </div>
+      )}
 
       {loading && (
         <p style={{ textAlign: 'center', color: '#999', fontSize: '14px' }}>Cargando contactos...</p>

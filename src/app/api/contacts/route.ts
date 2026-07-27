@@ -102,9 +102,21 @@ export async function GET(request: Request) {
   const soloEnProceso    = category === 'en_proceso';
   const includeSinUsuario = soloEnProceso || url.searchParams.get('includeSinUsuario') === 'true';
 
+  // Total del filtro para el encabezado de la lista ("61 contactos en En proceso").
+  // Va en el MISMO request que la página (PostgREST devuelve el count en el
+  // Content-Range, no es un round-trip extra) y solo con categoría elegida y en la
+  // primera página: en "Cargar más" y en el poll de 15s el número no cambia, y un
+  // COUNT con ilike sobre 56k filas cada 15s no tiene sentido.
+  //
+  // El count usa EXACTAMENTE los mismos filtros que la lista —incluido el recorte
+  // de agendados— porque es el número que va arriba de esas filas. NO se reusa el
+  // conteo de bulk-delete: ese cuenta el alcance del BORRADO (incluye a los que no
+  // tienen usuario), así que en "En proceso" diría 0 sobre una lista con 61 filas.
+  const conConteo = !!category && offset === 0;
+
   let query = supabaseAdmin
     .from('contacts')
-    .select(SELECT_COLS)
+    .select(SELECT_COLS, conConteo ? { count: 'exact' } : undefined)
     .eq('tenant_id', session.tenant_id);
   if (!includeSinUsuario) {
     query = query.not('casino_username', 'is', null).neq('casino_username', '');
@@ -127,9 +139,14 @@ export async function GET(request: Request) {
     ? query.order('created_at', { ascending: false }).order('id', { ascending: false })
     : query.order('casino_username', { ascending: asc }).order('id', { ascending: asc });
 
-  const { data, error } = await ordenada.range(offset, offset + limit - 1);
+  const { data, error, count } = await ordenada.range(offset, offset + limit - 1);
   if (error) return new NextResponse(error.message, { status: 500 });
-  return NextResponse.json(data ?? []);
+
+  // El cuerpo sigue siendo el array de siempre (no romper a los que ya lo leen);
+  // el total viaja en un header.
+  const res = NextResponse.json(data ?? []);
+  if (conConteo && typeof count === 'number') res.headers.set('X-Total-Count', String(count));
+  return res;
 }
 
 // POST /api/contacts — alta individual de un contacto. Scope estricto por
