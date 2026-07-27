@@ -90,12 +90,25 @@ export async function GET(request: Request) {
   // que la búsqueda de Comprobantes.) Vacío = sin búsqueda.
   const search = (url.searchParams.get('q') ?? '').replace(/[,()*%]/g, ' ').trim().slice(0, 60);
 
+  // El listado muestra AGENDADOS (con usuario de casino). Dos excepciones, las
+  // dos explícitas:
+  //   · el filtro "En proceso" —por definición son los que TODAVÍA no tienen
+  //     usuario, así que con el recorte puesto daría siempre vacío—;
+  //   · ?includeSinUsuario=true, que manda el picker del asistente de campañas:
+  //     ese universo tiene que coincidir con el que la campaña le va a enviar, y
+  //     ni el conteo de destinatarios ni resolveContacts miraron nunca
+  //     casino_username. El picker era el único lugar que los escondía.
+  // La vista "Todos" sin filtro NO cambia: sigue mostrando solo agendados.
+  const soloEnProceso    = category === 'en_proceso';
+  const includeSinUsuario = soloEnProceso || url.searchParams.get('includeSinUsuario') === 'true';
+
   let query = supabaseAdmin
     .from('contacts')
     .select(SELECT_COLS)
-    .eq('tenant_id', session.tenant_id)
-    .not('casino_username', 'is', null)
-    .neq('casino_username', '');
+    .eq('tenant_id', session.tenant_id);
+  if (!includeSinUsuario) {
+    query = query.not('casino_username', 'is', null).neq('casino_username', '');
+  }
   if (search) {
     query = query.or(`casino_username.ilike.*${search}*,name.ilike.*${search}*,phone.ilike.*${search}*`);
   }
@@ -106,10 +119,15 @@ export async function GET(request: Request) {
   // Orden alfabético por casino_username (lo que muestra la lista) + id como
   // desempate estable, para que la paginación no repita ni saltee filas con igual
   // usuario. `.range()` acota el egress a una página.
-  const { data, error } = await query
-    .order('casino_username', { ascending: asc })
-    .order('id', { ascending: asc })
-    .range(offset, offset + limit - 1);
+  //
+  // "En proceso" es la excepción: ahí TODOS tienen el usuario vacío, así que el
+  // orden alfabético no ordena nada. Va por fecha de alta, más nuevos primero,
+  // que es lo que se quiere mirar en una cola de altas pendientes.
+  const ordenada = soloEnProceso
+    ? query.order('created_at', { ascending: false }).order('id', { ascending: false })
+    : query.order('casino_username', { ascending: asc }).order('id', { ascending: asc });
+
+  const { data, error } = await ordenada.range(offset, offset + limit - 1);
   if (error) return new NextResponse(error.message, { status: 500 });
   return NextResponse.json(data ?? []);
 }

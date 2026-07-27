@@ -846,9 +846,13 @@ export default function ContactsClient() {
                   {initial}
                 </div>
 
-                {/* Usuario casino */}
+                {/* Usuario casino. Con el filtro "En proceso" la lista incluye a
+                    los que TODAVÍA no tienen usuario: ahí mostramos el nombre (o
+                    el teléfono) para que la fila no quede con un 🎰 solo. */}
                 <p className="c-user" style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  🎰 {c.casino_username}
+                  {c.casino_username
+                    ? <>🎰 {c.casino_username}</>
+                    : <span style={{ color: '#777' }}>👤 {c.name || c.phone} <span style={{ fontWeight: 600, fontSize: '12px', color: '#aaa' }}>· sin usuario</span></span>}
                 </p>
 
                 {/* Teléfono */}

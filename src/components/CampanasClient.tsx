@@ -555,6 +555,11 @@ export default function CampanasClient() {
     const params = new URLSearchParams({ limit: String(PICKER_PAGE_SIZE), offset: String(offset), sort: 'az' });
     const term = q.trim();
     if (term) params.set('q', term);
+    // Incluye a los contactos sin usuario de casino (categoría "En proceso"): el
+    // envío nunca los excluyó —ni resolveContacts ni el conteo de destinatarios
+    // miran casino_username—, así que el picker tiene que ofrecer el mismo
+    // universo al que la campaña le va a mandar.
+    params.set('includeSinUsuario', 'true');
     if (sc === 'libre' || sc === 'suelto') params.set('scope', sc);
     else if (lineIds.length > 0) { params.set('scope', 'lineas'); params.set('numbers', lineIds.join(',')); }
     try {

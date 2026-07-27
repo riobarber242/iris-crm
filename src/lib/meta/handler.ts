@@ -839,9 +839,14 @@ async function processMessage(
   );
 
   // ── Reply helper ───────────────────────────────────────────────────────────
+  // `handoff: true` = el bot cierra su flujo y la conversación queda para un
+  // humano. Antes esto además escribía contact.status = 'en_proceso'; ya no: esa
+  // categoría pasó a derivarse del alta (sin usuario de casino = En proceso) con
+  // un trigger en la base — ver supabase-en-proceso-por-usuario.sql. El bot solo
+  // deja constancia en conversation_state, que es lo suyo.
   async function replyAndSave(
     textResp: string,
-    opts: { newState?: string | null; markInProgress?: boolean } = {},
+    opts: { newState?: string | null; handoff?: boolean } = {},
   ) {
     console.log(`[replyAndSave] → "${textResp.slice(0, 60)}" opts=${JSON.stringify(opts)}`);
 
@@ -884,19 +889,14 @@ async function processMessage(
     }
 
     // 3. Update contact state
-    // Two-step: status first (column always exists), then conversation_state separately.
-    // This ensures en_proceso is always set even if conversation_state column is missing.
+    // Solo conversation_state: el bot ya NO escribe contact.status. La categoría
+    // del contacto se deriva del alta (trigger contacts_sync_en_proceso) y de sus
+    // comprobantes (reclassify_contacts); que además la tocara el bot era la
+    // tercera mano sobre la misma columna.
     try {
-      if (opts.markInProgress) {
-        const { error: stErr } = await supabaseAdmin
-          .from('contacts').update({ status: 'en_proceso' }).eq('id', contact.id);
-        if (stErr) console.warn('[replyAndSave] status update error:', stErr.message);
-        else       console.log('[replyAndSave] contact.status → en_proceso');
-      }
-
       const stateUpdate: Record<string, any> = {};
-      if ('newState' in opts)  stateUpdate.conversation_state = opts.newState ?? null;
-      if (opts.markInProgress) stateUpdate.conversation_state = 'done';
+      if ('newState' in opts) stateUpdate.conversation_state = opts.newState ?? null;
+      if (opts.handoff)       stateUpdate.conversation_state = 'done';
 
       if (Object.keys(stateUpdate).length > 0) {
         const { error: csErr } = await supabaseAdmin
@@ -1018,7 +1018,7 @@ async function processMessage(
     case 'greeting': {
       // Si en el primer mensaje ya avisa que es cliente → directo al operador.
       if (ALREADY_CLIENT_RE.test(lowerText)) {
-        await replyAndSave(handoffMsg, { markInProgress: true });
+        await replyAndSave(handoffMsg, { handoff: true });
       } else {
         await replyAndSave(WELCOME_MSG, { newState: 'asked_intention' });
       }
@@ -1029,7 +1029,7 @@ async function processMessage(
     case 'asked_intention': {
       if (ALREADY_CLIENT_RE.test(lowerText)) {
         // Ya tiene cuenta → lo atiende un operador.
-        await replyAndSave(handoffMsg, { markInProgress: true });
+        await replyAndSave(handoffMsg, { handoff: true });
       } else if (/primera|primer|nuev[oa]|reci[eé]n|no teng|empez|arranco|soy nuevo/.test(lowerText)) {
         // Primera vez → onboarding.
         await replyAndSave(
@@ -1049,7 +1049,7 @@ async function processMessage(
     // ── Waiting for channel screenshot (text message) ─────────────────────────
     case 'waiting_screenshot': {
       if (ALREADY_CLIENT_RE.test(lowerText) || /no puedo|no puedo mandar|no puedo enviar|no puedo subir/.test(lowerText)) {
-        await replyAndSave(handoffMsg, { markInProgress: true });
+        await replyAndSave(handoffMsg, { handoff: true });
       } else {
         const ai = await aiSteerReply(
           'que el usuario mande la captura del canal de WhatsApp para poder continuar',
@@ -1070,7 +1070,7 @@ async function processMessage(
           { newState: 'asked_name' },
         );
       } else if (/(^no$|nono|no gracias|no quiero|paso)/.test(lowerText)) {
-        await replyAndSave(handoffMsg, { markInProgress: true });
+        await replyAndSave(handoffMsg, { handoff: true });
       } else {
         const ai = await aiSteerReply(
           'que el usuario responda si recarga seguido (sí o no)',
@@ -1084,7 +1084,7 @@ async function processMessage(
     // ── Fin del onboarding → handoff al operador ──────────────────────────────
     case 'asked_name': {
       // El nombre lo asigna el operador desde el CRM; el bot no lo escribe.
-      await replyAndSave(handoffMsg, { markInProgress: true });
+      await replyAndSave(handoffMsg, { handoff: true });
       break;
     }
 
@@ -1092,7 +1092,7 @@ async function processMessage(
     case 'done':
     default: {
       console.warn(`[bot] Estado no mapeado: "${state}" — handoff al operador`);
-      await replyAndSave(handoffMsg, { markInProgress: true });
+      await replyAndSave(handoffMsg, { handoff: true });
       break;
     }
   }

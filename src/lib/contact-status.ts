@@ -6,8 +6,14 @@ import { supabaseAdmin } from './db';
 //   - 'cliente_activo' → tiene ≥1 comprobante verificado en el mes calendario vigente.
 //   - 'inactivo'       → tuvo verificados en meses anteriores, pero ninguno este mes.
 //
-// Estados operativos preservados: 'bloqueado' nunca se toca; 'en_proceso' (handoff
-// a humano) solo se promueve a 'cliente_activo' si corresponde, nunca se degrada.
+// Estados que esta regla NO decide:
+//   - 'bloqueado'  → nunca se toca.
+//   - 'en_proceso' → significa "todavía sin usuario de casino asignado" y lo
+//     gobierna el trigger contacts_sync_en_proceso (supabase-en-proceso-por-usuario.sql),
+//     que lo deriva del alta. Acá solo se respeta: se permite que ASCIENDA a
+//     'cliente_activo' —la plata manda sobre la falta de alta— y nunca se degrada.
+//     Si igual se colara un intento de degradarlo, el trigger lo devuelve a
+//     'en_proceso' mientras el contacto siga sin usuario.
 
 // Argentina es UTC-3 fijo (sin DST desde 2009). La medianoche del 1ro de Argentina
 // equivale a las 03:00 UTC de ese día.
