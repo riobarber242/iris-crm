@@ -227,11 +227,17 @@ const cardStyle: React.CSSProperties = {
   boxShadow: '0 2px 12px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: '16px',
 };
 
-// Chip de métrica para el historial.
-function Chip({ label, value, color, bg }: { label: string; value: number; color: string; bg: string }) {
+// Chip de métrica para el historial. Con `total` muestra "X de Y" (cobertura de
+// la campaña); sin él, el número suelto de siempre.
+function Chip({ label, value, color, bg, total }: { label: string; value: number; color: string; bg: string; total?: number | null }) {
+  // "de Y" solo si el total es confiable: campañas anteriores a target_total
+  // (null) y el caso raro de X > Y —el universo se achicó entre el envío y hoy,
+  // p.ej. contactos borrados— caen al número suelto en vez de mostrar algo que
+  // se lee como un error ("1300 de 1200").
+  const conTotal = total != null && total > 0 && value <= total;
   return (
     <span style={{ fontSize: '11px', fontWeight: 800, color, background: bg, borderRadius: '8px', padding: '3px 10px', whiteSpace: 'nowrap' }}>
-      {value} {label}
+      {conTotal ? `${value} de ${total}` : value} {label}
     </span>
   );
 }
@@ -2016,7 +2022,13 @@ export default function CampanasClient() {
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          <Chip label="enviados"   value={sent}                color="#555"    bg="#ececec" />
+                          {/* "X de Y": cuánto llegó a mandar sobre lo planeado. Es
+                              el dato que faltaba en una campaña Detenida a mitad de
+                              camino, donde el número suelto no dice si cubrió el 10%
+                              o el 90%. X = sent_count (éxitos; los fallos tienen su
+                              propio chip) e Y = target_total, que persiste cada tanda
+                              de envío desde supabase-campaign-target-total.sql. */}
+                          <Chip label="enviados"   value={sent} total={c.target_total} color="#555"    bg="#ececec" />
                           <Chip label="entregados" value={c.delivered_count ?? 0} color="#1565c0" bg="#e3f0ff" />
                           <Chip label="leídos"     value={c.read_count ?? 0}    color="#1a7a3a" bg="#e8fff0" />
                           <Chip label="btn1"       value={c.btn1_count ?? 0}    color="#5b7a00" bg="#f4ffd1" />
