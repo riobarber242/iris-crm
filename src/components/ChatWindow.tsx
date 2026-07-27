@@ -1569,7 +1569,9 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
                 onMouseEnter={(e) => (e.currentTarget.style.background = '#F5F5F5')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
               >
-                <p style={{ fontSize: '11px', fontWeight: 700, color: '#C8FF00', margin: '0 0 2px 0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{qr.title}</p>
+                {/* Naranja, no el lima de marca: el lima es para fondo oscuro y acá
+                    el panel es blanco (1.4:1 de contraste, ilegible). #D35400 da 4.6:1. */}
+                <p style={{ fontSize: '11px', fontWeight: 700, color: '#D35400', margin: '0 0 2px 0', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{qr.title}</p>
                 <p style={{ fontSize: '13px', color: '#333', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{qr.content}</p>
               </button>
             ))}
