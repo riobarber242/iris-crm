@@ -22,11 +22,14 @@ const STATUS_OPTIONS = [
   { value: 'en_proceso',     label: 'En proceso' },
 ];
 
+// Tonos de globals.css, la fuente única de los colores de categoría. en_proceso
+// iba en lima, o sea idéntico a cliente_activo: dos categorías distintas del
+// mismo color. Va en ámbar, como en Contactos, Top Clientes y el mapa.
 const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
   nuevo:          { bg: 'var(--status-nuevo)',    fg: '#000' },
   cliente_activo: { bg: 'var(--status-activo)',   fg: '#000' },
   inactivo:       { bg: 'var(--status-inactivo)', fg: '#fff' },
-  en_proceso:     { bg: '#C8FF00',                fg: '#000' },
+  en_proceso:     { bg: 'var(--status-proceso)',  fg: '#000' },
 };
 
 const BOT_STATE_LABEL: Record<string, string> = {

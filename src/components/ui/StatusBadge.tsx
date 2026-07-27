@@ -2,10 +2,13 @@ type StatusBadgeProps = {
   status: 'nuevo' | 'en_proceso' | 'activo' | 'bloqueado' | 'pendiente' | 'verificado' | 'rechazado';
 };
 
+// Los estados de CONTACTO salen de las variables de globals.css (fuente única);
+// en_proceso iba en lima, igual que activo. Los de comprobante (pendiente/
+// verificado/rechazado) son otra cosa y mantienen su paleta propia.
 const statusStyles: Record<string, React.CSSProperties> = {
-  nuevo:      { background: 'var(--status-nuevo)',  color: '#000' },
-  en_proceso: { background: '#C8FF00',              color: '#000' },
-  activo:     { background: 'var(--status-activo)', color: '#000' },
+  nuevo:      { background: 'var(--status-nuevo)',   color: '#000' },
+  en_proceso: { background: 'var(--status-proceso)', color: '#000' },
+  activo:     { background: 'var(--status-activo)',  color: '#000' },
   bloqueado:  { background: '#FFE5E5',              color: '#CC3333' },
   pendiente:  { background: '#FFF8DC',              color: '#886600' },
   verificado: { background: '#C8FF00',              color: '#000' },
