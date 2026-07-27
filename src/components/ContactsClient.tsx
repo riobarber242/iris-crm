@@ -623,7 +623,12 @@ export default function ContactsClient() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    // En modo selección la barra flotante (position:fixed, abajo y al centro) se
+    // superponía justo con "Cargar más": al bajar para seguir seleccionando, el
+    // botón quedaba abajo de la barra y no se podía tocar. Reservamos su altura
+    // al final de la página en vez de mover la barra, así el botón sube y la
+    // barra queda donde el operador ya la espera.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: selectionMode ? '104px' : 0 }}>
 
       {/* Search + Import */}
       <div className="contacts-toolbar" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -969,10 +974,11 @@ export default function ContactsClient() {
 
       {/* Barra flotante de selección múltiple (solo en modo selección) */}
       {selectionMode && contacts.length > 0 && (
-        <div style={{
-          position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
+        <div className="contacts-select-bar" style={{
+          position: 'fixed', bottom: '16px', left: '50%', transform: 'translateX(-50%)', zIndex: 200,
           background: '#1a1a1a', color: '#fff', borderRadius: '14px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
-          padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
+          padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap',
+          maxWidth: 'calc(100vw - 24px)',
         }}>
           <span style={{ fontSize: '14px', fontWeight: 700 }}>
             {matchSelected && matchCount != null
