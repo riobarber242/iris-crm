@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import NewContactModal from '@/components/NewContactModal';
 import EditContactModal, { type EditableContact } from '@/components/EditContactModal';
+import { InfoCategorias } from '@/components/ui/InfoCategorias';
 
 type ContactRow = {
   id:                 string;
@@ -24,6 +25,21 @@ const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
   inactivo:       { bg: 'var(--status-inactivo)', fg: '#fff' },
   bloqueado:      { bg: '#FF4444',                fg: '#fff' },
 };
+
+// Etiqueta legible de la categoría. La lista mostraba el valor crudo de la
+// columna ("CLIENTE_ACTIVO", "EN_PROCESO"), que es el nombre interno, no algo
+// que alguien diga en voz alta.
+const STATUS_LABEL: Record<string, string> = {
+  nuevo:          'Nuevo',
+  en_proceso:     'En proceso',
+  cliente_activo: 'Cliente activo',
+  inactivo:       'Inactivo',
+  bloqueado:      'Bloqueado',
+};
+
+// Categorías ofrecidas en el filtro, en el orden del ciclo de vida del contacto.
+// '' = todas. Mismo orden que usa la página pública /info/clasificacion.
+const CATEGORIES = ['nuevo', 'en_proceso', 'cliente_activo', 'inactivo', 'bloqueado'] as const;
 
 // Ítem del menú desplegable "Acciones".
 const menuItem: React.CSSProperties = {
@@ -190,6 +206,7 @@ export default function ContactsClient() {
   const [showActions,    setShowActions]    = useState(false); // dropdown "Acciones"
   const [showImportPanel, setShowImportPanel] = useState(false); // modal de import CSV
   const [sortDir,        setSortDir]        = useState<SortDir>('az'); // orden alfabético, A-Z por defecto
+  const [category,       setCategory]       = useState<string>('');    // filtro por categoría; '' = todas
   const [editing,        setEditing]        = useState<EditableContact | null>(null);
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set()); // selección múltiple
@@ -205,11 +222,13 @@ export default function ContactsClient() {
   const offsetRef      = useRef(0);     // filas ya cargadas = próximo offset
   const loadingMoreRef = useRef(false); // guard para el poll / doble click
 
-  // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango).
-  const fetchPage = useCallback(async (q: string, sort: SortDir, offset: number): Promise<ContactRow[] | null> => {
+  // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango
+  // + categoría).
+  const fetchPage = useCallback(async (q: string, sort: SortDir, offset: number, cat: string): Promise<ContactRow[] | null> => {
     const params = new URLSearchParams({ limit: String(CONTACTS_PAGE_SIZE), offset: String(offset), sort });
     const term = q.trim();
     if (term) params.set('q', term);
+    if (cat) params.set('category', cat);
     try {
       const res = await fetch(`/api/contacts?${params.toString()}`);
       if (!res.ok) return null;
@@ -219,9 +238,9 @@ export default function ContactsClient() {
   }, []);
 
   // Primera página (reset): reemplaza la lista. `silent` = sin spinner (poll).
-  const loadFirst = useCallback(async (q: string, sort: SortDir, silent = false) => {
+  const loadFirst = useCallback(async (q: string, sort: SortDir, cat: string, silent = false) => {
     if (!silent) setLoading(true);
-    const rows = await fetchPage(q, sort, 0);
+    const rows = await fetchPage(q, sort, 0, cat);
     if (rows) {
       setContacts(rows);
       setHasMore(rows.length === CONTACTS_PAGE_SIZE);
@@ -230,15 +249,15 @@ export default function ContactsClient() {
     if (!silent) setLoading(false);
   }, [fetchPage]);
 
-  // Reset a la primera página con la búsqueda/orden actuales. Lo usan los modales
-  // (alta/edición) y el import al terminar.
-  const fetchContacts = useCallback(() => { loadFirst(query, sortDir); }, [loadFirst, query, sortDir]);
+  // Reset a la primera página con la búsqueda/orden/categoría actuales. Lo usan
+  // los modales (alta/edición) y el import al terminar.
+  const fetchContacts = useCallback(() => { loadFirst(query, sortDir, category); }, [loadFirst, query, sortDir, category]);
 
   // "Cargar más": siguiente página; appendea (dedup defensivo por id).
   async function loadMore() {
     if (loadingMoreRef.current || !hasMore) return;
     loadingMoreRef.current = true; setLoadingMore(true);
-    const rows = await fetchPage(query, sortDir, offsetRef.current);
+    const rows = await fetchPage(query, sortDir, offsetRef.current, category);
     if (rows) {
       offsetRef.current += rows.length;
       setContacts((prev) => {
@@ -250,12 +269,13 @@ export default function ContactsClient() {
     loadingMoreRef.current = false; setLoadingMore(false);
   }
 
-  // Recarga la primera página ante cambios de búsqueda/orden. La búsqueda va
-  // debounced (300 ms); vacío/orden = inmediato. También hace la carga inicial.
+  // Recarga la primera página ante cambios de búsqueda/orden/categoría. La
+  // búsqueda va debounced (300 ms); el resto es inmediato. También hace la carga
+  // inicial.
   useEffect(() => {
-    const t = setTimeout(() => { loadFirst(query, sortDir); }, query ? 300 : 0);
+    const t = setTimeout(() => { loadFirst(query, sortDir, category); }, query ? 300 : 0);
     return () => clearTimeout(t);
-  }, [query, sortDir, loadFirst]);
+  }, [query, sortDir, category, loadFirst]);
 
   // Líneas activas del tenant para "Asignar a línea" (default: la línea default).
   useEffect(() => {
@@ -279,10 +299,10 @@ export default function ContactsClient() {
   useEffect(() => {
     const timer = setInterval(() => {
       if (loadingMoreRef.current || offsetRef.current > CONTACTS_PAGE_SIZE) return;
-      loadFirst(query, sortDir, true);
+      loadFirst(query, sortDir, category, true);
     }, 15_000);
     return () => clearInterval(timer);
-  }, [query, sortDir, loadFirst]);
+  }, [query, sortDir, category, loadFirst]);
 
   // Cerrar el dropdown "Acciones" al clickear afuera.
   useEffect(() => {
@@ -556,6 +576,28 @@ export default function ContactsClient() {
           <option value="za">Nombre Z → A</option>
         </select>
 
+        {/* Filtro por categoría. El ⓘ va al lado, como en todo selector de
+            categoría del panel: es donde uno se pregunta qué significa cada una
+            y por qué cambian solas. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            title="Filtrar por categoría"
+            style={{
+              background: '#fff', color: category ? '#000' : '#333', fontWeight: 700, fontSize: '13px',
+              border: '2px solid ' + (category ? '#1a1a1a' : '#e0e0e0'), borderRadius: '12px',
+              padding: '12px 14px', cursor: 'pointer', outline: 'none',
+            }}
+          >
+            <option value="">Todas las categorías</option>
+            {CATEGORIES.map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+            ))}
+          </select>
+          <InfoCategorias />
+        </div>
+
         {/* Modo selección: muestra/oculta checkboxes + barra flotante. Al apagarlo
             limpia la selección actual. */}
         <button
@@ -740,19 +782,22 @@ export default function ContactsClient() {
                   );
                 })()}
 
-                {/* Estado */}
+                {/* Categoría. Pill con la etiqueta legible en desktop; en mobile
+                    la columna no entra, así que va el mismo punto de color que
+                    usa Top Clientes (ver .c-dot en globals.css). */}
+                <span className="c-dot" data-status={c.status} title={STATUS_LABEL[c.status] ?? c.status} />
                 <span className="c-status" style={{
                   ...sc,
                   borderRadius: '999px',
                   padding: '4px 10px',
                   fontSize: '11px',
                   fontWeight: 700,
-                  textTransform: 'uppercase',
                   letterSpacing: '0.04em',
                   display: 'inline-block',
                   textAlign: 'center',
+                  whiteSpace: 'nowrap',
                 }}>
-                  {c.status}
+                  {STATUS_LABEL[c.status] ?? c.status}
                 </span>
 
                 {/* Fecha */}

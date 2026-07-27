@@ -465,6 +465,16 @@ button, input, textarea, select {
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 
+/* Punto de categoría: SOLO mobile/tablet, donde la columna de estado no entra.
+   En desktop manda el pill con la etiqueta. Mismo criterio que .leads-dot en
+   Top Clientes, para que la categoría se lea igual en las dos pantallas. */
+.c-dot { display: none; width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+.c-dot[data-status='cliente_activo'] { background: var(--status-activo); }
+.c-dot[data-status='nuevo']          { background: var(--status-nuevo); }
+.c-dot[data-status='inactivo']       { background: var(--status-inactivo); }
+.c-dot[data-status='en_proceso']     { background: #f0c040; }
+.c-dot[data-status='bloqueado']      { background: #FF4444; }
+
 /* El teléfono es un string de dígitos sin espacios: sin esto fuerza el ancho
    de su columna 1fr. Truncar lo mantiene contenido en cualquier breakpoint. */
 .c-phone { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -480,21 +490,24 @@ button, input, textarea, select {
   .contact-header { display: none; }
 
   .contact-card {
-    grid-template-columns: 22px 44px 1fr auto auto;
+    grid-template-columns: 22px 44px 8px 1fr auto auto;
     grid-template-areas:
-      "sel avatar user phone chat"
-      "sel avatar line line  chat";
+      "sel avatar dot user phone chat"
+      "sel avatar dot line line  chat";
     column-gap: 10px;
     row-gap: 4px;
     padding: 12px 14px;
   }
   /* Sin modo selección: colapsa la columna "sel" (los checkboxes no se muestran). */
   .contacts-table:not(.selecting) .contact-card {
-    grid-template-columns: 44px 1fr auto auto;
+    grid-template-columns: 44px 8px 1fr auto auto;
     grid-template-areas:
-      "avatar user phone chat"
-      "avatar line line  chat";
+      "avatar dot user phone chat"
+      "avatar dot line line  chat";
   }
+  /* El punto de categoría reemplaza al pill, que acá no entra. Ocupa las dos
+     filas de la tarjeta (área rectangular) y queda centrado contra el texto. */
+  .c-dot { display: block !important; grid-area: dot; align-self: center; }
   .c-check   { grid-area: sel; align-self: center; }
   .c-avatar  { grid-area: avatar; align-self: center; }
   .c-user    { grid-area: user; }

@@ -73,6 +73,13 @@ export async function GET(request: Request) {
   // (el picker del wizard de campañas y la pantalla Contactos siempre lo mandan),
   // así que sin `limit` (o inválido) caemos a un default ACOTADO en vez de traer
   // todo. El tope duro sigue siendo 200 por página.
+  // Filtro por categoría del LISTADO. Va como ?category= y no como ?status=
+  // porque ese nombre ya está tomado: ?status= dispara el modo CONTEO de arriba
+  // (lo usa el asistente de campañas), así que reusarlo devolvería {count} en
+  // lugar de filas. Un valor fuera de la lista blanca se ignora (lista completa).
+  const categoryParam = url.searchParams.get('category');
+  const category = categoryParam && ALLOWED_STATUS.includes(categoryParam) ? categoryParam : null;
+
   const SELECT_COLS = 'id, name, phone, status, casino_username, whatsapp_number_id, created_at';
   const limitParam  = parseInt(url.searchParams.get('limit') ?? '', 10);
   const limit       = Number.isInteger(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 200;
@@ -92,6 +99,7 @@ export async function GET(request: Request) {
   if (search) {
     query = query.or(`casino_username.ilike.*${search}*,name.ilike.*${search}*,phone.ilike.*${search}*`);
   }
+  if (category) query = query.eq('status', category);
   // Alcance por línea (picker del asistente de campañas). Sin ?scope ni ?numbers
   // no cambia nada respecto del comportamiento histórico.
   query = applyScope(query);
