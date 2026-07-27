@@ -3,7 +3,7 @@
 -- que la DDL se ejecuta a mano.
 --
 -- QUÉ CAMBIA. Antes 'en_proceso' significaba "el bot ya derivó esta conversación
--- a un humano": lo escribía el bot en 5 ramas de su máquina de estados. Eso
+-- a un humano": lo escribía el bot en 6 ramas de su máquina de estados. Eso
 -- dependía de que el bot estuviera prendido, de que el webhook llegara y de que
 -- ese UPDATE no fallara — y hoy hay 0 contactos en ese estado en las dos cuentas.
 -- Ahora significa "todavía no tiene cuenta creada", que es un dato que ya vive en

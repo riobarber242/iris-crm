@@ -7,7 +7,11 @@ create table if not exists contacts (
   name text,
   created_at timestamptz default now(),
   ad_source text,
-  status text default 'nuevo' check (status in ('nuevo', 'en_proceso', 'activo', 'bloqueado')),
+  -- Lista al día (ver supabase-contacts-status-check.sql, que la corrige en las
+  -- bases ya creadas). La original decía 'activo' y no tenía 'inactivo' ni
+  -- 'cliente_activo': una instalación nueva nacía con un CHECK que rechazaba los
+  -- valores que la app escribe todos los días.
+  status text default 'nuevo' check (status in ('nuevo', 'en_proceso', 'cliente_activo', 'inactivo', 'bloqueado')),
   joined_channel boolean default false,
   user_created boolean default false,
   blocked boolean default false
