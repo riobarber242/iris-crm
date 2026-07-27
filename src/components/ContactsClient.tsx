@@ -5,6 +5,7 @@ import Link from 'next/link';
 import NewContactModal from '@/components/NewContactModal';
 import EditContactModal, { type EditableContact } from '@/components/EditContactModal';
 import { InfoCategorias } from '@/components/ui/InfoCategorias';
+import { useAuth } from '@/components/AuthProvider';
 
 type ContactRow = {
   id:                 string;
@@ -188,6 +189,10 @@ function saveImportProgress(p: ImportProgress) { try { localStorage.setItem(IMPO
 function clearImportProgress() { try { localStorage.removeItem(IMPORT_PROGRESS_KEY); } catch {} }
 
 export default function ContactsClient() {
+  const { agent } = useAuth();
+  // Borrado masivo por categoría: admin y agente (el dueño del panel del
+  // cliente), no operadores. Gate de UI; el que decide es el 403 del endpoint.
+  const puedeBorrarMasivo = agent?.role === 'admin' || agent?.role === 'agent';
   const [contacts,     setContacts]     = useState<ContactRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [query,        setQuery]        = useState('');
@@ -207,6 +212,16 @@ export default function ContactsClient() {
   const [showImportPanel, setShowImportPanel] = useState(false); // modal de import CSV
   const [sortDir,        setSortDir]        = useState<SortDir>('az'); // orden alfabético, A-Z por defecto
   const [category,       setCategory]       = useState<string>('');    // filtro por categoría; '' = todas
+  // ── Selección POR FILTRO (todos los que matchean, no solo la página) ──
+  // matchCount = total exacto del filtro actual (lo cuenta el server, incluye a
+  // los contactos sin usuario de casino que la lista no muestra). matchSelected
+  // = el operador escaló de "esta página" a "todos los que coinciden".
+  const [matchCount,    setMatchCount]    = useState<number | null>(null);
+  const [matchSelected, setMatchSelected] = useState(false);
+  const [bulkConfirm,   setBulkConfirm]   = useState(false); // modal de confirmación abierto
+  const [bulkTyped,     setBulkTyped]     = useState('');    // "ELIMINAR" tipeado a mano
+  const [bulkProgress,  setBulkProgress]  = useState<{ deleted: number; total: number } | null>(null);
+  const [bulkError,     setBulkError]     = useState<string | null>(null);
   const [editing,        setEditing]        = useState<EditableContact | null>(null);
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set()); // selección múltiple
@@ -303,6 +318,32 @@ export default function ContactsClient() {
     }, 15_000);
     return () => clearInterval(timer);
   }, [query, sortDir, category, loadFirst]);
+
+  // Total exacto del filtro actual (categoría + búsqueda), para ofrecer "todos
+  // los que coinciden" y para el número del cartel. Lo cuenta el server con el
+  // MISMO filtro con el que después borra. Solo para quien puede borrar en masa:
+  // a un operador el endpoint le responde 403 y no tiene sentido pedirlo.
+  useEffect(() => {
+    if (!puedeBorrarMasivo) { setMatchCount(null); return; }
+    let vivo = true;
+    const params = new URLSearchParams();
+    if (category) params.set('category', category);
+    const term = query.trim();
+    if (term) params.set('q', term);
+    // Sin filtro no ofrecemos el borrado masivo: no hay nada que contar.
+    if (!category && !term) { setMatchCount(null); return; }
+    const t = setTimeout(() => {
+      fetch(`/api/contacts/bulk-delete?${params.toString()}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (vivo) setMatchCount(typeof d?.count === 'number' ? d.count : null); })
+        .catch(() => { if (vivo) setMatchCount(null); });
+    }, term ? 300 : 0);
+    return () => { vivo = false; clearTimeout(t); };
+  }, [category, query, puedeBorrarMasivo]);
+
+  // Cambiar de filtro invalida la selección "todos los que coinciden": si no, se
+  // arrastraría a un conjunto distinto del que el operador aceptó.
+  useEffect(() => { setMatchSelected(false); }, [category, query]);
 
   // Cerrar el dropdown "Acciones" al clickear afuera.
   useEffect(() => {
@@ -479,6 +520,48 @@ export default function ContactsClient() {
       alert('Error de red al eliminar el contacto.');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  // Borrado por FILTRO: no manda ids, manda el filtro. El endpoint borra de a
+  // lotes con presupuesto de tiempo y devuelve cuánto queda; acá lo llamamos en
+  // loop hasta que termina, mostrando progreso. Si se corta a mitad (pestaña
+  // cerrada, red), lo borrado quedó borrado y volver a apretar retoma.
+  async function handleDeleteByFilter() {
+    if (!puedeBorrarMasivo || matchCount == null || matchCount === 0) return;
+    setBulkError(null);
+    setBulkProgress({ deleted: 0, total: matchCount });
+    let acumulado = 0;
+    try {
+      for (let vuelta = 0; vuelta < 200; vuelta++) {
+        const res = await fetch('/api/contacts/bulk-delete', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ category, q: query.trim() }),
+        });
+        const data = await res.json().catch(() => ({} as any));
+        if (!res.ok) {
+          acumulado += Number(data?.deleted ?? 0);
+          throw new Error(data?.error || `El servidor rechazó el borrado (HTTP ${res.status}).`);
+        }
+        acumulado += Number(data.deleted ?? 0);
+        setBulkProgress({ deleted: acumulado, total: matchCount });
+        if (data.done) break;
+        // Sin avance en una vuelta completa: cortamos para no quedarnos en un
+        // loop infinito contra un filtro que no borra nada.
+        if (Number(data.deleted ?? 0) === 0) break;
+      }
+      setBulkConfirm(false);
+      setBulkTyped('');
+      setMatchSelected(false);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      fetchContacts();
+    } catch (err: any) {
+      console.error('[ContactsClient] borrado por filtro falló', err);
+      setBulkError(err?.message || 'No se pudieron eliminar los contactos.');
+    } finally {
+      setBulkProgress(null);
     }
   }
 
@@ -892,9 +975,11 @@ export default function ContactsClient() {
           padding: '12px 18px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap',
         }}>
           <span style={{ fontSize: '14px', fontWeight: 700 }}>
-            {selectedIds.size > 0
-              ? `${selectedIds.size} contacto${selectedIds.size !== 1 ? 's' : ''} seleccionado${selectedIds.size !== 1 ? 's' : ''}`
-              : 'Seleccionar contactos'}
+            {matchSelected && matchCount != null
+              ? `${matchCount.toLocaleString('es-AR')} contactos seleccionados`
+              : selectedIds.size > 0
+                ? `${selectedIds.size} contacto${selectedIds.size !== 1 ? 's' : ''} seleccionado${selectedIds.size !== 1 ? 's' : ''}`
+                : 'Seleccionar contactos'}
           </span>
           <button
             onClick={toggleAll}
@@ -907,16 +992,33 @@ export default function ContactsClient() {
           >
             {allSelected ? '☑ Todos' : '☐ Todos'}
           </button>
-          {selectedIds.size > 0 && (
+          {/* Escalada explícita de "esta página" a "todos los que coinciden".
+              Es un segundo paso a propósito: "Todos" sigue marcando la página,
+              como siempre, y pasar a miles de contactos es una decisión aparte.
+              Solo aparece con filtro activo y si hay más de los que se ven. */}
+          {puedeBorrarMasivo && !matchSelected && allSelected && matchCount != null && matchCount > contacts.length && (
+            <button
+              onClick={() => setMatchSelected(true)}
+              style={{
+                background: 'rgba(255,255,255,0.14)', border: '1px dashed rgba(255,255,255,0.5)',
+                color: '#fff', fontSize: '13px', fontWeight: 700, borderRadius: '10px',
+                padding: '8px 14px', cursor: 'pointer',
+              }}
+            >
+              Seleccionar los {matchCount.toLocaleString('es-AR')} que coinciden
+            </button>
+          )}
+
+          {(selectedIds.size > 0 || matchSelected) && (
             <>
               <button
-                onClick={() => setSelectedIds(new Set())}
+                onClick={() => { setSelectedIds(new Set()); setMatchSelected(false); }}
                 style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
               >
                 Limpiar
               </button>
               <button
-                onClick={handleDeleteBulk}
+                onClick={() => { if (matchSelected) { setBulkTyped(''); setBulkError(null); setBulkConfirm(true); } else { handleDeleteBulk(); } }}
                 disabled={deletingBulk}
                 style={{
                   background: '#E53935', color: '#fff', fontWeight: 800, fontSize: '13px', border: 'none',
@@ -924,10 +1026,91 @@ export default function ContactsClient() {
                   opacity: deletingBulk ? 0.6 : 1,
                 }}
               >
-                {deletingBulk ? 'Eliminando…' : 'Eliminar seleccionados 🗑️'}
+                {deletingBulk
+                  ? 'Eliminando…'
+                  : matchSelected && matchCount != null
+                    ? `Eliminar ${matchCount.toLocaleString('es-AR')} 🗑️`
+                    : 'Eliminar seleccionados 🗑️'}
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Cartel de confirmación del borrado masivo. Modal propio y no confirm()
+          del navegador: hace falta mostrar el número exacto, el peso relativo y
+          pedir que se escriba ELIMINAR. Es una acción sin vuelta atrás. */}
+      {bulkConfirm && matchCount != null && (
+        <div
+          onClick={() => !bulkProgress && setBulkConfirm(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '16px', width: '100%', maxWidth: '460px', padding: '22px', display: 'flex', flexDirection: 'column', gap: '14px', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+          >
+            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#000' }}>
+              Vas a eliminar {matchCount.toLocaleString('es-AR')} contacto{matchCount !== 1 ? 's' : ''}
+              {category ? <> de la categoría <span style={{ color: '#E53935' }}>{STATUS_LABEL[category] ?? category}</span></> : null}
+            </h3>
+
+            <div style={{ fontSize: '13px', color: '#555', lineHeight: 1.6, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {query.trim() && <span>Filtrado además por la búsqueda “{query.trim()}”.</span>}
+              <span>Se borra también <strong>todo su historial</strong>: mensajes y comprobantes.</span>
+              <span>Incluye contactos <strong>sin usuario de casino</strong>, que no aparecen en la lista.</span>
+              <span style={{ color: '#B71C1C', fontWeight: 700 }}>Esta acción no se puede deshacer.</span>
+            </div>
+
+            {bulkProgress ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ height: '10px', background: '#eee', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, Math.round((bulkProgress.deleted / Math.max(1, bulkProgress.total)) * 100))}%`, height: '100%', background: '#E53935', borderRadius: '999px', transition: 'width 0.3s ease' }} />
+                </div>
+                <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: '#666' }}>
+                  Eliminando {bulkProgress.deleted.toLocaleString('es-AR')} de {bulkProgress.total.toLocaleString('es-AR')}… No cierres esta pestaña.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p style={{ margin: '0 0 6px 0', fontSize: '12px', fontWeight: 700, color: '#666' }}>
+                  Para confirmar, escribí ELIMINAR
+                </p>
+                <input
+                  value={bulkTyped}
+                  onChange={(e) => setBulkTyped(e.target.value)}
+                  placeholder="ELIMINAR"
+                  autoFocus
+                  style={{ width: '100%', boxSizing: 'border-box', background: '#F5F5F5', border: '2px solid #e0e0e0', borderRadius: '12px', padding: '12px 16px', fontSize: '14px', outline: 'none' }}
+                />
+              </div>
+            )}
+
+            {bulkError && (
+              <p style={{ margin: 0, fontSize: '13px', color: '#B71C1C', background: '#FDECEA', borderRadius: '10px', padding: '10px 12px' }}>⚠ {bulkError}</p>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setBulkConfirm(false)}
+                disabled={!!bulkProgress}
+                style={{ background: '#F5F5F5', color: '#333', fontWeight: 700, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '12px 18px', cursor: bulkProgress ? 'not-allowed' : 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteByFilter}
+                disabled={!!bulkProgress || bulkTyped.trim().toUpperCase() !== 'ELIMINAR'}
+                style={{
+                  background: bulkProgress || bulkTyped.trim().toUpperCase() !== 'ELIMINAR' ? '#e0e0e0' : '#E53935',
+                  color: bulkProgress || bulkTyped.trim().toUpperCase() !== 'ELIMINAR' ? '#999' : '#fff',
+                  fontWeight: 800, fontSize: '14px', border: 'none', borderRadius: '12px', padding: '12px 20px',
+                  cursor: bulkProgress || bulkTyped.trim().toUpperCase() !== 'ELIMINAR' ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {bulkProgress ? 'Eliminando…' : `Eliminar ${matchCount.toLocaleString('es-AR')}`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
