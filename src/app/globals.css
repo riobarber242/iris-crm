@@ -6,10 +6,14 @@
   background-color: #F5F5F5;
   color: #1a1a1a;
 
-  /* Colores de estado de contactos/clientes (fuente única para badges y dots). */
-  --status-activo:   #C8FF00;  /* cliente_activo */
-  --status-nuevo:    #4FC3F7;  /* nuevo */
-  --status-inactivo: #555555;  /* inactivo */
+  /* Colores de estado de contactos/clientes: fuente ÚNICA para badges, dots y el
+     mapa de provincias del dashboard. Si un color de categoría no sale de acá,
+     la misma categoría termina de dos colores distintos en dos pantallas. */
+  --status-activo:    #C8FF00;  /* cliente_activo */
+  --status-nuevo:     #4FC3F7;  /* nuevo */
+  --status-inactivo:  #555555;  /* inactivo */
+  --status-bloqueado: #FF4444;  /* bloqueado */
+  --status-proceso:   #FFB800;  /* en_proceso */
 }
 
 * {
@@ -225,8 +229,8 @@ button, input, textarea, select {
 .leads-dot[data-status='cliente_activo'] { background: var(--status-activo); }
 .leads-dot[data-status='nuevo']          { background: var(--status-nuevo); }
 .leads-dot[data-status='inactivo']       { background: var(--status-inactivo); }
-.leads-dot[data-status='en_proceso']     { background: var(--status-activo); }
-.leads-dot[data-status='bloqueado']      { background: #FF4444; }
+.leads-dot[data-status='en_proceso']     { background: var(--status-proceso); }
+.leads-dot[data-status='bloqueado']      { background: var(--status-bloqueado); }
 
 /* Detalle expandible de una fila (se renderiza al tocar en mobile): usuario,
    teléfono y estado. Oculto en desktop/tablet (ahí esas columnas ya están). */
@@ -472,8 +476,8 @@ button, input, textarea, select {
 .c-dot[data-status='cliente_activo'] { background: var(--status-activo); }
 .c-dot[data-status='nuevo']          { background: var(--status-nuevo); }
 .c-dot[data-status='inactivo']       { background: var(--status-inactivo); }
-.c-dot[data-status='en_proceso']     { background: #f0c040; }
-.c-dot[data-status='bloqueado']      { background: #FF4444; }
+.c-dot[data-status='en_proceso']     { background: var(--status-proceso); }
+.c-dot[data-status='bloqueado']      { background: var(--status-bloqueado); }
 
 /* El teléfono es un string de dígitos sin espacios: sin esto fuerza el ancho
    de su columna 1fr. Truncar lo mantiene contenido en cualquier breakpoint. */

@@ -49,12 +49,16 @@ const PROVINCE_COORDS: Record<string, [number, number]> = {
   'Tierra del Fuego':       [ 80, 462],
 };
 
+// Los tonos salen de las variables de globals.css, no de literales propios: el
+// mapa tenía su propio azul para "nuevo" (#4A90D9) y su propio gris para
+// "inactivo" (#aaa), así que el MISMO contacto salía de un color en el mapa y de
+// otro en su badge de Contactos / Top Clientes.
 const STATUS_COLOR: Record<string, string> = {
-  cliente_activo: '#C8FF00',
-  nuevo:          '#4A90D9',
-  inactivo:       '#aaa',
-  bloqueado:      '#FF4444',
-  en_proceso:     '#FFB800',
+  cliente_activo: 'var(--status-activo)',
+  nuevo:          'var(--status-nuevo)',
+  inactivo:       'var(--status-inactivo)',
+  bloqueado:      'var(--status-bloqueado)',
+  en_proceso:     'var(--status-proceso)',
 };
 
 // ── SVG Donut ──────────────────────────────────────────────────────────────────
@@ -218,19 +222,29 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia', stat
   const byProvincia = new Map(data.map((d) => [d.provincia, d]));
   const hasData     = data.length > 0;
 
-  // Color del punto/leyenda según el modo.
-  const CONTACTO_COLOR = '#4A90D9';
+  // Color del punto/leyenda según el modo. Cubre dos casos: el modo "sin colores
+  // por categoría" (el mapa muestra contactos a secas) y el fallback de una
+  // categoría desconocida. Sale de la misma paleta que el resto —era el último
+  // literal suelto (#4A90D9)—; usa el celeste de "nuevo" porque un contacto sin
+  // categoría es, por defecto, uno todavía sin clasificar. En el modo sin
+  // categorías no hay con qué confundirlo: la leyenda ahí dice "Contactos".
+  const CONTACTO_COLOR = 'var(--status-nuevo)';
   const dotColor = (dominant: string) =>
     statusColors
       ? (STATUS_COLOR[dominant] ?? CONTACTO_COLOR)
-      : (dominant === 'bloqueado' ? '#FF4444' : CONTACTO_COLOR);
+      : (dominant === 'bloqueado' ? STATUS_COLOR.bloqueado : CONTACTO_COLOR);
   // Sin colores por status no hay caso "cliente activo" (verde lima), así que
   // tampoco su borde ni su texto oscuro.
   const esActivo = (dominant: string) => statusColors && dominant === 'cliente_activo';
 
   const leyenda = statusColors
-    ? { 'Cliente activo': '#C8FF00', 'Nuevo': '#4A90D9', 'Inactivo': '#aaa', 'Bloqueado': '#FF4444' }
-    : { 'Contactos': CONTACTO_COLOR, 'Bloqueado': '#FF4444' };
+    ? {
+        'Cliente activo': STATUS_COLOR.cliente_activo,
+        'Nuevo':          STATUS_COLOR.nuevo,
+        'Inactivo':       STATUS_COLOR.inactivo,
+        'Bloqueado':      STATUS_COLOR.bloqueado,
+      }
+    : { 'Contactos': CONTACTO_COLOR, 'Bloqueado': STATUS_COLOR.bloqueado };
 
   return (
     <div className="dash-chart" style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '260px' }}>
@@ -255,7 +269,11 @@ export function ArgentinaMap({ data, title = 'Distribución por provincia', stat
             const stroke = item ? (esActivo(item.dominant) ? '#8ab000' : 'rgba(0,0,0,0.15)') : '#ccc';
             return (
               <g key={prov}>
-                <circle cx={cx} cy={cy} r={r} fill={color} stroke={stroke} strokeWidth="1.5" opacity={item ? 1 : 0.4} />
+                {/* El color va por `style` y no por el atributo `fill`: ahora es
+                    un var() de CSS, y var() dentro de un atributo de presentación
+                    de SVG no resuelve en todos los navegadores (Safari). En un
+                    style inline sí, siempre. */}
+                <circle cx={cx} cy={cy} r={r} style={{ fill: color }} stroke={stroke} strokeWidth="1.5" opacity={item ? 1 : 0.4} />
                 {item && (
                   <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="middle" fontSize="8" fontWeight="800" fill={esActivo(item.dominant) ? '#3a5a00' : '#fff'}>
                     {item.total}

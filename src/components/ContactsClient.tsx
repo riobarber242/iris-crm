@@ -19,12 +19,17 @@ type ContactRow = {
 
 type SortDir = 'az' | 'za';
 
-const STATUS_COLOR: Record<string, { bg: string; fg: string }> = {
-  nuevo:          { bg: 'var(--status-nuevo)',    fg: '#000' },
-  en_proceso:     { bg: '#fff8d6',                fg: '#b8860b' },
-  cliente_activo: { bg: 'var(--status-activo)',   fg: '#000' },
-  inactivo:       { bg: 'var(--status-inactivo)', fg: '#fff' },
-  bloqueado:      { bg: '#FF4444',                fg: '#fff' },
+// OJO con las claves: son las de CSS (`background`/`color`), no `bg`/`fg`. Este
+// objeto se spreadea dentro de un style de React, y React descarta en silencio
+// lo que no reconoce: con `bg`/`fg` el badge se renderizaba SIN fondo ni color,
+// o sea texto pelado. Los tonos salen de las variables de globals.css, que son
+// las mismas que usan Top Clientes y el mapa de provincias.
+const STATUS_COLOR: Record<string, React.CSSProperties> = {
+  nuevo:          { background: 'var(--status-nuevo)',     color: '#000' },
+  en_proceso:     { background: 'var(--status-proceso)',   color: '#000' },
+  cliente_activo: { background: 'var(--status-activo)',    color: '#000' },
+  inactivo:       { background: 'var(--status-inactivo)',  color: '#fff' },
+  bloqueado:      { background: 'var(--status-bloqueado)', color: '#fff' },
 };
 
 // Etiqueta legible de la categoría. La lista mostraba el valor crudo de la

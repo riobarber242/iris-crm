@@ -27,10 +27,15 @@ const PERIODS: { key: Period; label: string }[] = [
   { key: 'custom', label: 'Personalizado' },
 ];
 
+// Faltaban en_proceso y bloqueado: al no estar, el `?? STATUS_STYLE.nuevo` de
+// más abajo los pintaba de celeste, o sea un cliente BLOQUEADO se leía como
+// "Nuevo". Mismos tonos que Contactos y el mapa (variables de globals.css).
 const STATUS_STYLE: Record<string, React.CSSProperties> = {
-  cliente_activo: { background: 'var(--status-activo)',   color: '#000' },
-  inactivo:       { background: 'var(--status-inactivo)', color: '#fff' },
-  nuevo:          { background: 'var(--status-nuevo)',    color: '#000' },
+  cliente_activo: { background: 'var(--status-activo)',    color: '#000' },
+  inactivo:       { background: 'var(--status-inactivo)',  color: '#fff' },
+  nuevo:          { background: 'var(--status-nuevo)',     color: '#000' },
+  en_proceso:     { background: 'var(--status-proceso)',   color: '#000' },
+  bloqueado:      { background: 'var(--status-bloqueado)', color: '#fff' },
 };
 
 // El layout del ranking (grid de columnas / card apilada según breakpoint) vive
