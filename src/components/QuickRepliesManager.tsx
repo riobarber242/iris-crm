@@ -5,6 +5,10 @@ import { useEffect, useState } from 'react';
 type QuickReply = { id: string; title: string; content: string };
 
 export default function QuickRepliesManager() {
+  // Colapsada por defecto: con muchas plantillas cargadas la sección empujaba todo
+  // lo demás de Configuración fuera de la pantalla. El contador en el botón dice
+  // cuántas hay sin necesidad de abrirla.
+  const [abierto, setAbierto] = useState(false);
   const [replies, setReplies] = useState<QuickReply[]>([]);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -73,6 +77,29 @@ export default function QuickRepliesManager() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Desplegar / ocultar. Mismo estilo que el botón colapsable de los motivos
+          de fallo en Campañas. */}
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        aria-expanded={abierto}
+        style={{
+          alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: '8px',
+          background: 'transparent', border: '1px solid #dcdcd6', borderRadius: '10px',
+          padding: '8px 13px', fontSize: '13px', fontWeight: 700, color: '#333',
+          cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: '15px' }}>⚡</span>
+        {abierto ? 'Ocultar las respuestas rápidas' : 'Ver las respuestas rápidas'}
+        <span style={{ background: '#F0F0EA', color: '#666', borderRadius: '20px', padding: '1px 8px', fontSize: '11px', fontWeight: 800 }}>
+          {replies.length}
+        </span>
+        <span style={{ fontSize: '10px', color: '#888' }}>{abierto ? '▴' : '▾'}</span>
+      </button>
+
+      {abierto && (
+        <>
       {/* Existing replies */}
       {replies.length === 0 && (
         <p style={{ fontSize: '14px', color: '#999', margin: 0 }}>
@@ -194,6 +221,8 @@ export default function QuickRepliesManager() {
           {saving ? 'Guardando...' : '+ Agregar respuesta rápida'}
         </button>
       </form>
+        </>
+      )}
     </div>
   );
 }
