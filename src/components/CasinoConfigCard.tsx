@@ -5,8 +5,8 @@ import React, { useEffect, useState } from 'react';
 // Configuración del casino (rol 'agent' o 'admin') — Etapa 2, PR 5.
 // Flujo: conectar → probar → activar. Las credenciales viven en casino_accounts
 // (cifradas) vía /api/casino/account; el switch on/off es el flag
-// casino_deposit_enabled. "Probar conexión" GUARDA y PRUEBA junto (endpoint del PR4,
-// modo useSaved), y sella connection_verified_at. El switch "Activar depósitos" queda
+// casino_deposit_enabled. "Probar conexión" PRUEBA y recién después GUARDA: una
+// prueba fallida no persiste nada, y sella connection_verified_at. El switch queda
 // bloqueado hasta que haya una verificación OK; editar una credencial la invalida
 // (fail-safe, en el front y en el backend).
 
@@ -88,39 +88,78 @@ export default function CasinoConfigCard() {
     return (v: T) => { setter(v); setCredsDirty(true); };
   }
 
+  // Orden: PROBAR primero (sin persistir), guardar sólo si pasó. Antes guardaba
+  // antes de probar, así que una prueba fallida dejaba la credencial tipeada
+  // pisando la que funcionaba — con el casino caído devolviendo "usuario o
+  // contraseña incorrectos", eso convertía un hipo del casino en una caída larga.
   async function testConnection() {
     setTesting(true);
     setTestResult(null);
     setMsg(null);
+    const typed = password.trim();
+    const wasEnabled = enabled;
     try {
-      // 1) Guardar la fila (cifra el password si se escribió uno nuevo).
+      // 1) Probar SIN persistir nada. Si se tocó alguna credencial se prueban los
+      //    valores tipeados; si no, se prueba la fila guardada (y eso ya sella).
+      //    Sin contraseña escrita, el backend usa la guardada.
+      const probe = credsDirty
+        ? {
+            agentUsername, agentId, skinId, skinDomain: baseUrl,
+            ...(typed ? { agentPassword: typed } : {}),
+          }
+        : { useSaved: true };
+      const testRes = await fetch('/api/casino/test-connection', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(probe),
+      });
+      const t = await testRes.json().catch(() => null);
+      if (!t?.ok) {
+        // Nada se guarda: la credencial anterior queda intacta.
+        setTestResult({ ok: false, text: `🔴 ${t?.error ?? 'No se pudo conectar con el casino.'}` });
+        return;
+      }
+
+      // 2) Recién ahora guardamos: la conexión ya quedó probada.
       const saveRes = await fetch('/api/casino/account', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agent_username: agentUsername, agent_id: agentId, skin_id: skinId,
           api_base_url: baseUrl, player_url: playerUrl, player_url_2: playerUrl2,
           credentials_template: template,
-          ...(password.trim() ? { agent_password: password.trim() } : {}),
+          ...(typed ? { agent_password: typed } : {}),
         }),
       });
+      const saved = await saveRes.json().catch(() => null);
       if (!saveRes.ok) {
-        const e = await saveRes.json().catch(() => null);
-        setTestResult({ ok: false, text: e?.error ?? 'No se pudo guardar la conexión.' });
+        setTestResult({ ok: false, text: `⚠️ Conectó, pero no se pudo guardar: ${saved?.error ?? 'error del servidor'}` });
         return;
       }
 
-      // 2) Probar la fila recién guardada (sella connection_verified_at si pasa).
-      const testRes = await fetch('/api/casino/test-connection', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ useSaved: true }),
-      });
-      const t = await testRes.json().catch(() => null);
-      if (t?.ok) {
-        const balance = Number(t.balance).toLocaleString('es-AR');
-        setTestResult({ ok: true, text: `✅ Conectó. Agente ${t.agentName} · ${balance} fichas` });
-      } else {
-        setTestResult({ ok: false, text: `🔴 ${t?.error ?? 'No se pudo conectar con el casino.'}` });
+      const balance = Number(t.balance).toLocaleString('es-AR');
+      setTestResult({ ok: true, text: `✅ Conectó. Agente ${t.agentName} · ${balance} fichas` });
+
+      // 3) Sellar la verificación de la fila. Sólo hace falta si el guardado la
+      //    invalidó, o sea si alguna credencial cambió DE VERDAD.
+      if (!saved?.connection_verified_at) {
+        const sealRes = await fetch('/api/casino/test-connection', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ useSaved: true }),
+        }).catch(() => null);
+        const sealed = !!(sealRes && (await sealRes.json().catch(() => null))?.ok);
+
+        if (!sealed) {
+          setTestResult({ ok: false, text: '⚠️ Conectó y se guardó, pero no se pudo sellar la verificación. Probá de nuevo en un minuto.' });
+        } else if (wasEnabled) {
+          // 4) El fail-safe del server apagó los depósitos al cambiar la
+          //    credencial. Ya re-verificada y probada, se los devuelve como
+          //    estaban: el gate del server sigue exigiendo connection_verified_at.
+          await fetch('/api/casino/account', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true }),
+          }).catch(() => null);
+        }
       }
+
       await load();   // sincroniza verifiedAt / enabled / has_password
     } catch {
       setTestResult({ ok: false, text: 'Error de red.' });

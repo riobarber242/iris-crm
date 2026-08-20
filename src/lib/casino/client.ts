@@ -50,6 +50,97 @@ async function casinoFetch(url: string, init: RequestInit, timeoutMs: number = C
   }
 }
 
+// ── Reintento ante respuestas inservibles ─────────────────────────────────────
+// El casino devuelve por rachas su propia SPA (HTML) con HTTP 200 en vez del JSON
+// de la API: su ingress sirve el front-end cuando su backend de API no está.
+// Verificado en los logs del 19/08/2026: el MISMO login alternaba 201+token y HTML
+// con un minuto de diferencia. Dos reintentos cortos tapan esos hipos de decenas
+// de segundos sin que se note del lado de IRIS.
+//
+// SOLO para operaciones idempotentes (Authenticate, GetAgentBalance,
+// GetAgentWithChildren). DoDeposit y AddPlayer NO se reintentan NUNCA: acreditar
+// dos veces o crear dos jugadores es peor que fallar.
+const RETRY_DELAYS_MS = [500, 1500];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface CasinoJsonResult {
+  res: Response | null;
+  status: number;
+  body: string;
+  json: any | null;
+  /** Llegó respuesta pero no es JSON usable (HTML de la SPA, texto suelto, vacío). */
+  notJson: boolean;
+  timedOut: boolean;
+  attempts: number;
+}
+
+// Ante la duda SIEMPRE tratamos la falla como "el casino no pudo contestar", nunca
+// como credencial mala. Un falso "contraseña incorrecta" hace que la gente la
+// vuelva a tipear y termine pisando la buena: fue exactamente lo que pasó el
+// 20/08/2026 (7 contraseñas distintas guardadas en 24 minutos mientras el casino
+// devolvía HTML de forma intermitente).
+const CRED_ERROR_RE = /invalid|incorrect|wrong|credential|credencial|password|contrase|user ?name|usuario|login/i;
+
+// ¿El casino dijo explícitamente que la credencial está mal? ABP manda ese rechazo
+// con 401 y también con 500, así que el status solo no alcanza.
+function isCredRejection(r: CasinoJsonResult): boolean {
+  if (r.notJson || !r.json) return false;
+  const msg = [r.json?.error?.message, r.json?.error?.details].filter(Boolean).join(' ');
+  return !!msg && CRED_ERROR_RE.test(msg);
+}
+
+// 401/403 y los rechazos explícitos de credenciales NO se reintentan: además de
+// inútil, insistir con una credencial rechazada es lo que dispara lockouts del
+// lado del casino.
+function isTransient(r: CasinoJsonResult): boolean {
+  if (r.status === 401 || r.status === 403) return false;
+  if (isCredRejection(r)) return false;
+  return r.notJson || r.status === 429 || r.status >= 500;
+}
+
+// Wrapper de casinoFetch que además parsea el JSON y reintenta las fallas
+// transitorias. `init.body` es siempre un string en este módulo, así que se puede
+// reenviar tal cual en cada intento.
+async function casinoFetchJson(
+  url: string,
+  init: RequestInit,
+  opts: { label: string; timeoutMs?: number },
+): Promise<CasinoJsonResult> {
+  let last: CasinoJsonResult = {
+    res: null, status: 0, body: '', json: null, notJson: false, timedOut: false, attempts: 0,
+  };
+
+  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
+    try {
+      const res = await casinoFetch(url, init, opts.timeoutMs);
+      const body = await res.text().catch(() => '');
+      let json: any = null;
+      try { json = JSON.parse(body); } catch { /* no-JSON → notJson */ }
+      last = { res, status: res.status, body, json, notJson: json === null, timedOut: false, attempts: attempt };
+    } catch (err: any) {
+      const timedOut = err?.message === 'El casino no respondió a tiempo';
+      last = {
+        res: null, status: 0, body: err?.message ?? 'error de red', json: null,
+        notJson: false, timedOut, attempts: attempt,
+      };
+      // Un timeout ya se comió CASINO_TIMEOUT_MS enteros: reintentar arriesga que
+      // Vercel mate la función. Se devuelve tal cual.
+      if (timedOut) return last;
+    }
+
+    if (!isTransient(last)) return last;
+    const delay = RETRY_DELAYS_MS[attempt - 1];
+    if (delay === undefined) break;
+    console.warn(
+      `[Casino] ${opts.label}: respuesta inservible (http=${last.status}${last.notJson ? ', body no-JSON' : ''})` +
+      ` — reintento ${attempt}/${RETRY_DELAYS_MS.length} en ${delay}ms`,
+    );
+    await sleep(delay);
+  }
+  return last;
+}
+
 // Devuelve un access token válido del casino para ESTAS credenciales. Autentica
 // con usuario+contraseña a través del proxy y cachea el token hasta su expiración
 // (expireInSeconds) con un margen de 60s. El cache es por skinDomain|agentUsername.
@@ -62,7 +153,7 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
   if (!creds.agentPassword) return null;
 
   try {
-    const res = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
+    const r = await casinoFetchJson(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
       method: 'POST',
       headers: proxyHeaders(creds.skinDomain),
       body: JSON.stringify({
@@ -70,20 +161,21 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
         password: creds.agentPassword,
         skinDomain: creds.skinDomain,
       }),
-    });
+    }, { label: 'Authenticate' });
 
-    const rawBody = await res.text().catch(() => '');
-    console.log(`[Casino] Authenticate status=${res.status} — body(500):`, rawBody.slice(0, 500));
+    console.log(`[Casino] Authenticate http=${r.status} intentos=${r.attempts} — body(500):`, r.body.slice(0, 500));
 
-    if (!res.ok) return null;
-
-    let data: any = null;
-    try {
-      data = JSON.parse(rawBody);
-    } catch {
-      console.error('[Casino] Authenticate: body no es JSON (¿HTML?)');
+    if (r.timedOut) {
+      console.error('[Casino] Authenticate: el casino no respondió a tiempo');
       return null;
     }
+    if (r.notJson) {
+      console.error(`[Casino] Authenticate: body no es JSON (¿HTML?) tras ${r.attempts} intento(s)`);
+      return null;
+    }
+    if (r.status >= 400) return null;
+
+    const data = r.json;
     const token: string | null = data?.result?.accessToken ?? null;
     const expireInSeconds = Number(data?.result?.expireInSeconds ?? 0);
     if (!token) {
@@ -115,20 +207,20 @@ export async function getAgentBalance(creds: CasinoCreds): Promise<number | null
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`;
 
   try {
-    const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders(creds) });
-    if (!res.ok) {
-      console.error(`[Casino] GetAgentBalance HTTP ${res.status}`);
+    const r = await casinoFetchJson(url, { method: 'GET', headers: await casinoHeaders(creds) }, { label: 'GetAgentBalance' });
+    if (r.timedOut) {
+      console.error('[Casino] GetAgentBalance: el casino no respondió a tiempo');
       return null;
     }
-    const text = await res.text();
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.error('[Casino] GetAgentBalance: body no es JSON (¿HTML/bloqueo?) — primeros 200:', text.slice(0, 200));
+    if (r.notJson) {
+      console.error(`[Casino] GetAgentBalance: body no es JSON (¿HTML/bloqueo?) tras ${r.attempts} intento(s) — primeros 200:`, r.body.slice(0, 200));
       return null;
     }
-    const balance = Number(data?.result);
+    if (r.status >= 400) {
+      console.error(`[Casino] GetAgentBalance HTTP ${r.status}`);
+      return null;
+    }
+    const balance = Number(r.json?.result);
     return Number.isFinite(balance) ? balance : null;
   } catch (err: any) {
     console.error('[Casino] GetAgentBalance error:', err?.message ?? err);
@@ -151,25 +243,26 @@ export async function getPlayerTargetId(creds: CasinoCreds, username: string): P
 
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
 
-  const res = await casinoFetch(url, { method: 'GET', headers: await casinoHeaders(creds) });
+  // Logueamos el body RAW: cuando el casino sirve su SPA en HTML con status 200
+  // (ver casinoFetchJson), esto muestra exactamente qué llegó. La búsqueda del
+  // player es idempotente, así que se reintenta.
+  const r = await casinoFetchJson(url, { method: 'GET', headers: await casinoHeaders(creds) }, { label: 'GetAgentWithChildren' });
+  console.log(`[Casino] GetAgentWithChildren raw body (200 chars, intentos=${r.attempts}):`, r.body.slice(0, 200));
 
-  if (!res.ok) {
-    console.error(`[Casino] GetAgentWithChildren HTTP ${res.status}`);
+  if (r.timedOut) {
+    console.error('[Casino] GetAgentWithChildren: el casino no respondió a tiempo');
+    return null;
+  }
+  if (r.notJson) {
+    console.error(`[Casino] GetAgentWithChildren: body no es JSON (¿HTML/bloqueo?) tras ${r.attempts} intento(s) — primeros 500:`, r.body.slice(0, 500));
+    return null;
+  }
+  if (r.status >= 400) {
+    console.error(`[Casino] GetAgentWithChildren HTTP ${r.status}`);
     return null;
   }
 
-  // Logueamos el body RAW antes de parsear: si el casino bloquea la IP de
-  // egress (Vercel/US) devuelve su SPA en HTML con status 200, y JSON.parse
-  // tiraría un error no capturado (→ 500). Con esto vemos exactamente qué llega.
-  const text = await res.text();
-  console.log('[Casino] GetAgentWithChildren raw body (200 chars):', text.slice(0, 200));
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    console.error('[Casino] GetAgentWithChildren: body no es JSON (¿HTML/bloqueo?) — primeros 500:', text.slice(0, 500));
-    return null;
-  }
+  const data = r.json;
   console.log('[Casino] GetAgentWithChildren shape:', JSON.stringify(data, null, 2).substring(0, 3000));
 
   let items: any[] = [];
@@ -317,77 +410,113 @@ export async function createPlayer(creds: CasinoCreds, userName: string, passwor
 // cada modo de falla para dar un mensaje específico en el form. NO toca tokenCache:
 // usa el token fresco de SU propio Authenticate (probamos credenciales sin guardar,
 // y no queremos envenenar el cache del flujo real).
+export type CasinoTestFailReason =
+  | 'bad_credentials'      // el casino RECHAZÓ el login (lo dijo él, no lo inferimos)
+  | 'casino_unavailable'   // HTML de la SPA, 5xx, 429, body raro → NO es la contraseña
+  | 'agent_not_found'
+  | 'forbidden_target'
+  | 'proxy_secret'
+  | 'timeout'
+  | 'unknown';
+
 export type CasinoTestResult =
   | { ok: true; agentName: string; balance: number; authResultKeys: string[] }
-  | { ok: false; reason: 'bad_credentials' | 'agent_not_found' | 'forbidden_target' | 'timeout' | 'unknown'; detail?: string };
+  | { ok: false; reason: CasinoTestFailReason; detail?: string };
+
+// Traduce una falla a su causa. Solo 'bad_credentials' habla de la contraseña, y
+// se llega ahí únicamente si el casino lo dijo él mismo (ver isCredRejection).
+function classifyFailure(r: CasinoJsonResult): CasinoTestFailReason {
+  if (r.timedOut) return 'timeout';
+  if (r.notJson)  return 'casino_unavailable';   // ← el caso de los logs del 19-20/08
+  // El casino contestó JSON bien formado: su propio mensaje de error manda por
+  // encima del status (ABP devuelve el rechazo de login con 401 y también con 500).
+  if (isCredRejection(r)) return 'bad_credentials';
+  if (r.status === 401 || r.status === 403) return 'bad_credentials';
+  if (r.status === 429 || r.status >= 500)  return 'casino_unavailable';
+  return 'unknown';
+}
+
+// Nunca loguea la contraseña. Sin esto los intentos fallidos eran invisibles:
+// testCasinoConnection solo logueaba en el éxito, así que los tests de las 14:05 y
+// 14:26 del 20/08 no dejaron ni una línea.
+function logTestFailure(creds: CasinoCreds, stage: string, reason: string, r: CasinoJsonResult) {
+  console.error(
+    `[Casino] test-connection FALLÓ stage=${stage} reason=${reason} tenant=${creds.tenantId} ` +
+    `agente=${creds.agentUsername} target=${creds.skinDomain} http=${r.status} intentos=${r.attempts} ` +
+    `content-type=${r.res?.headers.get('content-type') ?? '-'} — body(300): ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`,
+  );
+}
 
 export async function testCasinoConnection(creds: CasinoCreds): Promise<CasinoTestResult> {
   // ── 1) Authenticate (login del agente) ──────────────────────────────────────
-  let authRes: Response;
-  try {
-    authRes = await casinoFetch(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
-      method: 'POST',
-      headers: proxyHeaders(creds.skinDomain),
-      body: JSON.stringify({
-        userNameOrEmailAddress: creds.agentUsername,
-        password: creds.agentPassword,
-        skinDomain: creds.skinDomain,
-      }),
-    });
-  } catch (err: any) {
-    if (err?.message === 'El casino no respondió a tiempo') return { ok: false, reason: 'timeout' };
-    return { ok: false, reason: 'unknown', detail: err?.message ?? 'Error de red' };
-  }
+  const a = await casinoFetchJson(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
+    method: 'POST',
+    headers: proxyHeaders(creds.skinDomain),
+    body: JSON.stringify({
+      userNameOrEmailAddress: creds.agentUsername,
+      password: creds.agentPassword,
+      skinDomain: creds.skinDomain,
+    }),
+  }, { label: 'test/Authenticate' });
 
-  const authBody = await authRes.text().catch(() => '');
-  // 403 texto plano lo pone el WORKER (no el casino) cuando el skin_domain no está
-  // en el allowlist: ese es el caso "casino todavía no habilitado".
-  if (authRes.status === 403 && /forbidden casino target/i.test(authBody)) {
+  // Rechazos del WORKER (texto plano), antes de clasificar nada del casino.
+  // 403 = el skin_domain no está en el allowlist ("casino todavía no habilitado").
+  if (a.status === 403 && /forbidden casino target/i.test(a.body)) {
+    logTestFailure(creds, 'Authenticate', 'forbidden_target', a);
     return { ok: false, reason: 'forbidden_target' };
   }
   // 401 "Unauthorized" texto plano = X-Proxy-Secret inválido (infra, no credenciales).
-  if (authRes.status === 401 && /^unauthorized$/i.test(authBody.trim())) {
-    return { ok: false, reason: 'unknown', detail: 'Proxy secret inválido' };
+  if (a.status === 401 && /^unauthorized$/i.test(a.body.trim())) {
+    logTestFailure(creds, 'Authenticate', 'proxy_secret', a);
+    return { ok: false, reason: 'proxy_secret', detail: 'Proxy secret inválido' };
   }
 
-  let authData: any = null;
-  try { authData = JSON.parse(authBody); } catch { /* no-JSON → bad_credentials abajo */ }
-  const token: string | null = authData?.result?.accessToken ?? null;
+  const token: string | null = a.json?.result?.accessToken ?? null;
   if (!token) {
-    // Login rechazado por el casino (usuario/contraseña). Cubre 401/500 con error ABP.
-    return { ok: false, reason: 'bad_credentials' };
+    // Antes TODO esto caía en bad_credentials → "Usuario o contraseña incorrectos"
+    // aunque el casino estuviera devolviendo HTML. Ahora se distingue la causa.
+    const reason = classifyFailure(a);
+    logTestFailure(creds, 'Authenticate', reason, a);
+    return { ok: false, reason };
   }
 
   // Solo los NOMBRES de campos del result (sin valores/tokens): confirma si
   // Authenticate ya trae agentId/skinId (pregunta de diseño del PR 4).
   const authResultKeys =
-    authData?.result && typeof authData.result === 'object' ? Object.keys(authData.result) : [];
-  console.log('[Casino] test-connection Authenticate result keys:', authResultKeys.join(', '));
+    a.json?.result && typeof a.json.result === 'object' ? Object.keys(a.json.result) : [];
 
   // ── 2) GetAgentBalance (prueba concreta: saldo real del agente) ──────────────
   const params = new URLSearchParams({ agentId: creds.agentId, username: creds.agentUsername });
-  let balRes: Response;
-  try {
-    balRes = await casinoFetch(
-      `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`,
-      { method: 'GET', headers: proxyHeaders(creds.skinDomain, { Authorization: `Bearer ${token}` }) },
-    );
-  } catch (err: any) {
-    if (err?.message === 'El casino no respondió a tiempo') return { ok: false, reason: 'timeout' };
-    return { ok: false, reason: 'unknown', detail: err?.message ?? 'Error de red' };
-  }
+  const b = await casinoFetchJson(
+    `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`,
+    { method: 'GET', headers: proxyHeaders(creds.skinDomain, { Authorization: `Bearer ${token}` }) },
+    { label: 'test/GetAgentBalance' },
+  );
 
-  const balBody = await balRes.text().catch(() => '');
-  if (balRes.status === 403 && /forbidden casino target/i.test(balBody)) {
+  if (b.status === 403 && /forbidden casino target/i.test(b.body)) {
+    logTestFailure(creds, 'GetAgentBalance', 'forbidden_target', b);
     return { ok: false, reason: 'forbidden_target' };
   }
-  let balData: any = null;
-  try { balData = JSON.parse(balBody); } catch { /* → agent_not_found abajo */ }
-  const balance = Number(balData?.result);
-  if (!Number.isFinite(balance)) {
-    // Login OK pero sin saldo: el agentId no existe / no cuelga de este login.
-    return { ok: false, reason: 'agent_not_found', detail: balBody.slice(0, 200) };
+  // El saldo arrastraba el mismo bug que el login: si volvía HTML decía "no
+  // encontramos ese ID de agente". Pasó el 19/08 22:42:51 (login OK + saldo HTML).
+  if (b.timedOut || b.notJson || b.status === 429 || b.status >= 500) {
+    const reason: CasinoTestFailReason = b.timedOut ? 'timeout' : 'casino_unavailable';
+    logTestFailure(creds, 'GetAgentBalance', reason, b);
+    return { ok: false, reason };
   }
 
+  const balance = Number(b.json?.result);
+  if (!Number.isFinite(balance)) {
+    // Recién acá: el casino contestó JSON bien formado y aun así no hay saldo →
+    // el agentId no existe / no cuelga de este login. Ese sí es de configuración.
+    logTestFailure(creds, 'GetAgentBalance', 'agent_not_found', b);
+    return { ok: false, reason: 'agent_not_found', detail: b.body.slice(0, 200) };
+  }
+
+  console.log(
+    `[Casino] test-connection OK tenant=${creds.tenantId} agente=${creds.agentUsername} ` +
+    `target=${creds.skinDomain} saldo=${balance} intentos=auth:${a.attempts}/bal:${b.attempts} ` +
+    `result keys: ${authResultKeys.join(', ')}`,
+  );
   return { ok: true, agentName: creds.agentUsername, balance, authResultKeys };
 }

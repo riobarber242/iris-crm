@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAgentOrAdmin } from '@/lib/current-agent';
-import { encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
+import { decryptSecret, encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
 import { DEFAULT_CASINO_CREDENTIALS_TEMPLATE } from '@/lib/casino/credentials';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { featureBlocked } from '@/lib/plan-guard';
@@ -118,15 +118,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Falta la contraseña/token del agente' }, { status: 400 });
     }
 
-    // ¿Cambió alguna credencial de CONEXIÓN? (URLs/template NO cuentan.) Un password
-    // nuevo siempre cuenta como cambio (no comparamos ciphertext).
+    // ¿La contraseña que llegó es REALMENTE distinta de la guardada? Se compara
+    // contra el plaintext descifrado (el ciphertext no sirve: IV aleatorio).
+    // Antes alcanzaba con que el campo viniera con algo para invalidar la
+    // verificación y apagar los depósitos, así que re-tipear la MISMA clave
+    // desconectaba el casino: ese era el "se desconecta sola" del 20/08/2026.
+    let passwordChanged = false;
+    if (newPassword) {
+      let current: string | null = null;
+      if (existing?.agent_password_enc) {
+        try { current = decryptSecret(existing.agent_password_enc); }
+        catch { current = null; }   // blob ilegible → lo tratamos como cambio real
+      }
+      passwordChanged = current === null ? true : newPassword !== current;
+    }
+
+    // ¿Cambió alguna credencial de CONEXIÓN? (URLs/template NO cuentan.)
     const connChanged =
       !existing ||
       existing.agent_username !== agent_username ||
       existing.agent_id !== agent_id ||
       existing.skin_id !== skin_id ||
       (existing.skin_domain ?? '') !== (skin_domain ?? '') ||
-      !!newPassword;
+      passwordChanged;
 
     const row: any = {
       tenant_id: tid,
@@ -139,7 +153,7 @@ export async function POST(request: Request) {
       active: true,
       is_default: true,
     };
-    if (newPassword) row.agent_password_enc = encryptSecret(newPassword);
+    if (passwordChanged) row.agent_password_enc = encryptSecret(newPassword);
     if (connChanged) row.connection_verified_at = null;   // fail-safe: hay que re-probar
     if (!existing) {
       const { data: t } = await supabaseAdmin.from('tenants').select('name').eq('id', tid).maybeSingle();
@@ -159,7 +173,7 @@ export async function POST(request: Request) {
 
     await logActivity({
       session, action: ACTIVITY.CONFIG_CHANGED, objectType: 'config', objectId: 'casino_account',
-      details: { conn_changed: connChanged, password_changed: !!newPassword },
+      details: { conn_changed: connChanged, password_changed: passwordChanged },
     });
   }
 

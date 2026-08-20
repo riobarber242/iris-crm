@@ -17,12 +17,17 @@ import { featureBlocked } from '@/lib/plan-guard';
 // acotado al tenant de la sesión. NO exige casino_deposit_enabled: se prueba una
 // conexión ANTES de habilitarla.
 
+// Solo bad_credentials habla de la contraseña. Todo lo demás dice explícitamente
+// que el problema es de conexión: si el mensaje sugiere que la clave está mal, la
+// gente la vuelve a tipear y termina pisando la credencial buena (20/08/2026).
 const MSG: Record<string, string> = {
-  bad_credentials:  'Usuario o contraseña incorrectos',
-  agent_not_found:  'Conectó pero no encontramos ese ID de agente',
-  forbidden_target: 'Ese casino todavía no está habilitado, avisá a soporte',
-  timeout:          'El casino no respondió, probá de nuevo',
-  unknown:          'No se pudo conectar con el casino, probá de nuevo',
+  bad_credentials:    'Usuario o contraseña incorrectos',
+  agent_not_found:    'Conectó pero no encontramos ese ID de agente',
+  forbidden_target:   'Ese casino todavía no está habilitado, avisá a soporte',
+  casino_unavailable: 'No se pudo conectar con el casino, puede estar caído temporalmente. Reintentá en unos minutos.',
+  timeout:            'El casino no respondió a tiempo, puede estar caído temporalmente. Reintentá en unos minutos.',
+  proxy_secret:       'Problema de configuración de IRIS con el casino, avisá a soporte',
+  unknown:            'No se pudo conectar con el casino, puede estar caído temporalmente. Reintentá en unos minutos.',
 };
 
 // Acepta host pelado ("admin.x.bond") o URL completa; deriva el host del casino.
@@ -64,14 +69,23 @@ export async function POST(request: Request) {
     const skinId        = String(body?.skinId ?? '').trim();
     const skinDomain    = deriveHost(body?.skinDomain, body?.apiBaseUrl);
 
+    // Sin contraseña tipeada usamos la GUARDADA (sin persistir nada del resto):
+    // así se puede probar un cambio de usuario/ID/skin/dominio sin obligar a
+    // re-tipear la clave — y sin arriesgar pisarla con un error de tipeo.
+    let password = agentPassword;
+    if (!password) {
+      const saved = await loadCasinoAccount(tenantId);
+      password = saved?.agentPassword ?? '';
+    }
+
     const missing = [
-      !agentUsername && 'usuario', !agentId && 'ID de agente', !agentPassword && 'contraseña',
+      !agentUsername && 'usuario', !agentId && 'ID de agente', !password && 'contraseña',
       !skinId && 'skin', !skinDomain && 'dominio del casino',
     ].filter(Boolean);
     if (missing.length) {
       return NextResponse.json({ ok: false, error: `Faltan datos: ${missing.join(', ')}` }, { status: 400 });
     }
-    creds = { agentUsername, agentId, agentPassword, skinId, skinDomain: skinDomain!, tenantId };
+    creds = { agentUsername, agentId, agentPassword: password, skinId, skinDomain: skinDomain!, tenantId };
   }
 
   const result = await testCasinoConnection(creds);
