@@ -427,11 +427,19 @@ export type CasinoTestResult =
 // se llega ahí únicamente si el casino lo dijo él mismo (ver isCredRejection).
 function classifyFailure(r: CasinoJsonResult): CasinoTestFailReason {
   if (r.timedOut) return 'timeout';
-  if (r.notJson)  return 'casino_unavailable';   // ← el caso de los logs del 19-20/08
+  // 401 = rechazo de autenticación, tenga body o no. Va ANTES del chequeo de
+  // notJson: este casino contesta un login malo con 401 y content-length 0
+  // (verificado el 20/08/2026), así que con el orden inverso el body vacío se
+  // comía el caso y una contraseña mal de verdad salía como "casino caído".
+  // El 401 del Worker (X-Proxy-Secret inválido) ya se filtró antes de llegar acá.
+  if (r.status === 401) return 'bad_credentials';
+  // El 403 queda abajo a propósito: un 403 con HTML es casi siempre un WAF o un
+  // bloqueo del casino, no una credencial.
+  if (r.notJson) return 'casino_unavailable';   // ← el caso de los logs del 19-20/08
   // El casino contestó JSON bien formado: su propio mensaje de error manda por
-  // encima del status (ABP devuelve el rechazo de login con 401 y también con 500).
+  // encima del status (ABP devuelve el rechazo de login también con 500).
   if (isCredRejection(r)) return 'bad_credentials';
-  if (r.status === 401 || r.status === 403) return 'bad_credentials';
+  if (r.status === 403) return 'bad_credentials';
   if (r.status === 429 || r.status >= 500)  return 'casino_unavailable';
   return 'unknown';
 }
