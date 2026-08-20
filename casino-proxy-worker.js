@@ -16,7 +16,8 @@ const DEFAULT_TARGET = 'admin.celuapuestas.bond';
 // un host conocido). Sumar un casino nuevo = agregar su skin_domain acá y
 // redeployar el Worker.
 const ALLOWED_TARGETS = new Set([
-  'admin.celuapuestas.bond',
+  'admin.celuapuestas.fans',   // 17Star — dominio actual (mudanza del 20/08/2026)
+  'admin.celuapuestas.bond',   // 17Star — dominio anterior, se deja como respaldo
 ]);
 
 // ¿Se puede proxear a este host? Match exacto, case-insensitive, contra el
