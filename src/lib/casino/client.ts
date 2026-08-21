@@ -60,7 +60,33 @@ async function casinoFetch(url: string, init: RequestInit, timeoutMs: number = C
 // SOLO para operaciones idempotentes (Authenticate, GetAgentBalance,
 // GetAgentWithChildren). DoDeposit y AddPlayer NO se reintentan NUNCA: acreditar
 // dos veces o crear dos jugadores es peor que fallar.
-const RETRY_DELAYS_MS = [500, 1500];
+//
+// La escalera vieja ([500, 1500]) cubría ~2s: menos que la racha real de HTML, que
+// dura decenas de segundos. El 20/08/2026 no entró UN solo depósito en 25h y cada
+// intento moría con "body no es JSON tras 3 intento(s)".
+const RETRY_DELAYS_MS = [1000, 3000, 8000];
+
+// El saldo del agente es polling VISUAL del panel: si el casino está en una racha,
+// que el chip tarde en actualizarse no le cuesta nada a nadie, y insistir 12s por
+// cada poll sí. Se queda con la escalera corta de antes (~1,5s).
+const BALANCE_RETRY_DELAYS_MS = [500, 1000];
+const BALANCE_BUDGET_MS = 6_000;
+
+// El techo de verdad: la función serverless. Un depósito encadena DOS operaciones
+// que reintentan (Authenticate + GetAgentWithChildren) y después DoDeposit, así que
+// la escalera sola sumaría 12s de sleep POR operación y Vercel mataría el request a
+// mitad — el operador vería un 504 genérico, peor que el error de hoy. Por eso el
+// presupuesto es COMPARTIDO por todo el flujo y se reparte entre los reintentos:
+// cada intento se recorta a lo que quede y la escalera corta cuando no entra otro.
+const CREDIT_BUDGET_MS = 45_000;   // creditPlayer completo (route: maxDuration = 60)
+// El resto de los routes de casino (balance, test-connection, alta) NO declaran
+// maxDuration, así que corren con el default de Vercel (15s): el presupuesto queda
+// por debajo a propósito para que la escalera nueva no se coma la función entera.
+const DEFAULT_BUDGET_MS = 10_000;
+// Piso estimado de un intento: si no entra esto además del sleep, no vale la pena.
+const MIN_ATTEMPT_MS = 1_500;
+
+const remainingMs = (deadlineAt: number) => Math.max(0, deadlineAt - Date.now());
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -105,15 +131,32 @@ function isTransient(r: CasinoJsonResult): boolean {
 async function casinoFetchJson(
   url: string,
   init: RequestInit,
-  opts: { label: string; timeoutMs?: number },
+  opts: { label: string; timeoutMs?: number; deadlineAt?: number; retryDelaysMs?: number[] },
 ): Promise<CasinoJsonResult> {
+  // Sin deadline explícito cada llamada igual lleva su propio techo: así ningún
+  // camino puede desbordar por la escalera nueva.
+  const deadlineAt = opts.deadlineAt ?? Date.now() + DEFAULT_BUDGET_MS;
+  const delays = opts.retryDelaysMs ?? RETRY_DELAYS_MS;
+
   let last: CasinoJsonResult = {
     res: null, status: 0, body: '', json: null, notJson: false, timedOut: false, attempts: 0,
   };
 
-  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
+  for (let attempt = 1; attempt <= delays.length + 1; attempt++) {
+    const budget = remainingMs(deadlineAt);
+    if (budget <= 0) {
+      if (attempt === 1) {
+        return {
+          res: null, status: 0, json: null, notJson: false, timedOut: true, attempts: 0,
+          body: 'presupuesto de tiempo agotado antes de llamar al casino',
+        };
+      }
+      break;
+    }
+
     try {
-      const res = await casinoFetch(url, init, opts.timeoutMs);
+      // El intento nunca puede durar más de lo que queda del presupuesto.
+      const res = await casinoFetch(url, init, Math.min(opts.timeoutMs ?? CASINO_TIMEOUT_MS, budget));
       const body = await res.text().catch(() => '');
       let json: any = null;
       try { json = JSON.parse(body); } catch { /* no-JSON → notJson */ }
@@ -130,11 +173,20 @@ async function casinoFetchJson(
     }
 
     if (!isTransient(last)) return last;
-    const delay = RETRY_DELAYS_MS[attempt - 1];
+    const delay = delays[attempt - 1];
     if (delay === undefined) break;
+    // Si el sleep más un intento mínimo no entran en lo que queda, cortamos acá:
+    // mejor devolver el error real que morir a mitad por timeout de la función.
+    if (remainingMs(deadlineAt) < delay + MIN_ATTEMPT_MS) {
+      console.warn(
+        `[Casino] ${opts.label}: sin presupuesto para el reintento ${attempt} ` +
+        `(quedan ${remainingMs(deadlineAt)}ms, hacen falta ${delay + MIN_ATTEMPT_MS}ms) — corto acá`,
+      );
+      break;
+    }
     console.warn(
       `[Casino] ${opts.label}: respuesta inservible (http=${last.status}${last.notJson ? ', body no-JSON' : ''})` +
-      ` — reintento ${attempt}/${RETRY_DELAYS_MS.length} en ${delay}ms`,
+      ` — reintento ${attempt}/${delays.length} en ${delay}ms`,
     );
     await sleep(delay);
   }
@@ -144,7 +196,11 @@ async function casinoFetchJson(
 // Devuelve un access token válido del casino para ESTAS credenciales. Autentica
 // con usuario+contraseña a través del proxy y cachea el token hasta su expiración
 // (expireInSeconds) con un margen de 60s. El cache es por skinDomain|agentUsername.
-async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
+async function getCasinoToken(
+  creds: CasinoCreds,
+  deadlineAt?: number,
+  retryDelaysMs?: number[],
+): Promise<string | null> {
   const now = Date.now();
   const cacheKey = `${creds.skinDomain}|${creds.agentUsername}`;
   const cached = tokenCache.get(cacheKey);
@@ -161,7 +217,7 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
         password: creds.agentPassword,
         skinDomain: creds.skinDomain,
       }),
-    }, { label: 'Authenticate' });
+    }, { label: 'Authenticate', deadlineAt, retryDelaysMs });
 
     console.log(`[Casino] Authenticate http=${r.status} intentos=${r.attempts} — body(500):`, r.body.slice(0, 500));
 
@@ -193,8 +249,8 @@ async function getCasinoToken(creds: CasinoCreds): Promise<string | null> {
   }
 }
 
-async function casinoHeaders(creds: CasinoCreds) {
-  const token = await getCasinoToken(creds);
+async function casinoHeaders(creds: CasinoCreds, deadlineAt?: number, retryDelaysMs?: number[]) {
+  const token = await getCasinoToken(creds, deadlineAt, retryDelaysMs);
   return proxyHeaders(creds.skinDomain, { 'Authorization': `Bearer ${token}` });
 }
 
@@ -206,8 +262,16 @@ export async function getAgentBalance(creds: CasinoCreds): Promise<number | null
   const params = new URLSearchParams({ agentId: creds.agentId, username: creds.agentUsername });
   const url = `${PROXY_URL}/api/services/app/Agent/GetAgentBalance?${params}`;
 
+  // Escalera corta y presupuesto propio: el chip del saldo falla rápido en vez de
+  // colgar el poll. El Authenticate de esta llamada usa la misma escalera corta.
+  const deadlineAt = Date.now() + BALANCE_BUDGET_MS;
+
   try {
-    const r = await casinoFetchJson(url, { method: 'GET', headers: await casinoHeaders(creds) }, { label: 'GetAgentBalance' });
+    const r = await casinoFetchJson(
+      url,
+      { method: 'GET', headers: await casinoHeaders(creds, deadlineAt, BALANCE_RETRY_DELAYS_MS) },
+      { label: 'GetAgentBalance', deadlineAt, retryDelaysMs: BALANCE_RETRY_DELAYS_MS },
+    );
     if (r.timedOut) {
       console.error('[Casino] GetAgentBalance: el casino no respondió a tiempo');
       return null;
@@ -228,7 +292,31 @@ export async function getAgentBalance(creds: CasinoCreds): Promise<number | null
   }
 }
 
-export async function getPlayerTargetId(creds: CasinoCreds, username: string): Promise<string | null> {
+// Resultado del lookup del jugador. Antes era `string | null` y ese null colapsaba
+// CUATRO desenlaces distintos (timeout, HTML de la SPA, HTTP >=400 y jugador
+// realmente ausente) en un único mensaje "Player no encontrado", que es mentira en
+// tres de los cuatro casos. El 20/08/2026 eso nos mandó a investigar una migración
+// de dominio que no tenía nada que ver: el casino estaba devolviendo su SPA.
+// Mismo criterio que ya se aplica a las credenciales (isCredRejection/isTransient):
+// ante la duda, la culpa es del casino, nunca del dato del usuario.
+export type PlayerLookup =
+  | { ok: true;  targetId: string }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'casino_unavailable'; detail: string };
+
+export async function getPlayerTargetId(
+  creds: CasinoCreds,
+  username: string,
+  deadlineAt?: number,
+): Promise<PlayerLookup> {
+  // El token va primero y por separado: si el Authenticate ya vino en HTML, sabemos
+  // que el casino está caído y no gastamos presupuesto en un lookup condenado (antes
+  // se mandaba igual con "Bearer null" y el 401 resultante se leía como otra falla).
+  const token = await getCasinoToken(creds, deadlineAt);
+  if (!token) {
+    return { ok: false, reason: 'casino_unavailable', detail: 'no se pudo autenticar contra el casino' };
+  }
+
   const params = new URLSearchParams({
     parentId: '-1',
     username: creds.agentUsername,
@@ -246,20 +334,21 @@ export async function getPlayerTargetId(creds: CasinoCreds, username: string): P
   // Logueamos el body RAW: cuando el casino sirve su SPA en HTML con status 200
   // (ver casinoFetchJson), esto muestra exactamente qué llegó. La búsqueda del
   // player es idempotente, así que se reintenta.
-  const r = await casinoFetchJson(url, { method: 'GET', headers: await casinoHeaders(creds) }, { label: 'GetAgentWithChildren' });
+  const headers = proxyHeaders(creds.skinDomain, { 'Authorization': `Bearer ${token}` });
+  const r = await casinoFetchJson(url, { method: 'GET', headers }, { label: 'GetAgentWithChildren', deadlineAt });
   console.log(`[Casino] GetAgentWithChildren raw body (200 chars, intentos=${r.attempts}):`, r.body.slice(0, 200));
 
   if (r.timedOut) {
     console.error('[Casino] GetAgentWithChildren: el casino no respondió a tiempo');
-    return null;
+    return { ok: false, reason: 'casino_unavailable', detail: 'el casino no respondió a tiempo' };
   }
   if (r.notJson) {
     console.error(`[Casino] GetAgentWithChildren: body no es JSON (¿HTML/bloqueo?) tras ${r.attempts} intento(s) — primeros 500:`, r.body.slice(0, 500));
-    return null;
+    return { ok: false, reason: 'casino_unavailable', detail: `body no es JSON tras ${r.attempts} intento(s) (¿HTML de la SPA?)` };
   }
   if (r.status >= 400) {
     console.error(`[Casino] GetAgentWithChildren HTTP ${r.status}`);
-    return null;
+    return { ok: false, reason: 'casino_unavailable', detail: `HTTP ${r.status}` };
   }
 
   const data = r.json;
@@ -278,24 +367,46 @@ export async function getPlayerTargetId(creds: CasinoCreds, username: string): P
     (p?.userName ?? p?.username ?? p?.UserName ?? '') === username
   );
 
+  // Única rama que significa de verdad "este jugador no está": el casino contestó
+  // JSON bien formado y aun así no hay match exacto.
   if (!player) {
     console.error(`[Casino] Player "${username}" no encontrado. Primeros 3:`, items.slice(0, 3));
-    return null;
+    return { ok: false, reason: 'not_found' };
   }
 
   // El campo correcto del response de GetAgentWithChildren es accountId (número,
   // ej: 19923006), NO userId. Ese accountId es el targetId que espera DoDeposit.
   const accountId = player?.accountId ?? player?.AccountId ?? null;
   console.log(`[Casino] accountId extraído: ${accountId} (player.userName=${player?.userName ?? player?.UserName})`);
-  return accountId != null ? String(accountId) : null;
+  if (accountId == null) {
+    // El jugador aparece pero sin accountId: cambió la forma del response. No es
+    // "no existe" — depositar a ciegas sería peor.
+    console.error(`[Casino] Player "${username}" encontrado pero SIN accountId:`, JSON.stringify(player).slice(0, 300));
+    return { ok: false, reason: 'casino_unavailable', detail: 'el casino devolvió el jugador sin accountId' };
+  }
+  return { ok: true, targetId: String(accountId) };
 }
+
+/** Por qué falló una acreditación. Lo consume el route para loguear y para decidir
+ *  el mensaje: solo 'not_found' habla del jugador. */
+export type CasinoCreditFailReason = 'not_found' | 'casino_unavailable' | 'deposit_rejected' | 'error';
+
+export const CASINO_UNAVAILABLE_MSG =
+  'El casino no está respondiendo. La carga NO se acreditó — reintentá en un minuto.';
 
 export interface DoDepositResult {
   success: boolean;
   error?: string;
+  reason?: CasinoCreditFailReason;
+  /** Detalle técnico para el activity_log (no se le muestra al operador). */
+  detail?: string;
 }
 
-export async function doDeposit(creds: CasinoCreds, params: { username: string; targetId: string; amount: number }): Promise<DoDepositResult> {
+export async function doDeposit(
+  creds: CasinoCreds,
+  params: { username: string; targetId: string; amount: number },
+  deadlineAt?: number,
+): Promise<DoDepositResult> {
   // El query param ?username= lleva el username del AGENTE (no el del player).
   const url = `${PROXY_URL}/api/services/app/Players/DoDeposit?username=${creds.agentUsername}`;
 
@@ -315,11 +426,18 @@ export async function doDeposit(creds: CasinoCreds, params: { username: string; 
   console.log('[Casino] DoDeposit URL:', url);
   console.log('[Casino] DoDeposit body completo:', reqBody);
 
+  // DoDeposit es la acción que mueve plata: se le deja un piso de 2s aunque el
+  // presupuesto esté casi agotado (llegar acá significa que el targetId ya se
+  // resolvió). Sigue sin reintentarse nunca.
+  const timeoutMs = deadlineAt
+    ? Math.max(2_000, Math.min(CASINO_TIMEOUT_MS, remainingMs(deadlineAt)))
+    : CASINO_TIMEOUT_MS;
+
   const res = await casinoFetch(url, {
     method: 'POST',
-    headers: await casinoHeaders(creds),
+    headers: await casinoHeaders(creds, deadlineAt),
     body: reqBody,
-  });
+  }, timeoutMs);
 
   const respText = await res.text().catch(() => '');
   console.log(`[Casino] DoDeposit resp status=${res.status} body completo:`, respText);
@@ -339,21 +457,37 @@ export async function doDeposit(creds: CasinoCreds, params: { username: string; 
   }
 
   console.error(`[Casino] DoDeposit falló: ${errorBody}`);
-  return { success: false, error: errorBody };
+  return { success: false, error: errorBody, reason: 'deposit_rejected', detail: errorBody };
 }
 
 export async function creditPlayer(creds: CasinoCreds, username: string, amount: number): Promise<DoDepositResult> {
   // getPlayerTargetId / doDeposit pueden lanzar (incluido el timeout de casinoFetch).
   // Lo convertimos en un resultado para que el flujo de verificar comprobantes
   // responda un 400 limpio ("La recarga NO se verificó") en vez de un 500.
-  try {
-    const targetId = await getPlayerTargetId(creds, username);
-    if (!targetId) return { success: false, error: `Player no encontrado en el casino: ${username}` };
+  // Presupuesto ÚNICO para todo el flujo (Authenticate + lookup + DoDeposit): es lo
+  // que impide que la escalera de reintentos desborde el maxDuration del route.
+  const deadlineAt = Date.now() + CREDIT_BUDGET_MS;
 
-    return await doDeposit(creds, { username, targetId, amount });
+  try {
+    const lookup = await getPlayerTargetId(creds, username, deadlineAt);
+    if (!lookup.ok) {
+      // Solo acá se puede afirmar que el jugador no está. Cualquier otra cosa es el
+      // casino, y decir "no encontrado" manda al operador a buscar donde no es.
+      if (lookup.reason === 'not_found') {
+        return { success: false, error: `Player no encontrado en el casino: ${username}`, reason: 'not_found' };
+      }
+      return { success: false, error: CASINO_UNAVAILABLE_MSG, reason: 'casino_unavailable', detail: lookup.detail };
+    }
+
+    return await doDeposit(creds, { username, targetId: lookup.targetId, amount }, deadlineAt);
   } catch (err: any) {
     console.error('[Casino] creditPlayer error:', err?.message ?? err);
-    return { success: false, error: err?.message ?? 'Error al acreditar en el casino' };
+    return {
+      success: false,
+      error: err?.message ?? 'Error al acreditar en el casino',
+      reason: 'error',
+      detail: String(err?.message ?? err).slice(0, 300),
+    };
   }
 }
 

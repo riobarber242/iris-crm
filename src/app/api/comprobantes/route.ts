@@ -14,6 +14,12 @@ import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/rea
 import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
 
+// Verificar una carga acredita en el casino, y ese flujo tiene un presupuesto de
+// reintentos de 45s (CREDIT_BUDGET_MS) para aguantar las rachas en las que el casino
+// devuelve su SPA en HTML. Sin este maxDuration corría con el default de Vercel y la
+// función moría a mitad: el operador veía un 504 genérico en vez del error real.
+export const maxDuration = 60;
+
 // Bono en fichas (entero). Reglas Etapa 1: vacío → null; 0 o valor inválido →
 // null ("0 no se guarda como bono"); entero > 0 → ese valor.
 function normalizeBono(raw: any): number | null {
@@ -404,6 +410,17 @@ export async function PATCH(request: Request) {
         }
         const cred = await creditPlayer(casinoCreds, username, montoTotal);
         if (!cred.success) {
+          // Hasta acá una falla no dejaba NINGÚN rastro: el 400 corta antes del
+          // update y logActivity solo corría en el éxito, así que en la base un
+          // rechazo por casino caído y uno del operador eran indistinguibles y la
+          // única evidencia vivía en los logs de Vercel (retención ~12h).
+          await logActivity({
+            session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
+            details: {
+              ok: false, reason: cred.reason ?? 'error', detail: cred.detail ?? cred.error ?? null,
+              username, amount: montoTotal, monto: montoCasino, bono: bonoCasino,
+            },
+          });
           return new NextResponse(cred.error ?? 'No se pudo acreditar en el casino. La recarga NO se verificó.', { status: 400 });
         }
         updatePayload.casino_deposited_at = new Date().toISOString();

@@ -97,8 +97,10 @@ export async function POST(request: Request) {
   // y que un reintento manual genere un usuario duplicado).
   if (!result.success && /no respondió a tiempo/i.test(result.error ?? '')) {
     try {
-      const targetId = await getPlayerTargetId(creds, username);
-      if (targetId) {
+      // Solo un lookup OK confirma que existe. Si el casino está caído (o devolvió
+      // HTML) NO se puede concluir nada: se deja fallar y el operador reintenta.
+      const lookup = await getPlayerTargetId(creds, username);
+      if (lookup.ok) {
         console.log(`[create-player] timeout pero el usuario existe → tratado como creado: ${username}`);
         result = { success: true, username };
       }
