@@ -125,6 +125,33 @@ function isTransient(r: CasinoJsonResult): boolean {
   return r.notJson || r.status === 429 || r.status >= 500;
 }
 
+// ── Diagnóstico de origen (21/08/2026) ───────────────────────────────────────
+// Lee los headers que agrega el Worker (casino-proxy-worker.js) para contestar de
+// una la pregunta que quedó abierta: el HTML de la SPA, ¿depende del MOMENTO o de
+// DÓNDE sale el request? Medición del 21/08 14:28-14:37: prod (Vercel) sacó 15/15
+// HTML mientras la notebook de Gonza sacaba 18/18 JSON+token por el MISMO Worker y
+// con las MISMAS credenciales — o sea que no parece una racha del casino.
+//
+//   colo/país     → colo de Cloudflare desde el que salió el request al casino. Un
+//                   Worker corre cerca de QUIEN LO LLAMA: Vercel (us-east) y una
+//                   notebook argentina salen por colos distintos.
+//   cf-ray/server → huella de la respuesta DEL CASINO. Si el HTML trae cf-ray y
+//                   server: cloudflare, lo sirvió un WAF y no el backend del casino.
+//
+// Mientras siga arriba el Worker viejo devuelve un aviso en vez de datos: el backend
+// se puede deployar antes sin romper nada, solo que todavía no hay dato.
+function proxyDiag(res: Response | null): string {
+  if (!res) return 'sin respuesta';
+  const h = (n: string) => res.headers.get(n);
+  const colo = h('x-proxy-colo');
+  if (!colo) return '(sin headers del proxy — ¿Worker sin el diagnóstico?)';
+  return (
+    `colo=${colo} país=${h('x-proxy-country') ?? '-'} ` +
+    `casino[cf-ray=${h('x-casino-cf-ray') ?? '-'} server=${h('x-casino-server') ?? '-'} ` +
+    `cf-cache=${h('x-casino-cf-cache') ?? '-'} ct=${h('content-type') ?? '-'}]`
+  );
+}
+
 // Wrapper de casinoFetch que además parsea el JSON y reintenta las fallas
 // transitorias. `init.body` es siempre un string en este módulo, así que se puede
 // reenviar tal cual en cada intento.
@@ -186,9 +213,14 @@ async function casinoFetchJson(
     }
     console.warn(
       `[Casino] ${opts.label}: respuesta inservible (http=${last.status}${last.notJson ? ', body no-JSON' : ''})` +
-      ` — reintento ${attempt}/${delays.length} en ${delay}ms`,
+      ` — reintento ${attempt}/${delays.length} en ${delay}ms — ${proxyDiag(last.res)}`,
     );
     await sleep(delay);
+  }
+  // El desenlace que estamos investigando: se agotaron los reintentos (o el
+  // presupuesto) y el casino nunca mandó JSON. Acá queda el rastro del origen.
+  if (last.notJson) {
+    console.warn(`[Casino] ${opts.label}: NO-JSON definitivo tras ${last.attempts} intento(s) — ${proxyDiag(last.res)}`);
   }
   return last;
 }
@@ -585,7 +617,7 @@ function logTestFailure(creds: CasinoCreds, stage: string, reason: string, r: Ca
   console.error(
     `[Casino] test-connection FALLÓ stage=${stage} reason=${reason} tenant=${creds.tenantId} ` +
     `agente=${creds.agentUsername} target=${creds.skinDomain} http=${r.status} intentos=${r.attempts} ` +
-    `content-type=${r.res?.headers.get('content-type') ?? '-'} — body(300): ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`,
+    `content-type=${r.res?.headers.get('content-type') ?? '-'} ${proxyDiag(r.res)} — body(300): ${r.body.slice(0, 300).replace(/\s+/g, ' ')}`,
   );
 }
 

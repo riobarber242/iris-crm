@@ -27,6 +27,15 @@ function isDomainAllowed(host) {
   return ALLOWED_TARGETS.has(host.trim().toLowerCase());
 }
 
+// Valor seguro para un header de diagnóstico: ASCII imprimible y corto. Un header
+// con un valor raro tira TypeError y voltearía el proxy entero — el diagnóstico no
+// puede romper el camino que está diagnosticando.
+function diagValue(v) {
+  if (v === null || v === undefined) return '-';
+  const clean = String(v).replace(/[^ -~]/g, '').trim();
+  return clean ? clean.slice(0, 120) : '-';
+}
+
 export default {
   async fetch(request, env) {
     const secret = request.headers.get('X-Proxy-Secret');
@@ -57,6 +66,26 @@ export default {
     });
     const responseHeaders = new Headers(casinoResponse.headers);
     responseHeaders.set('Access-Control-Allow-Origin', '*');
+
+    // ── Diagnóstico de origen (21/08/2026) ────────────────────────────────────
+    // Hipótesis a confirmar: el casino devuelve su SPA (HTML con 200) según DE
+    // DÓNDE sale el request, no según el momento. Medición del 21/08 14:28-14:37:
+    // prod (Vercel) sacó 15/15 HTML mientras la notebook de Gonza sacaba 18/18
+    // JSON+token por ESTE MISMO Worker y con las mismas credenciales.
+    //
+    // Un Worker corre en el colo de Cloudflare más cercano a QUIEN LO LLAMA, así que
+    // los requests de Vercel (us-east) y los de una notebook argentina salen hacia el
+    // casino desde colos distintos. Estos headers dejan ver el colo/país de salida y
+    // la huella de la respuesta del casino (cf-ray/server delatan si el HTML lo sirvió
+    // un WAF de Cloudflare del lado del casino y no su backend).
+    //
+    // Solo se AGREGAN headers de respuesta: no cambia el body, el status, ni lo que se
+    // le reenvía al casino. Es observación pura.
+    responseHeaders.set('X-Proxy-Colo', diagValue(request.cf && request.cf.colo));
+    responseHeaders.set('X-Proxy-Country', diagValue(request.cf && request.cf.country));
+    responseHeaders.set('X-Casino-CF-Ray', diagValue(casinoResponse.headers.get('cf-ray')));
+    responseHeaders.set('X-Casino-Server', diagValue(casinoResponse.headers.get('server')));
+    responseHeaders.set('X-Casino-CF-Cache', diagValue(casinoResponse.headers.get('cf-cache-status')));
     return new Response(casinoResponse.body, {
       status: casinoResponse.status,
       statusText: casinoResponse.statusText,
