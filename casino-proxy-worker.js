@@ -86,6 +86,20 @@ export default {
     responseHeaders.set('X-Casino-CF-Ray', diagValue(casinoResponse.headers.get('cf-ray')));
     responseHeaders.set('X-Casino-Server', diagValue(casinoResponse.headers.get('server')));
     responseHeaders.set('X-Casino-CF-Cache', diagValue(casinoResponse.headers.get('cf-cache-status')));
+    responseHeaders.set('X-Proxy-Placement', diagValue(casinoResponse.headers.get('cf-placement')));
+
+    // Log del lado del Worker (se lee con `npx wrangler tail`): deja ver el colo y
+    // el resultado de CADA request, venga de donde venga, sin depender de un deploy
+    // del backend. OJO: cf-placement NO se puede leer acá — Cloudflare lo agrega a la
+    // respuesta que sale del Worker, no viene en la respuesta del casino.
+    console.log(JSON.stringify({
+      colo: (request.cf && request.cf.colo) || '-',
+      country: (request.cf && request.cf.country) || '-',
+      path: url.pathname,
+      status: casinoResponse.status,
+      ct: (casinoResponse.headers.get('content-type') || '-').split(';')[0],
+      casinoRay: casinoResponse.headers.get('cf-ray') || '-',
+    }));
     return new Response(casinoResponse.body, {
       status: casinoResponse.status,
       statusText: casinoResponse.statusText,

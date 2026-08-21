@@ -18,6 +18,19 @@ const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
 // vía TokenAuth/Authenticate cuando vence, con un margen de 60s.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
+const tokenKey = (creds: CasinoCreds) => `${creds.skinDomain}|${creds.agentUsername}`;
+
+// Tira el token cacheado de estas credenciales. Hace falta porque un token puede
+// morir ANTES de su expiración (el casino reinicia, revoca la sesión, rota su
+// clave de firma) y hasta ahora nadie borraba el cache nunca: el tenant quedaba
+// roto hasta que venciera el TTL. Con el cache persistente del PR B eso sería peor
+// todavía, así que la invalidación va primero.
+// Devuelve si REALMENTE había un token cacheado: quien acaba de pedir uno fresco y
+// aun así comió un 401 no gana nada reintentando.
+function invalidateCasinoToken(creds: CasinoCreds): boolean {
+  return tokenCache.delete(tokenKey(creds));
+}
+
 // Header común que autentica cada request contra el Worker proxy. X-Casino-Target
 // le dice al Worker a qué casino reenviar (el skin_domain del tenant); el Worker lo
 // valida contra su allowlist. Etapa 2, PR 3: multi-tenant en el proxy.
@@ -234,7 +247,7 @@ async function getCasinoToken(
   retryDelaysMs?: number[],
 ): Promise<string | null> {
   const now = Date.now();
-  const cacheKey = `${creds.skinDomain}|${creds.agentUsername}`;
+  const cacheKey = tokenKey(creds);
   const cached = tokenCache.get(cacheKey);
   if (cached && now < cached.expiresAt) return cached.token;
 
@@ -286,6 +299,42 @@ async function casinoHeaders(creds: CasinoCreds, deadlineAt?: number, retryDelay
   return proxyHeaders(creds.skinDomain, { 'Authorization': `Bearer ${token}` });
 }
 
+// ── Reintento ante 401 (token muerto) ────────────────────────────────────────
+// Un 401 con un token que salió del cache significa que ese token ya no sirve. Se
+// invalida y se reintenta UNA sola vez con uno nuevo.
+//
+// SOLO para operaciones idempotentes (GetAgentBalance, GetAgentWithChildren).
+// DoDeposit y AddPlayer NO pasan por acá: ante un 401 invalidan el token para que
+// la próxima salga limpia, pero no se reintentan solas — mismo criterio que ya rige
+// para los reintentos por HTML (acreditar dos veces es peor que fallar).
+//
+// Si el token NO venía del cache, no se reintenta: recién se pidió, así que el 401
+// es por credencial o por bloqueo, y volver a pegar solo acerca un lockout.
+async function withFreshTokenOnce(
+  creds: CasinoCreds,
+  label: string,
+  call: (headers: Record<string, string>) => Promise<CasinoJsonResult>,
+  opts: { deadlineAt?: number; retryDelaysMs?: number[]; teniaTokenCacheado?: boolean } = {},
+): Promise<CasinoJsonResult> {
+  // getPlayerTargetId resuelve el token por su cuenta antes de llamar acá, así que
+  // para cuando llegamos el cache YA está poblado y el chequeo de abajo daría un
+  // falso positivo. Ese caller pasa el dato de antes.
+  const usoCache = opts.teniaTokenCacheado ?? tokenCache.has(tokenKey(creds));
+  const first = await call(await casinoHeaders(creds, opts.deadlineAt, opts.retryDelaysMs));
+  if (first.status !== 401 || !usoCache) return first;
+
+  if (!invalidateCasinoToken(creds)) return first;
+  console.warn(`[Casino] ${label}: 401 con el token cacheado — lo tiro y reintento con uno nuevo`);
+  const second = await call(await casinoHeaders(creds, opts.deadlineAt, opts.retryDelaysMs));
+
+  // Si el token RECIÉN pedido también come 401, no lo dejamos cacheado: nació muerto
+  // (credencial revocada, bloqueo del casino) y guardarlo haría que la próxima llamada
+  // arranque con un token que ya sabemos rechazado — y gaste otro par de requests en
+  // redescubrirlo. Lo encontró el test offline scripts/diag-401-retry-test.mjs.
+  if (second.status === 401) invalidateCasinoToken(creds);
+  return second;
+}
+
 // Saldo de fichas del agente del casino del tenant. Baja al verificar cargas
 // (deposita a un jugador) y sube al verificar pagos. Endpoint:
 //   GET /api/services/app/Agent/GetAgentBalance?agentId=...&username=...
@@ -299,10 +348,14 @@ export async function getAgentBalance(creds: CasinoCreds): Promise<number | null
   const deadlineAt = Date.now() + BALANCE_BUDGET_MS;
 
   try {
-    const r = await casinoFetchJson(
-      url,
-      { method: 'GET', headers: await casinoHeaders(creds, deadlineAt, BALANCE_RETRY_DELAYS_MS) },
-      { label: 'GetAgentBalance', deadlineAt, retryDelaysMs: BALANCE_RETRY_DELAYS_MS },
+    const r = await withFreshTokenOnce(
+      creds,
+      'GetAgentBalance',
+      (headers) => casinoFetchJson(
+        url, { method: 'GET', headers },
+        { label: 'GetAgentBalance', deadlineAt, retryDelaysMs: BALANCE_RETRY_DELAYS_MS },
+      ),
+      { deadlineAt, retryDelaysMs: BALANCE_RETRY_DELAYS_MS },
     );
     if (r.timedOut) {
       console.error('[Casino] GetAgentBalance: el casino no respondió a tiempo');
@@ -344,6 +397,7 @@ export async function getPlayerTargetId(
   // El token va primero y por separado: si el Authenticate ya vino en HTML, sabemos
   // que el casino está caído y no gastamos presupuesto en un lookup condenado (antes
   // se mandaba igual con "Bearer null" y el 401 resultante se leía como otra falla).
+  const teniaTokenCacheado = tokenCache.has(tokenKey(creds));
   const token = await getCasinoToken(creds, deadlineAt);
   if (!token) {
     return { ok: false, reason: 'casino_unavailable', detail: 'no se pudo autenticar contra el casino' };
@@ -366,8 +420,12 @@ export async function getPlayerTargetId(
   // Logueamos el body RAW: cuando el casino sirve su SPA en HTML con status 200
   // (ver casinoFetchJson), esto muestra exactamente qué llegó. La búsqueda del
   // player es idempotente, así que se reintenta.
-  const headers = proxyHeaders(creds.skinDomain, { 'Authorization': `Bearer ${token}` });
-  const r = await casinoFetchJson(url, { method: 'GET', headers }, { label: 'GetAgentWithChildren', deadlineAt });
+  const r = await withFreshTokenOnce(
+    creds,
+    'GetAgentWithChildren',
+    (headers) => casinoFetchJson(url, { method: 'GET', headers }, { label: 'GetAgentWithChildren', deadlineAt }),
+    { deadlineAt, teniaTokenCacheado },
+  );
   console.log(`[Casino] GetAgentWithChildren raw body (200 chars, intentos=${r.attempts}):`, r.body.slice(0, 200));
 
   if (r.timedOut) {
@@ -474,6 +532,15 @@ export async function doDeposit(
   const respText = await res.text().catch(() => '');
   console.log(`[Casino] DoDeposit resp status=${res.status} body completo:`, respText);
 
+  // Un 401 significa que el casino NO autorizó la operación, así que el depósito no
+  // se ejecutó. Se tira el token para que el siguiente intento salga con uno nuevo,
+  // pero acá NO se reintenta: reintentar solo una operación que acredita plata es
+  // justo lo que este módulo evita desde siempre. El operador reintenta y esa vez
+  // ya arranca con token limpio.
+  if (res.status === 401 && invalidateCasinoToken(creds)) {
+    console.warn('[Casino] DoDeposit: 401 con el token cacheado — token invalidado; NO se reintenta (mueve plata)');
+  }
+
   if (res.status === 201) return { success: true };
 
   let errorBody = '';
@@ -549,6 +616,12 @@ export async function createPlayer(creds: CasinoCreds, userName: string, passwor
 
   const respText = await res.text().catch(() => '');
   console.log(`[Casino] AddPlayer resp status=${res.status} body:`, respText.slice(0, 500));
+
+  // Mismo criterio que DoDeposit: se limpia el token, no se reintenta sola una
+  // creación de jugador (un reintento a ciegas deja usuarios duplicados).
+  if (res.status === 401 && invalidateCasinoToken(creds)) {
+    console.warn('[Casino] AddPlayer: 401 con el token cacheado — token invalidado; NO se reintenta (crea usuarios)');
+  }
 
   if (res.status === 201) return { success: true, username: userName };
 
