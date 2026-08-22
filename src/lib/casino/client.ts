@@ -264,7 +264,11 @@ async function getCasinoToken(
       }),
     }, { label: 'Authenticate', deadlineAt, retryDelaysMs });
 
-    console.log(`[Casino] Authenticate http=${r.status} intentos=${r.attempts} — body(500):`, r.body.slice(0, 500));
+    // Sin el body: la respuesta de Authenticate trae el encryptedAccessToken entero
+    // y quedaba escrito en claro en los logs de Vercel (visto el 22/08/2026). El
+    // status y los intentos alcanzan para el diagnóstico; si el body hace falta,
+    // los caminos de error ya lo loguean recortado (logTestFailure, body(300)).
+    console.log(`[Casino] Authenticate http=${r.status} intentos=${r.attempts}`);
 
     if (r.timedOut) {
       console.error('[Casino] Authenticate: el casino no respondió a tiempo');
@@ -283,7 +287,6 @@ async function getCasinoToken(
       console.error('[Casino] Authenticate no devolvió accessToken');
       return null;
     }
-    console.log('[Casino] accessToken (20):', String(token).slice(0, 20));
     // Margen de 60s para no usar un token a punto de vencer.
     const ttlMs = (expireInSeconds > 60 ? expireInSeconds - 60 : Math.max(expireInSeconds, 0)) * 1000;
     tokenCache.set(cacheKey, { token, expiresAt: now + ttlMs });
@@ -615,7 +618,14 @@ export async function createPlayer(creds: CasinoCreds, userName: string, passwor
   }
 
   const respText = await res.text().catch(() => '');
-  console.log(`[Casino] AddPlayer resp status=${res.status} body:`, respText.slice(0, 500));
+  // El body sólo en el camino de error. En un alta exitosa esa respuesta trae los
+  // datos del jugador recién creado y no aporta nada al diagnóstico: el status y el
+  // username ya dicen todo. Cuando falla sí hace falta ver qué contestó el casino.
+  if (res.status === 201) {
+    console.log(`[Casino] AddPlayer resp status=${res.status} usuario=${userName}`);
+  } else {
+    console.log(`[Casino] AddPlayer resp status=${res.status} body:`, respText.slice(0, 500));
+  }
 
   // Mismo criterio que DoDeposit: se limpia el token, no se reintenta sola una
   // creación de jugador (un reintento a ciegas deja usuarios duplicados).
