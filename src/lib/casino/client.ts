@@ -9,6 +9,7 @@
 // sigue siendo global: es infraestructura compartida, no una credencial de casino.
 
 import type { CasinoCreds } from './account';
+import { deleteSession, readSession, writeSession } from './session-store';
 
 const PROXY_URL = process.env.CASINO_PROXY_URL!;
 const PROXY_SECRET = process.env.CASINO_PROXY_SECRET ?? '';
@@ -20,6 +21,12 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 const tokenKey = (creds: CasinoCreds) => `${creds.skinDomain}|${creds.agentUsername}`;
 
+// Margen contra el vencimiento. Eran 60s cuando el cache vivia solo en memoria de
+// una instancia; ahora el mismo token cruza instancias y relojes distintos, asi que
+// conviene mas aire. Con el TTL real del casino (3600s) esto cuesta un login extra
+// cada 12 horas: nada.
+const TOKEN_MARGIN_MS = 5 * 60_000;
+
 // Tira el token cacheado de estas credenciales. Hace falta porque un token puede
 // morir ANTES de su expiración (el casino reinicia, revoca la sesión, rota su
 // clave de firma) y hasta ahora nadie borraba el cache nunca: el tenant quedaba
@@ -27,8 +34,9 @@ const tokenKey = (creds: CasinoCreds) => `${creds.skinDomain}|${creds.agentUsern
 // todavía, así que la invalidación va primero.
 // Devuelve si REALMENTE había un token cacheado: quien acaba de pedir uno fresco y
 // aun así comió un 401 no gana nada reintentando.
-function invalidateCasinoToken(creds: CasinoCreds): boolean {
-  return tokenCache.delete(tokenKey(creds));
+async function invalidateCasinoToken(creds: CasinoCreds, rechazado = false): Promise<void> {
+  tokenCache.delete(tokenKey(creds));
+  await deleteSession(creds, rechazado);
 }
 
 // Header común que autentica cada request contra el Worker proxy. X-Casino-Target
@@ -238,20 +246,42 @@ async function casinoFetchJson(
   return last;
 }
 
-// Devuelve un access token válido del casino para ESTAS credenciales. Autentica
-// con usuario+contraseña a través del proxy y cachea el token hasta su expiración
-// (expireInSeconds) con un margen de 60s. El cache es por skinDomain|agentUsername.
-async function getCasinoToken(
+// De dónde salió el token. Importa para decidir si un 401 merece reintento: si el
+// token se acaba de pedir, insistir no arregla nada y sólo acerca un lockout.
+export type TokenSource = 'memoria' | 'base' | 'nuevo';
+
+// Devuelve un access token válido del casino para ESTAS credenciales, buscándolo en
+// tres capas:
+//
+//   1. memoria  — Map de módulo, vive lo que vive la instancia serverless.
+//   2. base     — tabla casino_sessions, compartida por TODAS las instancias.
+//   3. nuevo    — Authenticate contra el casino.
+//
+// La capa 2 es la que cambia el orden de magnitud: sin ella cada instancia nueva
+// arrancaba con el cache vacío y pedía token, y así llegamos a ~94 Authenticate por
+// hora contra un token que dura 3600s (medición del 21/08/2026 en prod).
+//
+// NO hay lock entre instancias: dos requests concurrentes con las tres capas frías
+// pueden pedir dos tokens. Es aceptable — el casino acepta varios tokens vivos a la
+// vez, y un lock distribuido agrega un modo de falla peor que el que evita.
+async function resolveCasinoToken(
   creds: CasinoCreds,
   deadlineAt?: number,
   retryDelaysMs?: number[],
-): Promise<string | null> {
+): Promise<{ token: string | null; source: TokenSource }> {
   const now = Date.now();
   const cacheKey = tokenKey(creds);
-  const cached = tokenCache.get(cacheKey);
-  if (cached && now < cached.expiresAt) return cached.token;
 
-  if (!creds.agentPassword) return null;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) return { token: cached.token, source: 'memoria' };
+
+  const guardado = await readSession(creds);
+  if (guardado) {
+    tokenCache.set(cacheKey, guardado);
+    return { token: guardado.token, source: 'base' };
+  }
+
+  if (!creds.agentPassword) return { token: null, source: 'nuevo' };
 
   try {
     const r = await casinoFetchJson(`${PROXY_URL}/api/TokenAuth/Authenticate`, {
@@ -272,29 +302,66 @@ async function getCasinoToken(
 
     if (r.timedOut) {
       console.error('[Casino] Authenticate: el casino no respondió a tiempo');
-      return null;
+      return { token: null, source: 'nuevo' };
     }
     if (r.notJson) {
       console.error(`[Casino] Authenticate: body no es JSON (¿HTML?) tras ${r.attempts} intento(s)`);
-      return null;
+      return { token: null, source: 'nuevo' };
     }
-    if (r.status >= 400) return null;
+    if (r.status >= 400) return { token: null, source: 'nuevo' };
 
     const data = r.json;
     const token: string | null = data?.result?.accessToken ?? null;
     const expireInSeconds = Number(data?.result?.expireInSeconds ?? 0);
     if (!token) {
       console.error('[Casino] Authenticate no devolvió accessToken');
-      return null;
+      return { token: null, source: 'nuevo' };
     }
-    // Margen de 60s para no usar un token a punto de vencer.
-    const ttlMs = (expireInSeconds > 60 ? expireInSeconds - 60 : Math.max(expireInSeconds, 0)) * 1000;
-    tokenCache.set(cacheKey, { token, expiresAt: now + ttlMs });
-    return token;
+
+    const expiresAt = vencimientoDelToken(token, expireInSeconds, now);
+    tokenCache.set(cacheKey, { token, expiresAt });
+    // Guardar en base es best-effort: si la tabla no está o la base falla, es un
+    // no-op y seguimos con el de memoria (ver session-store.ts).
+    await writeSession(creds, { token, expiresAt });
+    return { token, source: 'nuevo' };
   } catch (err: any) {
     console.error('[Casino] Authenticate error:', err?.message ?? err);
-    return null;
+    return { token: null, source: 'nuevo' };
   }
+}
+
+// Cuándo dejar de usar este token: el MENOR entre lo que declara el casino
+// (expireInSeconds) y el claim exp del propio JWT, menos el margen.
+//
+// Los dos no coinciden ni de lejos: el 21/08/2026 el casino devolvía
+// expireInSeconds=3600 con un JWT cuyo exp caía en enero de 2028 (~500 días). Se le
+// cree al MÁS CORTO — el casino puede invalidar su sesión del lado del servidor
+// cuando quiera, sin importar lo que diga la firma del token.
+//
+// El exp se lee decodificando el payload, sin verificar la firma: no somos nosotros
+// los que validamos este token, sólo queremos saber hasta cuándo lo dan por bueno.
+// Si el JWT no se puede leer, manda expireInSeconds.
+function vencimientoDelToken(token: string, expireInSeconds: number, now: number): number {
+  const porDeclaracion = now + Math.max(expireInSeconds, 0) * 1000;
+
+  let porJwt = Infinity;
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64').toString('utf8'));
+    if (typeof payload?.exp === 'number') porJwt = payload.exp * 1000;
+  } catch { /* JWT ilegible → manda expireInSeconds */ }
+
+  // El margen puede dejar el vencimiento en el pasado si el token venía muy corto:
+  // en ese caso nace vencido y se pide uno nuevo, que es lo correcto.
+  return Math.min(porDeclaracion, porJwt) - TOKEN_MARGIN_MS;
+}
+
+// Compatibilidad para los callers que sólo quieren el token.
+async function getCasinoToken(
+  creds: CasinoCreds,
+  deadlineAt?: number,
+  retryDelaysMs?: number[],
+): Promise<string | null> {
+  return (await resolveCasinoToken(creds, deadlineAt, retryDelaysMs)).token;
 }
 
 async function casinoHeaders(creds: CasinoCreds, deadlineAt?: number, retryDelaysMs?: number[]) {
@@ -540,7 +607,8 @@ export async function doDeposit(
   // pero acá NO se reintenta: reintentar solo una operación que acredita plata es
   // justo lo que este módulo evita desde siempre. El operador reintenta y esa vez
   // ya arranca con token limpio.
-  if (res.status === 401 && invalidateCasinoToken(creds)) {
+  if (res.status === 401) {
+    await invalidateCasinoToken(creds, true);
     console.warn('[Casino] DoDeposit: 401 con el token cacheado — token invalidado; NO se reintenta (mueve plata)');
   }
 
@@ -629,7 +697,8 @@ export async function createPlayer(creds: CasinoCreds, userName: string, passwor
 
   // Mismo criterio que DoDeposit: se limpia el token, no se reintenta sola una
   // creación de jugador (un reintento a ciegas deja usuarios duplicados).
-  if (res.status === 401 && invalidateCasinoToken(creds)) {
+  if (res.status === 401) {
+    await invalidateCasinoToken(creds, true);
     console.warn('[Casino] AddPlayer: 401 con el token cacheado — token invalidado; NO se reintenta (crea usuarios)');
   }
 

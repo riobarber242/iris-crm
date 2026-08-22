@@ -18,6 +18,13 @@ import { decryptSecret } from '@/lib/secure-secret';
 // Credenciales atómicas de UNA conexión de casino, ya en claro y listas para
 // usar. Nunca se logean ni se serializan enteras (llevan el password del agente).
 export interface CasinoCreds {
+  /**
+   * id de la fila de casino_accounts. Es la clave del cache persistente de tokens
+   * (casino_sessions). Va OPCIONAL a propósito: "Probar conexión" con credenciales
+   * tipeadas y todavía no guardadas arma un CasinoCreds sin fila detrás, y esas
+   * pruebas no deben persistir ningún token.
+   */
+  accountId?:    string;
   agentUsername: string;
   agentId:       string;
   agentPassword: string;
@@ -33,7 +40,7 @@ export interface CasinoCreds {
 export async function loadCasinoAccount(tenantId: string): Promise<CasinoCreds | null> {
   const { data, error } = await supabaseAdmin
     .from('casino_accounts')
-    .select('tenant_id, agent_username, agent_id, skin_id, skin_domain, agent_password_enc')
+    .select('id, tenant_id, agent_username, agent_id, skin_id, skin_domain, agent_password_enc')
     .eq('tenant_id', tenantId)
     .eq('is_default', true)
     .eq('active', true)
@@ -60,6 +67,7 @@ export async function loadCasinoAccount(tenantId: string): Promise<CasinoCreds |
   }
 
   return {
+    accountId:     data.id,
     agentUsername: data.agent_username,
     agentId:       data.agent_id,
     agentPassword,
