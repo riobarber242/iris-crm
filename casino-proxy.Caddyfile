@@ -1,0 +1,148 @@
+# casino-proxy.Caddyfile — proxy del casino sobre el VPS argentino (LightNode).
+#
+# Reemplaza al Cloudflare Worker (casino-proxy-worker.js) manteniendo su MISMO
+# contrato, porque `client.ts` matchea los rechazos del proxy por texto literal.
+# Motivo del cambio: el casino sirve su SPA (HTML con 200) según DE DÓNDE sale el
+# request. Verificado el 22/08/2026 desde este VPS (AS154177, Buenos Aires),
+# directo al casino y con un usuario inventado: 3/3 respuestas 401 con body vacío
+# y `server: Microsoft-IIS/10.0` sin cf-ray — o sea el backend real del casino
+# procesando el login. Una IP de datacenter argentina NO está bloqueada.
+#
+# ── CONTRATO QUE NO SE PUEDE ROMPER ──────────────────────────────────────────
+# 1) Secret inválido        → 401 con body exactamente "Unauthorized"
+#                             (client.ts: /^unauthorized$/i sobre body.trim())
+# 2) Target no permitido    → 403 con body exactamente "Forbidden casino target"
+#                             (client.ts: /forbidden casino target/i)
+# 3) TRANSPARENCIA total en el resto: el status y el body del casino pasan tal
+#    cual. Nada de páginas de error propias de Caddy. Es crítico: un 401 del
+#    casino con body vacío es un login rechazado (bad_credentials), y si el proxy
+#    lo reescribe a HTML el clasificador lo lee como "casino caído" y le miente al
+#    operador. Y al revés: cualquier error propio del proxy que devuelva HTML cae
+#    en notJson → casino_unavailable, que es lo correcto, pero JAMÁS debe salir
+#    con un body que colisione con los dos literales de arriba.
+{
+	# Sin admin API: este proxy no se administra en caliente y el endpoint por
+	# default (localhost:2019) es una superficie de más en un VPS público.
+	admin off
+	# Nota sobre la regla 3: no hace falta directiva para cumplirla. Caddy, ante
+	# un upstream caído, contesta 502 con body VACÍO (no una página HTML), y eso
+	# cae en notJson → casino_unavailable, que es la clasificación correcta. Lo
+	# que NO hay que hacer nunca es agregar un `handle_errors` con body propio.
+}
+
+# ── El proxy propiamente dicho ───────────────────────────────────────────────
+# {args[0]} = host del casino. Replica exactamente lo que hacía el Worker.
+(proxy_al_casino) {
+	reverse_proxy https://{args[0]} {
+		# El casino desbloquea el acceso por Origin/Referer: es LA razón de ser
+		# de este proxy. Sin esto la respuesta vuelve a ser la SPA en HTML.
+		header_up Origin https://{args[0]}
+		header_up Referer https://{args[0]}/
+		# Host correcto para SNI y para el vhost del IIS del casino.
+		header_up Host {args[0]}
+
+		# ── Nada de esto puede llegar al casino ──────────────────────────────
+		# Caddy agrega X-Forwarded-For/Proto/Host solo: el XFF llevaría la IP
+		# de Vercel, que es justo el origen que estamos tapando. Borrarlos es
+		# el punto entero de la mudanza, no una prolijidad.
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Proto
+		header_up -X-Forwarded-Host
+		header_up -X-Real-IP
+		header_up -Forwarded
+		header_up -Via
+		# Headers del proxy: se consumen acá, no se reenvían (igual que el Worker).
+		header_up -X-Proxy-Secret
+		header_up -X-Casino-Target
+		# Restos de plataforma que delatan de dónde salió el request.
+		header_up -X-Vercel-Id
+		header_up -X-Vercel-Forwarded-For
+		header_up -X-Vercel-Deployment-Url
+		header_up -CF-Connecting-IP
+		header_up -CF-Ray
+		header_up -CF-IPCountry
+		header_up -True-Client-IP
+
+		# ── Respuesta ────────────────────────────────────────────────────────
+		header_down Access-Control-Allow-Origin *
+		# proxyDiag() en client.ts lee x-proxy-colo y, si no está, loguea
+		# "(sin headers del proxy — ¿Worker sin el diagnóstico?)". Estos dos
+		# mantienen ese log con sentido ahora que la salida es fija: siempre AR.
+		header_down X-Proxy-Colo vps-ar-bue
+		header_down X-Proxy-Country AR
+
+		transport http {
+			tls
+			# Holgura contra los timeouts del cliente: client.ts corta a 8s
+			# (15s AddPlayer). El proxy tiene que ser SIEMPRE el más paciente,
+			# así el que decide abortar es IRIS y no un 502 del medio, que se
+			# clasificaría como casino_unavailable por otra razón.
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+}
+
+# Dominio sslip.io: resuelve solo a 130.94.106.173 (el host va embebido en el
+# nombre), así que arrancamos sin tocar DNS. Caddy igual saca y renueva el cert
+# de Let's Encrypt solo, que es lo que importa: por IP pelada no sirve, porque
+# `fetch` de Node rechaza un self-signed y el CRM vería un error de TLS.
+# Para migrar a un dominio propio: cambiar esta línea + CASINO_PROXY_URL.
+130-94-106-173.sslip.io {
+	# ── 1) Auth del proxy ────────────────────────────────────────────────────
+	# El secret vive en el environment del servicio systemd, NO en este archivo
+	# (el Caddyfile se versiona en el repo; el secret no).
+	@sin_secret not header X-Proxy-Secret {env.PROXY_SECRET}
+	handle @sin_secret {
+		# Body EXACTO. `respond` no agrega salto de línea ni página de error.
+		respond "Unauthorized" 401 {
+			close
+		}
+	}
+
+	# ── 2) Allowlist de destinos ─────────────────────────────────────────────
+	# Igual que el Worker: la frontera de seguridad. Un bloque estático por host
+	# permitido — nada de armar el upstream con el valor del header, así ni
+	# forjando X-Casino-Target se llega a un host que no esté escrito acá.
+	# Sumar un casino nuevo = agregar su bloque + recargar Caddy.
+
+	@target_fans header X-Casino-Target admin.celuapuestas.fans
+	handle @target_fans {
+		import proxy_al_casino admin.celuapuestas.fans
+	}
+
+	@target_bond header X-Casino-Target admin.celuapuestas.bond
+	handle @target_bond {
+		import proxy_al_casino admin.celuapuestas.bond
+	}
+
+	# Fail-closed PURO: a diferencia del Worker, acá NO hay default cuando falta
+	# X-Casino-Target. El CRM manda el header siempre, así que esa rama era código
+	# muerto que sólo agregaba una forma de proxear a un destino que nadie pidió.
+	# Sin header o con un valor desconocido → 403, los dos por el mismo camino.
+	handle {
+		respond "Forbidden casino target" 403 {
+			close
+		}
+	}
+
+	# ── Log ──────────────────────────────────────────────────────────────────
+	# Equivalente al console.log del Worker (status, path, content-type), que era
+	# lo que dejaba ver una racha de HTML sin depender de un deploy del backend.
+	log {
+		output file /var/log/caddy/casino-proxy.log {
+			roll_size 20mb
+			roll_keep 10
+		}
+		# OJO: Caddy loguea los headers del request y sólo redacta Authorization y
+		# Cookie por default. Sin este filtro, el X-Proxy-Secret REAL queda en texto
+		# plano en el log (verificado el 22/08/2026: apareció completo en las 3
+		# primeras pruebas). El filtro lo borra antes de escribir.
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Proxy-Secret delete
+			}
+		}
+	}
+}
