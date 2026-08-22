@@ -23,6 +23,12 @@
 {
 	# Sin admin API: este proxy no se administra en caliente y el endpoint por
 	# default (localhost:2019) es una superficie de más en un VPS público.
+	#
+	# CONSECUENCIA: `systemctl reload caddy` NO funciona — el reload empuja la
+	# config nueva por esa misma API y muere con "connection refused" sobre
+	# localhost:2019. Para aplicar un cambio va `systemctl restart caddy`. El
+	# reload fallido no voltea nada: el servicio sigue corriendo con la config
+	# vieja, así que el síntoma es "cambié el archivo y no pasó nada".
 	admin off
 	# Nota sobre la regla 3: no hace falta directiva para cumplirla. Caddy, ante
 	# un upstream caído, contesta 502 con body VACÍO (no una página HTML), y eso
@@ -83,12 +89,18 @@
 	}
 }
 
-# Dominio sslip.io: resuelve solo a 130.94.106.173 (el host va embebido en el
-# nombre), así que arrancamos sin tocar DNS. Caddy igual saca y renueva el cert
-# de Let's Encrypt solo, que es lo que importa: por IP pelada no sirve, porque
-# `fetch` de Node rechaza un self-signed y el CRM vería un error de TLS.
-# Para migrar a un dominio propio: cambiar esta línea + CASINO_PROXY_URL.
-130-94-106-173.sslip.io {
+# DOS nombres, misma config. Por IP pelada no sirve: `fetch` de Node rechaza un
+# certificado self-signed y el CRM vería un error de TLS en vez de un 200, así que
+# hace falta un dominio con cert de Let's Encrypt (que Caddy saca y renueva solo).
+#
+#   casino-proxy.irisonline.app  → el definitivo (A record en Namecheap, 22/08/2026).
+#   130-94-106-173.sslip.io      → el provisorio con el que se arrancó sin tocar DNS.
+#
+# El sslip.io se deja MIENTRAS la migración esté en curso: si el dominio propio
+# fallara, volver es cambiar CASINO_PROXY_URL y nada más. Sacarlo después, cuando
+# prod lleve un tiempo estable en el definitivo — y ojo, si sslip.io se cayera
+# tampoco se podría renovar su cert, que es otra razón para no depender de él.
+casino-proxy.irisonline.app, 130-94-106-173.sslip.io {
 	# ── 1) Auth del proxy ────────────────────────────────────────────────────
 	# El secret vive en el environment del servicio systemd, NO en este archivo
 	# (el Caddyfile se versiona en el repo; el secret no).
