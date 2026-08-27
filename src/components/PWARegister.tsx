@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
@@ -129,12 +129,21 @@ type PushPrompt = null | 'prompt' | 'ios-install';
 // (requisito de Safari; Chrome/Firefox lo aceptan igual).
 export default function PWARegister() {
   const { agent } = useAuth();
+  // Identidad ESTABLE del agente. AuthProvider revalida la sesión cada 30 s y
+  // hace setAgent() con el objeto recién parseado de /api/auth/me, así que
+  // `agent` cambia de REFERENCIA aunque sea la misma persona. Todo lo de push se
+  // ata al id (un string) y no al objeto, para no reaccionar a ese latido.
+  const agentId = agent?.id ?? null;
   const pathname = usePathname();
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [pushPrompt, setPushPrompt] = useState<PushPrompt>(null);
   const [dismissed, setDismissed] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Último agentId cuya suscripción ya sincronizamos con el server en esta carga
+  // de página. Corta el POST repetido cuando el navegador ya tenía la misma
+  // suscripción y no hay nada nuevo que contarle al server.
+  const syncedForRef = useRef<string | null>(null);
 
   const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -188,7 +197,7 @@ export default function PWARegister() {
   // suscripción NUEVA, para no spamear en cada carga; fallo siempre). Ante error
   // re-lanza con la causa para que el caller la muestre en el banner.
   const ensureSubscription = useCallback(async () => {
-    if (!agent || !vapidKey) return;
+    if (!agentId || !vapidKey) return;
     let stage: PushStage = 'sw-ready';
     let createdNew = false;
     try {
@@ -223,13 +232,23 @@ export default function PWARegister() {
         createdNew = true;
       }
 
+      // El POST existe para que el server conozca el endpoint. Si el navegador ya
+      // tenía ESTA misma suscripción y en esta carga de página ya se la mandamos
+      // para este agente, repetirlo no cambia nada en la base. Sin este corte se
+      // mandaba un POST cada 30 s por pestaña abierta (medido el 27/08: 506
+      // requests en 2,5 h, la 2ª ruta más pesada de todo el panel).
+      // Una suscripción NUEVA siempre se manda, y el ref recién se marca cuando
+      // el server confirmó, así que un fallo se reintenta.
+      if (!createdNew && syncedForRef.current === agentId) return;
+
       stage = 'server-post';
       const res = await fetchWithTimeout('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription, agentId: agent.id }),
+        body: JSON.stringify({ subscription, agentId }),
       }, 15000);
       if (!res.ok) throw new Error(`El servidor rechazó la suscripción (HTTP ${res.status})`);
+      syncedForRef.current = agentId;
 
       if (createdNew) postDiagnostics({ ok: true, stage: 'done' });
     } catch (err) {
@@ -241,12 +260,13 @@ export default function PWARegister() {
       });
       throw err;
     }
-  }, [agent, vapidKey]);
+  }, [agentId, vapidKey]);
 
   // ── Decidir qué afiche mostrar (depende del agente logueado) ───────────────
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!agent) { setPushPrompt(null); return; }
+    // Sin sesión: limpiamos el ref para que el próximo login vuelva a sincronizar.
+    if (!agentId) { syncedForRef.current = null; setPushPrompt(null); return; }
 
     const supported = 'serviceWorker' in navigator
       && 'PushManager' in window
@@ -273,7 +293,7 @@ export default function PWARegister() {
 
     // 'denied' → no insistimos (el usuario lo bloqueó). 'default' → ofrecer botón.
     setPushPrompt(Notification.permission === 'default' ? 'prompt' : null);
-  }, [agent, vapidKey, ensureSubscription]);
+  }, [agentId, vapidKey, ensureSubscription]);
 
   // Click del usuario → recién acá pedimos permiso (obligatorio en Safari).
   async function enableNotifications() {
