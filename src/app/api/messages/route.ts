@@ -24,9 +24,25 @@ async function guardContactAccess(
   return null;
 }
 
+// Ventana por defecto del chat. El chat pollea cada 8 s: sin tope, cada corrida
+// se traía el historial COMPLETO de la conversación (el tope real lo ponía
+// PostgREST en 1000 filas). Medido en prod: la peor conversación de Casino 17Star
+// tiene 2407 mensajes y devolvía 572 KB / 72 KB gzip POR REQUEST, o sea 31,7 MB
+// por hora y por pestaña abierta. Auditoría 08/09/2026, hallazgo 04.
+const MAX_PAGE = 200;
+const DEFAULT_PAGE = 50;
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const contactId = url.searchParams.get('contactId');
+  // Paginación keyset hacia ATRÁS (mensajes más viejos), cursor = (created_at, id)
+  // del mensaje más viejo que ya tiene cargado el cliente.
+  const before   = url.searchParams.get('before');
+  const beforeId = url.searchParams.get('beforeId');
+  const limitParam = parseInt(url.searchParams.get('limit') ?? '', 10);
+  const limit = Number.isInteger(limitParam) && limitParam > 0
+    ? Math.min(limitParam, MAX_PAGE)
+    : DEFAULT_PAGE;
 
   if (!contactId) {
     return new NextResponse('Falta contactId', { status: 400 });
@@ -37,12 +53,24 @@ export async function GET(request: Request) {
   const denied = await guardContactAccess(session, contactId);
   if (denied) return denied;
 
-  const { data, error } = await supabaseAdmin
+  // Se pide la ventana MÁS RECIENTE (created_at desc + limit) y el cliente la da
+  // vuelta. `id` desempata: sin él, dos mensajes con el mismo created_at (inserts
+  // en lote) podrían saltearse al paginar.
+  let query = supabaseAdmin
     .from('messages')
     .select('*')
     .eq('contact_id', contactId)
     .eq('tenant_id', session.tenant_id)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit);
+
+  // Cursor keyset: estrictamente ANTERIOR al par (created_at, id) recibido.
+  if (before && beforeId) {
+    query = query.or(`created_at.lt.${before},and(created_at.eq.${before},id.lt.${beforeId})`);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return new NextResponse(error.message, { status: 500 });
@@ -74,7 +102,8 @@ export async function GET(request: Request) {
       : m,
   );
 
-  return NextResponse.json(enriched);
+  // hasMore por conteo: si vino la página completa, asumimos que hay más atrás.
+  return NextResponse.json({ messages: enriched, hasMore: enriched.length === limit });
 }
 
 export async function POST(request: Request) {

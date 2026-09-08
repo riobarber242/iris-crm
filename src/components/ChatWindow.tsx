@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import dynamic from 'next/dynamic';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { linkify } from '@/lib/linkify';
@@ -260,6 +260,10 @@ function parseCampaignEvent(raw: string): { text: string | null; payload?: strin
   } catch {}
   return null;
 }
+
+// Cuántos mensajes trae el chat de entrada (y en cada poll de 8 s). Lo de más
+// atrás se pide a demanda con "Ver mensajes anteriores".
+const RECENT_WINDOW = 50;
 
 function formatSeconds(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -792,6 +796,15 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
   const [createCasinoOpen, setCreateCasinoOpen] = useState(false);
   const [casinoUser, setCasinoUser] = useState<string | null>(casinoUsername ?? null);
   const [loadError, setLoadError] = useState(false);
+  const [hasOlder,     setHasOlder]     = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  // Páginas de historial viejo ya traídas. Mientras sea 0, `hasOlder` lo manda el
+  // poll; después lo manda loadOlder (el poll siempre diría que hay más, porque
+  // sólo mira la ventana reciente).
+  const olderPagesRef = useRef(0);
+  // Alto/scroll del scroller ANTES de prepender historial, para que la vista no
+  // salte cuando entran mensajes arriba (ver el useLayoutEffect de más abajo).
+  const pendingScrollRef = useRef<{ height: number; top: number } | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [showTemplates,   setShowTemplates]   = useState(false);
   const [templateSending, setTemplateSending] = useState(false);
@@ -857,20 +870,32 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
 
   // Al cambiar de conversación (el componente no se remonta: solo cambia la
   // prop) volvemos al modo "pegado al fondo" para abrir abajo el chat nuevo.
-  useEffect(() => { isNearBottomRef.current = true; }, [contactId]);
+  // Al cambiar de contacto se limpia TODO: sin esto el merge de abajo conservaría
+  // como "historial viejo" los mensajes del contacto anterior.
+  useEffect(() => {
+    isNearBottomRef.current = true;
+    olderPagesRef.current   = 0;
+    pendingScrollRef.current = null;
+    setMessages([]);
+    setHasOlder(false);
+  }, [contactId]);
 
   // Trae los mensajes del server y los fusiona conservando los mensajes
   // optimistas locales (los que todavía no tienen id en la DB: enviando/fallidos).
   // Así el polling de respaldo nunca borra una burbuja en vuelo.
   const fetchMessages = useCallback(async () => {
     try {
-      const res = await fetchWithTimeout(`/api/messages?contactId=${contactId}`);
+      const res = await fetchWithTimeout(`/api/messages?contactId=${contactId}&limit=${RECENT_WINDOW}`);
       if (!res.ok) { setLoadError(true); return; }
       setLoadError(false);
-      const server: Message[] = (await res.json()).reverse();
+      const payload = await res.json();
+      // La ventana reciente viene newest-first; el chat la muestra al revés.
+      const server: Message[] = (payload?.messages ?? []).slice().reverse();
+      // Mientras no se haya pedido historial viejo, el 'hay más atrás' lo dice el
+      // server. Después manda loadOlder: este fetch sólo ve la ventana reciente.
+      if (olderPagesRef.current === 0) setHasOlder(!!payload?.hasMore);
       setMessages((prev) => {
         const optimistic = prev.filter((m) => !m.id); // sin id = aún no guardado
-        if (optimistic.length === 0) return server;
         // Descartar los optimistas que el server ya devolvió: un envío inserta la
         // fila y dispara el Broadcast de Fase 2 ANTES de que el POST responda, así
         // que este refetch (Broadcast o poll de 8s) trae la fila guardada mientras
@@ -900,12 +925,87 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
           }
           return true;      // aun sin guardar: conservar la burbuja en vuelo
         });
-        return [...server, ...stillPending];
+        // El refetch trae SOLO la ventana reciente, así que lo que el usuario haya
+        // cargado con "Ver mensajes anteriores" lo conservamos nosotros. Se fusiona
+        // por id —el server pisa al local, para no perder ediciones ni cambios de
+        // estado— y se reordena por fecha. El Map además dedupea el borde entre la
+        // ventana y el historial.
+        //
+        // DENTRO de la ventana que acaba de responder, el server es la AUTORIDAD: si
+        // teníamos una fila que él ya no devuelve, la borraron. Esto NO es un detalle:
+        // los borrados de mensajes son FÍSICOS (DELETE /api/messages hace un delete de
+        // verdad, no hay deleted_at) y no existe listener de postgres_changes DELETE
+        // —Supabase no puede filtrar ese evento por contact_id sin REPLICA IDENTITY
+        // FULL—, así que este es el ÚNICO camino por el que el borrado hecho por otro
+        // operador desaparece de esta pantalla. Sin este descarte, el mensaje borrado
+        // quedaba colgado para siempre en la sesión del otro.
+        const oldestServer = server[0]?.created_at;
+        const idsDelServer = new Set(server.map((m) => m.id));
+        const porId = new Map<string, Message>();
+        for (const m of prev) {
+          if (!m.id) continue;                       // los optimistas van por stillPending
+          const dentroDeLaVentana = !!oldestServer && !!m.created_at
+            && new Date(m.created_at).getTime() >= new Date(oldestServer).getTime();
+          if (dentroDeLaVentana && !idsDelServer.has(m.id)) continue; // borrado
+          porId.set(m.id, m);
+        }
+        for (const m of server) if (m.id) porId.set(m.id, m);
+        const historial = [...porId.values()].sort(
+          (a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime(),
+        );
+        return [...historial, ...stillPending];
       });
     } catch {
       setLoadError(true);
     }
   }, [contactId]);
+
+  // Trae la página anterior de historial y la PREPENDE. El cursor es el mensaje
+  // más viejo que ya tenemos guardado (los optimistas no cuentan: no tienen id).
+  async function loadOlder() {
+    if (loadingOlder) return;
+    // messages viene oldest-first: el primero con id es el más viejo guardado.
+    const masViejo = messages.find((m) => m.id && m.created_at);
+    if (!masViejo?.id || !masViejo.created_at) return;
+    setLoadingOlder(true);
+    // Guardamos la geometría ANTES de que entren los mensajes de arriba.
+    const scroller = listRef.current;
+    if (scroller) pendingScrollRef.current = { height: scroller.scrollHeight, top: scroller.scrollTop };
+    try {
+      const qs = new URLSearchParams({
+        contactId,
+        limit:    String(RECENT_WINDOW),
+        before:   masViejo.created_at,
+        beforeId: masViejo.id as string,
+      });
+      const res = await fetchWithTimeout(`/api/messages?${qs}`);
+      if (res.ok) {
+        const payload = await res.json();
+        const older: Message[] = (payload?.messages ?? []).slice().reverse();
+        olderPagesRef.current += 1;
+        setHasOlder(!!payload?.hasMore);
+        if (older.length) {
+          setMessages((prev) => {
+            const vistos = new Set(prev.map((m) => m.id).filter(Boolean));
+            const nuevos = older.filter((m) => m.id && !vistos.has(m.id));
+            return nuevos.length ? [...nuevos, ...prev] : prev;
+          });
+        }
+      }
+    } catch {}
+    setLoadingOlder(false);
+  }
+
+  // Compensa el salto de scroll al prepender historial: el usuario queda mirando
+  // exactamente el mismo mensaje que antes de apretar el botón. Va en layout effect
+  // (antes del paint) para que no se vea el salto.
+  useLayoutEffect(() => {
+    const p = pendingScrollRef.current;
+    const scroller = listRef.current;
+    if (!p || !scroller) return;
+    pendingScrollRef.current = null;
+    scroller.scrollTop = scroller.scrollHeight - p.height + p.top;
+  }, [messages]);
 
   // Carga qué mensajes de este contacto ya fueron enviados a verificar, para
   // marcar el botón. Usa source_message_id de los comprobantes del contacto.
@@ -1527,6 +1627,21 @@ export default function ChatWindow({ contactId, cajaEnabled = true, casinoDeposi
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}
       >
       <div ref={contentRef} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {hasOlder && (
+          <button
+            type="button"
+            onClick={loadOlder}
+            disabled={loadingOlder}
+            style={{
+              alignSelf: 'center', margin: '2px 0 4px', padding: '6px 16px', fontSize: '12px',
+              fontWeight: 700, color: '#666', background: '#F0F0F0', border: 'none',
+              borderRadius: '999px', cursor: loadingOlder ? 'default' : 'pointer',
+              opacity: loadingOlder ? 0.6 : 1,
+            }}
+          >
+            {loadingOlder ? 'Cargando…' : 'Ver mensajes anteriores'}
+          </button>
+        )}
         {loadError && messages.length === 0 && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', background: '#FDECEA', color: '#B71C1C', borderRadius: '12px', padding: '10px 14px', fontSize: '13px' }}>
             <span>⚠ No se pudieron cargar los mensajes.</span>
