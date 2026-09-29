@@ -216,7 +216,7 @@ export async function loadCampaignResults(
       const [msgs, comps] = await Promise.all([
         fetchAll((f, t) => supabaseAdmin
           .from('messages').select('contact_id, created_at')
-          .in('contact_id', slice).eq('role', 'user').gt('created_at', minSince)
+          .eq('tenant_id', tenantId).in('contact_id', slice).eq('role', 'user').gt('created_at', minSince)
           .order('created_at', { ascending: true }).range(f, t)),
         fetchAll((f, t) => supabaseAdmin
           .from('comprobantes').select('contact_id, created_at')
