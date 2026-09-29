@@ -118,7 +118,7 @@ export default function WhatsAppNumbersManager() {
       });
       const data = await res.json().catch(() => null);
       if (res.ok && data?.ok) {
-        setVerifyResult((prev) => ({ ...prev, [n.id]: { ok: true, text: `✅ ${data.display_phone_number ?? 'OK'}` } }));
+        setVerifyResult((prev) => ({ ...prev, [n.id]: { ok: true, text: `✅ ${data.summary ?? data.display_phone_number ?? 'OK'}` } }));
         if (data.display_phone_number) {
           setPhoneMap((prev) => ({ ...prev, [n.id]: data.display_phone_number }));
         }

@@ -133,7 +133,7 @@ export default function AdminTenantNumbersModal({
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
       });
       const d = await res.json().catch(() => null);
-      if (res.ok && d?.ok) setVerifyResult((p) => ({ ...p, [id]: { ok: true, text: `✅ ${d.display_phone_number ?? 'OK'}` } }));
+      if (res.ok && d?.ok) setVerifyResult((p) => ({ ...p, [id]: { ok: true, text: `✅ ${d.summary ?? d.display_phone_number ?? 'OK'}` } }));
       else setVerifyResult((p) => ({ ...p, [id]: { ok: false, text: `❌ ${d?.error ?? 'Error verificando'}` } }));
     } catch { setVerifyResult((p) => ({ ...p, [id]: { ok: false, text: '❌ Error de red' } })); }
     finally { setVerifying(null); }

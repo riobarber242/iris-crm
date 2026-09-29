@@ -3,9 +3,10 @@ import axios from 'axios';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { readWaSecret } from '@/lib/meta/wa-secrets';
+import { PHONE_STATUS_FIELDS, pickPhoneStatus, phoneStatusSummary } from '@/lib/meta/phone-status';
 
 // Verifica un número contra la Graph API de Meta:
-// GET /{phone_number_id}?fields=display_phone_number con el token del número
+// GET /{phone_number_id} con los campos de diagnóstico (status, platform_type, calidad…) con el token del número
 // (o el global de env si la fila no tiene token propio). Rol admin o agent.
 export async function POST(request: Request) {
   const session = await getSessionAgent();
@@ -40,10 +41,11 @@ export async function POST(request: Request) {
   try {
     const res = await axios.get(`https://graph.facebook.com/v18.0/${num.phone_number_id}`, {
       headers: { Authorization: `Bearer ${token}` },
-      params:  { fields: 'display_phone_number' },
+      params:  { fields: PHONE_STATUS_FIELDS },
       timeout: 10000,
     });
-    return NextResponse.json({ ok: true, display_phone_number: res.data?.display_phone_number ?? null });
+    const status = pickPhoneStatus(res.data);
+    return NextResponse.json({ ok: true, ...status, summary: phoneStatusSummary(status) });
   } catch (err: any) {
     const error = err?.response?.data?.error?.message ?? err?.message ?? 'Error desconocido';
     return NextResponse.json({ ok: false, error });
