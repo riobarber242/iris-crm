@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motivoDeFallo } from '@/lib/meta-error';
 
 // Fila de chips de resultados de una campaña + el panel que se abre al tocar un
@@ -54,6 +54,7 @@ type Pending = { group: CleanupGroup; action: 'optout' | 'delete'; ids: string[]
 // Etiqueta corta por código para los grupos informativos. El texto completo
 // (motivoDeFallo) va en el tooltip.
 const CODE_SHORT: Record<number, string> = {
+  131026: 'no puede recibir mensajes',
   131049: 'límite de marketing por persona',
   130472: 'experimento de Meta',
   131056: 'demasiados mensajes seguidos',
@@ -123,12 +124,16 @@ function buttonRoleOf(index: number, total: number): ButtonRole {
 export default function CampaignResults({ c, onChanged }: { c: ResultsCampaign; onChanged?: () => void }) {
   const [view, setView] = useState<View | null>(null);
 
-  // Botones: labels de la plantilla (del GET de campañas). Sin plantilla, genéricos
+  // Botones: labels de la plantilla (del GET de campañas). Sin labels y sin ningún
+  // click, la plantilla no tiene botones (o es texto libre): no se muestran chips de
+  // botón. Sin labels pero CON clicks (plantilla borrada después), chips genéricos
   // con la cantidad que indiquen los contadores (mínimo 2).
   const counts = [c.btn1_count ?? 0, c.btn2_count ?? 0, c.btn3_count ?? 0];
   const labels = c.button_labels && c.button_labels.length > 0
     ? c.button_labels
-    : Array.from({ length: counts[2] > 0 ? 3 : 2 }, (_, i) => `Botón ${i + 1}`);
+    : counts.some((n) => n > 0)
+      ? Array.from({ length: counts[2] > 0 ? 3 : 2 }, (_, i) => `Botón ${i + 1}`)
+      : [];
 
   const failed = c.failed_count ?? 0;
   const toggle = (v: View) => setView((cur) => (cur && cur.type === v.type && (cur.type === 'fallidos' || (v.type === 'boton' && cur.index === v.index)) ? null : v));
@@ -202,8 +207,17 @@ function ResultsPanel({ c, view, onClose, onChanged }: {
     return rows.filter((r) => (cleanupGroup === 'invalido' ? r.failure_class === 'invalido' : true));
   }, [rows, cleanupGroup]);
 
-  // Al cargar (o cambiar de vista): todos los seleccionables tildados.
+  // Al abrir el panel (o cambiar de vista): todos los seleccionables tildados.
+  // Después de una acción o de un 409, la lista se recarga con la selección VACÍA:
+  // si volviera a tildar todo, un segundo click sin mirar procesaría a los que el
+  // operador había dejado afuera a propósito.
+  const clearAfterReload = useRef(false);
   useEffect(() => {
+    if (clearAfterReload.current) {
+      clearAfterReload.current = false;
+      setSelected(new Set());
+      return;
+    }
     setSelected(new Set(actionable.filter(selectable).map((r) => r.contact_id!)));
   }, [actionable]);
 
@@ -280,10 +294,11 @@ function ResultsPanel({ c, view, onClose, onChanged }: {
           onDone={(msg) => {
             setPending(null);
             setNotice(msg);
+            clearAfterReload.current = true;
             load();
             onChanged?.();
           }}
-          onConflict={() => { load(); }}
+          onConflict={() => { clearAfterReload.current = true; load(); }}
         />
       )}
     </div>
