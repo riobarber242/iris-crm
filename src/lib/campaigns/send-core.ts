@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { sendWhatsAppText, sendWhatsAppTemplate } from '@/lib/meta/client';
 import { insertMessage } from '@/lib/messages';
 import { notifyActiveAgents } from '@/lib/push';
+import { loadOptedOutPhones, phoneKey } from '@/lib/campaigns/optouts';
 
 // Núcleo del envío de campañas, extraído de la ruta /api/campaigns/send para que
 // también lo pueda invocar el cron de auto-resume (que no tiene sesión). La ruta
@@ -335,6 +336,21 @@ export async function runCampaignBatch(
     contacts = await resolveContacts(filtro, tenantId, scope, senderNumberIds, legacyIds);
   }
 
+  // "No molestar" (contact_optouts): se sacan de TODA campaña, por teléfono, en los
+  // dos caminos (selección manual y filtro). Va antes del target_total para que el
+  // universo persistido ya no los cuente. Un fallo real de la query corta la tanda:
+  // seguir sin el filtro mandaría a gente que pidió que no la molesten.
+  {
+    const opt = await loadOptedOutPhones(tenantId);
+    if ('error' in opt) {
+      await supabaseAdmin.from('campaigns')
+        .update({ status: 'pausada', paused_reason: 'auto_resume', paused_at: new Date().toISOString() })
+        .eq('id', campaignId).eq('tenant_id', tenantId);
+      return { error: `Error leyendo la lista de "no molestar": ${opt.error}`, status: 500 };
+    }
+    if (opt.phones.size > 0) contacts = contacts.filter((c: any) => !opt.phones.has(phoneKey(c.phone)));
+  }
+
   // Exclusión inteligente: no reenviar a contactos ya contactados por las
   // campañas seleccionadas. Se re-validan los ids contra el tenant.
   const excludeIds: string[] = Array.isArray(campaign.exclude_campaign_ids) ? campaign.exclude_campaign_ids : [];
@@ -553,6 +569,10 @@ export async function runCampaignBatch(
         const { error: cmsErr } = await supabaseAdmin.from('campaign_message_status').insert({
           campaign_id: campaignId,
           contact_id:  contact.id,
+          // Teléfono al momento del envío: sobrevive al borrado del contacto (en la
+          // base viva contact_id NO tiene FK a contacts, así que queda apuntando a un
+          // contacto que ya no existe) y es la clave del "no molestar".
+          phone:       contact.phone ?? null,
           tenant_id:   tenantId,
           wamid,
           status:      'sent',
@@ -577,7 +597,7 @@ export async function runCampaignBatch(
         const errCode  = me?.code != null ? Number(me.code) : null;
         const errTitle = (me?.type ?? null) as string | null;
         const errMsg   = (me?.error_data?.details ?? me?.message ?? err?.message ?? null) as string | null;
-        const baseRow  = { campaign_id: campaignId, contact_id: contact.id, tenant_id: tenantId, wamid: null, status: 'failed' as const };
+        const baseRow  = { campaign_id: campaignId, contact_id: contact.id, phone: contact.phone ?? null, tenant_id: tenantId, wamid: null, status: 'failed' as const };
         try {
           let registered = false;
           const { error: cmsErr } = await supabaseAdmin

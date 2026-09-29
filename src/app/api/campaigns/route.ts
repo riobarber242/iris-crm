@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { arMondayOf, startOfArDayISO } from '@/lib/campaigns/send-core';
 import { templateStatus } from '@/lib/template-status';
+import { templateButtonsFor, templateKey } from '@/lib/campaigns/results';
 
 // Valida y normaliza la ventana horaria (minutos AR). Solo mismo día: exige
 // 0 ≤ start < end ≤ 1440; si no, va null (sin restricción) para no bloquear envíos.
@@ -252,6 +253,20 @@ export async function GET() {
         if (perCode) (c as any).failure_reasons = [...perCode.values()].sort((a, b) => b.count - a.count);
       }
     }
+  }
+
+  // Labels de los botones de la plantilla, para rotular los chips por POSICIÓN
+  // (primero = positivo, último = negativo) en vez de "btn1/btn2". Una sola query
+  // para todas las campañas. Sin plantilla (borrada o texto libre) → no viene y la
+  // tarjeta cae a los chips genéricos.
+  try {
+    const tplButtons = await templateButtonsFor(session.tenant_id, data ?? []);
+    for (const c of data ?? []) {
+      const labels = tplButtons.get(templateKey(c));
+      if (labels && labels.length > 0) (c as any).button_labels = labels;
+    }
+  } catch (err) {
+    console.warn('[campaigns GET] No se pudieron traer los botones de las plantillas:', err);
   }
 
   return NextResponse.json(data);

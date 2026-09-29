@@ -27,6 +27,8 @@ export const ACTIVITY = {
   CONTACT_EDITED:         'contact_edited',
   CONTACT_CREATED:        'contact_created',        // alta individual de un contacto desde la UI
   CONTACT_IMPORTED:       'contact_imported',
+  CONTACT_OPTOUT:         'contact_optout',         // marcó "no molestar" (excluido de campañas). details: reason / campaign_cleanup
+  CONTACT_OPTOUT_REMOVED: 'contact_optout_removed', // quitó la marca de "no molestar"
   CONFIG_CHANGED:         'config_changed',         // details.key: system_prompt | bot_enabled | offline_mode | …
   BOT_CONFIG_UPDATED:     'bot_config_updated',     // via Iris AI; details guarda los valores ANTERIORES (respaldo)
 

@@ -44,6 +44,24 @@ const BOT_STATE_LABEL: Record<string, string> = {
 };
 
 
+type OptOutInfo = {
+  reason: 'boton_negativo' | 'numero_invalido' | 'manual';
+  created_at: string;
+  created_by_name: string | null;
+  campaign_name: string | null;
+};
+
+// Línea de detalle del banner: por qué y quién lo marcó.
+function optOutDetail(o: OptOutInfo): string {
+  const motivo = o.reason === 'boton_negativo'
+    ? `Dijo que no${o.campaign_name ? ` en ${o.campaign_name}` : ' en una campaña'}`
+    : o.reason === 'numero_invalido'
+      ? `Número inválido${o.campaign_name ? ` en ${o.campaign_name}` : ''}`
+      : 'Marcado a mano';
+  const fecha = new Date(o.created_at).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+  return `${motivo} · ${o.created_by_name ? `por ${o.created_by_name} ` : ''}el ${fecha}`;
+}
+
 export default function ContactHeader({
   contactId,
   phone,
@@ -77,6 +95,10 @@ export default function ContactHeader({
   const [editing,       setEditing]       = useState(false);
   const [loading,       setLoading]       = useState(false);
   const [blocked,       setBlocked]       = useState(initialBlocked ?? false);
+  // "No molestar" (contact_optouts, por teléfono): solo excluye de campañas; el bot
+  // y el chat siguen igual. null = sin marca (o todavía cargando).
+  const [optOut,        setOptOut]        = useState<OptOutInfo | null>(null);
+  const [optOutBusy,    setOptOutBusy]    = useState(false);
   const [status,        setStatus]        = useState(initialStatus ?? 'nuevo');
   const [statusLoading, setStatusLoading] = useState(false);
   const [notes,         setNotes]         = useState(initialNotes ?? '');
@@ -158,6 +180,31 @@ export default function ContactHeader({
       setStatus(newStatus);
     } catch {}
     setStatusLoading(false);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/contacts/optout?contactId=${contactId}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setOptOut(d?.optedOut ? d : null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [contactId]);
+
+  async function toggleOptOut() {
+    setOptOutBusy(true);
+    try {
+      const res = await fetch('/api/contacts/optout', {
+        method:  optOut ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ contactId }),
+      });
+      if (res.ok) {
+        if (optOut) setOptOut(null);
+        else setOptOut({ reason: 'manual', created_at: new Date().toISOString(), created_by_name: agent?.name ?? null, campaign_name: null });
+      }
+    } catch {}
+    setOptOutBusy(false);
   }
 
   async function handleBlock() {
@@ -258,6 +305,29 @@ export default function ContactHeader({
           <p style={{ fontSize: '13px', color: '#c0392b', fontWeight: 700, margin: 0 }}>
             Este contacto está bloqueado — el bot no le responde y no recibirá mensajes automáticos.
           </p>
+        </div>
+      )}
+
+      {/* ── Banner de "no molestar" ── */}
+      {optOut && (
+        <div style={{
+          background: '#eef0f5', border: '1px solid #c9cfdf',
+          borderRadius: '12px', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: '16px' }}>🔕</span>
+          <p style={{ fontSize: '13px', color: '#34405e', fontWeight: 700, margin: 0, flex: 1, minWidth: '200px' }}>
+            No molestar · no recibe campañas
+            <span style={{ display: 'block', fontWeight: 400, color: '#5d6780', fontSize: '12px' }}>
+              {optOutDetail(optOut)}
+            </span>
+          </p>
+          <button onClick={toggleOptOut} disabled={optOutBusy} style={{
+            background: 'transparent', color: '#34405e', fontWeight: 700, border: '1px solid #c9cfdf',
+            borderRadius: '8px', padding: '4px 12px', cursor: optOutBusy ? 'not-allowed' : 'pointer', fontSize: '12px',
+          }}>
+            Quitar
+          </button>
         </div>
       )}
 
@@ -557,6 +627,13 @@ export default function ContactHeader({
                 borderRadius: '8px', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
               }}>
                 {casinoUser ? 'Editar usuario' : '+ Asignar usuario'}
+              </button>
+              <button onClick={toggleOptOut} disabled={optOutBusy} title="Solo excluye de las campañas. El bot y el chat siguen igual." style={{
+                background: optOut ? '#34405e' : '#eef0f5', color: optOut ? '#fff' : '#34405e', fontWeight: 700, border: 'none',
+                borderRadius: '8px', padding: '4px 12px', cursor: optOutBusy ? 'not-allowed' : 'pointer', fontSize: '12px',
+                opacity: optOutBusy ? 0.6 : 1,
+              }}>
+                {optOut ? '🔔 Quitar no molestar' : '🔕 No molestar'}
               </button>
               {blocked ? (
                 <button onClick={handleUnblock} style={{

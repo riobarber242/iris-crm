@@ -6,6 +6,7 @@ import { InfoCategorias } from '@/components/ui/InfoCategorias';
 import { templateStatus } from '@/lib/template-status';
 import { motivoDeFallo } from '@/lib/meta-error';
 import ClickAutoReplyPanel from '@/components/ClickAutoReplyPanel';
+import CampaignResults from '@/components/CampaignResults';
 
 type Campaign = {
   id: string;
@@ -54,6 +55,10 @@ type Campaign = {
   failed_count: number | null;
   btn1_count: number | null;
   btn2_count: number | null;
+  btn3_count?: number | null;
+  // Textos de los botones de la plantilla (los agrega el GET), para rotular los
+  // chips por posición. Ausente si la plantilla ya no existe.
+  button_labels?: string[];
   // Desglose de motivos de fallo (lo calcula el GET agrupando campaign_message_status
   // por código de error de Meta). Se muestra traducido con motivoDeFallo. Ausente si
   // la campaña no tuvo fallos.
@@ -227,25 +232,21 @@ const cardStyle: React.CSSProperties = {
   boxShadow: '0 2px 12px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', gap: '16px',
 };
 
-// Chip de métrica para el historial. Con `total` muestra "X de Y" (cobertura de
-// la campaña); sin él, el número suelto de siempre.
-function Chip({ label, value, color, bg, total }: { label: string; value: number; color: string; bg: string; total?: number | null }) {
-  // "de Y" solo si el total es confiable: campañas anteriores a target_total
-  // (null) y el caso raro de X > Y —el universo se achicó entre el envío y hoy,
-  // p.ej. contactos borrados— caen al número suelto en vez de mostrar algo que
-  // se lee como un error ("1300 de 1200").
-  const conTotal = total != null && total > 0 && value <= total;
-  return (
-    <span style={{ fontSize: '11px', fontWeight: 800, color, background: bg, borderRadius: '8px', padding: '3px 10px', whiteSpace: 'nowrap' }}>
-      {conTotal ? `${value} de ${total}` : value} {label}
-    </span>
-  );
+// Datos que necesita la fila de resultados (CampaignResults).
+function toResults(c: Campaign, sent: number) {
+  return {
+    id: c.id, name: c.name, sent, target_total: c.target_total,
+    delivered_count: c.delivered_count, read_count: c.read_count, failed_count: c.failed_count,
+    btn1_count: c.btn1_count, btn2_count: c.btn2_count, btn3_count: c.btn3_count ?? 0,
+    button_labels: c.button_labels,
+  };
 }
 
 // Desglose de POR QUÉ fallaron los envíos de una campaña, traducido al castellano
 // (el GET agrupa campaign_message_status por código de error de Meta). Se muestra
-// tanto en la tarjeta de la campaña activa/pausada —donde más importa: para ver por
-// qué está fallando MIENTRAS corre— como en el historial. Null si no hubo fallos.
+// en la tarjeta de la campaña activa/pausada, para ver por qué está fallando
+// MIENTRAS corre. En el historial lo reemplaza el panel de fallidos de
+// CampaignResults (agrupado por motivo y con la limpieza). Null si no hubo fallos.
 function FailureReasons({ reasons }: { reasons?: Campaign['failure_reasons'] }) {
   // Colapsado por defecto: el detalle de los fallos es para diagnosticar cuando
   // hace falta, no algo que tenga que ocupar lugar fijo en cada tarjeta.
@@ -353,7 +354,6 @@ export default function CampanasClient() {
   // Aviso de "hand-off al cron": la campaña era grande, se cortó por tiempo y sigue
   // enviándose sola en segundo plano (el navegador soltó el control).
   const [launchQueued, setLaunchQueued] = useState<{ sent: number; total: number } | null>(null);
-  const [deletingNo,  setDeletingNo]  = useState<string | null>(null);
 
   // ── Techo diario de Meta (envío escalonado) ──────────────────────────────────
   // marginPct: % del límite real de Meta que se permite gastar (default 80). El
@@ -997,20 +997,6 @@ export default function CampanasClient() {
       });
       fetchCampaigns();
     } catch {}
-  }
-
-  async function handleDeleteNo(c: Campaign) {
-    const n = c.btn2_count ?? 0;
-    if (!confirm(`¿Eliminar los ${n} contacto${n !== 1 ? 's' : ''} que respondieron "No" en "${c.name}"? Esta acción no se puede deshacer.`)) return;
-    setDeletingNo(c.id);
-    try {
-      const res = await fetch(`/api/campaigns/${c.id}/delete-no`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) alert(`${data.deleted} contacto${data.deleted !== 1 ? 's' : ''} eliminado${data.deleted !== 1 ? 's' : ''}.`);
-      else alert(`Error: ${data?.error ?? res.statusText}`);
-    } catch { alert('Error de red al eliminar contactos.'); }
-    setDeletingNo(null);
-    fetchCampaigns();
   }
 
   return (
@@ -1927,6 +1913,12 @@ export default function CampanasClient() {
             );
           })()}
 
+          {/* Resultados en vivo (mismos chips y panel que el Historial). Una campaña
+              en borrador todavía no mandó nada. */}
+          {c.status !== 'borrador' && (
+            <CampaignResults c={toResults(c, c.progress_done ?? c.sent_count ?? 0)} onChanged={fetchCampaigns} />
+          )}
+
           {/* Por qué están fallando los envíos (traducido). Va en la card activa/
               pausada —no solo en el historial— para diagnosticar mientras corre. */}
           <FailureReasons reasons={c.failure_reasons} />
@@ -1977,7 +1969,6 @@ export default function CampanasClient() {
                 ) : (
                   terminadas.map((c) => {
                     const sent = c.sent_count ?? c.recipient_ids?.length ?? 0;
-                    const noCount = c.btn2_count ?? 0;
                     return (
                       <div key={c.id} style={{ background: '#F8F8F8', borderRadius: '12px', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
@@ -2009,15 +2000,6 @@ export default function CampanasClient() {
                                 ✏️ Editar y relanzar
                               </button>
                             )}
-                            {noCount > 0 && (
-                              <button
-                                onClick={() => handleDeleteNo(c)}
-                                disabled={deletingNo === c.id}
-                                style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: deletingNo === c.id ? 'not-allowed' : 'pointer', opacity: deletingNo === c.id ? 0.6 : 1, whiteSpace: 'nowrap' }}
-                              >
-                                {deletingNo === c.id ? 'Eliminando…' : `🗑 Eliminar los que dijeron No (${noCount})`}
-                              </button>
-                            )}
                             <button
                               onClick={() => handleDelete(c)}
                               style={{ background: 'transparent', color: '#E53935', fontWeight: 700, fontSize: '12px', border: '1px solid #f08080', borderRadius: '10px', padding: '7px 12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
@@ -2026,21 +2008,10 @@ export default function CampanasClient() {
                             </button>
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {/* "X de Y": cuánto llegó a mandar sobre lo planeado. Es
-                              el dato que faltaba en una campaña Detenida a mitad de
-                              camino, donde el número suelto no dice si cubrió el 10%
-                              o el 90%. X = sent_count (éxitos; los fallos tienen su
-                              propio chip) e Y = target_total, que persiste cada tanda
-                              de envío desde supabase-campaign-target-total.sql. */}
-                          <Chip label="enviados"   value={sent} total={c.target_total} color="#555"    bg="#ececec" />
-                          <Chip label="entregados" value={c.delivered_count ?? 0} color="#1565c0" bg="#e3f0ff" />
-                          <Chip label="leídos"     value={c.read_count ?? 0}    color="#1a7a3a" bg="#e8fff0" />
-                          <Chip label="btn1"       value={c.btn1_count ?? 0}    color="#5b7a00" bg="#f4ffd1" />
-                          <Chip label="btn2"       value={c.btn2_count ?? 0}    color="#b8860b" bg="#fff4d6" />
-                          <Chip label="fallidos"   value={c.failed_count ?? 0}  color="#c0392b" bg="#ffe6e6" />
-                        </div>
-                        <FailureReasons reasons={c.failure_reasons} />
+                        {/* Chips de resultados. Los de botón y fallidos abren la lista de
+                            contactos del grupo (y la limpieza: "no molestar" / eliminar).
+                            El panel de fallidos reemplaza al desglose suelto de motivos. */}
+                        <CampaignResults c={toResults(c, sent)} onChanged={fetchCampaigns} />
                       </div>
                     );
                   })

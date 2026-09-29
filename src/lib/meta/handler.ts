@@ -600,7 +600,12 @@ async function processMessage(
             .update({ btn_payload: payload, btn_text: btnText })
             .eq('id', cms.id);
           if (firstClick) {
-            const col = payload === 'btn_0' ? 'btn1_count' : payload === 'btn_1' ? 'btn2_count' : null;
+            // Un contador por posición (btn_0 → btn1_count … btn_2 → btn3_count). Las
+            // plantillas admiten hasta 3 quick-replies; antes el 3º no sumaba en ningún lado.
+            const col = payload === 'btn_0' ? 'btn1_count'
+              : payload === 'btn_1' ? 'btn2_count'
+              : payload === 'btn_2' ? 'btn3_count'
+              : null;
             if (col) {
               const { error: incErr } = await supabaseAdmin.rpc('increment_campaign_counter', { cid: cms.campaign_id, col });
               if (incErr) console.error(`[button] increment_campaign_counter ${col} FALLÓ campaign=${cms.campaign_id} contact=${cms.contact_id}:`, incErr.message);
