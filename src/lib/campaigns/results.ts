@@ -100,9 +100,10 @@ export type CampaignResults = {
 
 // ¿La fila entra en la limpieza de `group`? Excluye a los que volvieron a estar
 // activos y a los contactos que ya no existen (no hay nada que marcar ni borrar).
-// OJO: un contacto borrado NO deja contact_id en NULL — en la base viva
-// campaign_message_status.contact_id no tiene FK a contacts y queda colgando. Por eso
-// loadCampaignResults chequea que el contacto exista en vez de mirar el null.
+// Un contacto borrado deja contact_id en NULL (FK ON DELETE SET NULL, ver
+// supabase-cms-contact-fk.sql). loadCampaignResults igual chequea que el contacto
+// exista en vez de confiar solo en el null: cubre también cualquier id colgando de
+// antes de esa FK.
 export function inCleanupGroup(r: ResultRow, group: CleanupGroup, buttons: ButtonInfo[]): boolean {
   if (r.deleted || !r.contact_id || r.activity) return false;
   if (group === 'invalido') return r.kind === 'fallido' && r.failure_class === 'invalido';

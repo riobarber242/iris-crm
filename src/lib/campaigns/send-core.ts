@@ -569,9 +569,9 @@ export async function runCampaignBatch(
         const { error: cmsErr } = await supabaseAdmin.from('campaign_message_status').insert({
           campaign_id: campaignId,
           contact_id:  contact.id,
-          // Teléfono al momento del envío: sobrevive al borrado del contacto (en la
-          // base viva contact_id NO tiene FK a contacts, así que queda apuntando a un
-          // contacto que ya no existe) y es la clave del "no molestar".
+          // Teléfono al momento del envío: sobrevive al borrado del contacto
+          // (contact_id pasa a NULL por la FK ON DELETE SET NULL) y es la clave del
+          // "no molestar".
           phone:       contact.phone ?? null,
           tenant_id:   tenantId,
           wamid,

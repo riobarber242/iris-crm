@@ -13,11 +13,11 @@
 --      contaba btn_0/btn_1 y un click en btn_2 no sumaba en ningún lado.
 --   3. Backfill de campaign_message_status.phone: la columna existía pero send-core
 --      nunca la escribía (689/689 filas en null en Casino 17Star). Sin ella, al borrar
---      un contacto se perdía a quién se le mandó. OJO: en la base viva
---      campaign_message_status.contact_id NO tiene FK a contacts (este repo la declara
---      en supabase-campaign-tracking.sql, pero la tabla ya existía y el create fue
---      no-op). Al borrar un contacto, su contact_id queda colgando, no pasa a NULL.
---      El backfill no puede recuperar esas filas (29/09: 45, sin forma de saber el phone).
+--      un contacto se perdía a quién se le mandó. Cuando se corrió esto, en la base
+--      viva campaign_message_status.contact_id NO tenía FK a contacts (el create de
+--      supabase-campaign-tracking.sql había sido no-op): un contacto borrado dejaba el
+--      id colgando, y el backfill no pudo recuperar esas filas (29/09: 45, sin forma
+--      de saber el phone). La FK se agregó después con supabase-cms-contact-fk.sql.
 --   4. Recalcular btn1/btn2/btn3_count desde el tracking (estaban desfasados).
 --
 -- OJO (patrón de este repo): `create table if not exists` / `add column if not exists`
@@ -105,10 +105,11 @@ select relname, relrowsecurity from pg_class where relname = 'contact_optouts';
 select column_name, data_type from information_schema.columns
 where table_name = 'campaigns' and column_name = 'btn3_count';
 
--- V5. Tracking sin teléfono. Se cruza con contacts porque contact_id no tiene FK
---     (un contacto borrado deja el id colgando): sin_phone_con_contacto cuenta solo
---     los contactos que EXISTEN y tiene que dar 0. sin_phone incluye los borrados,
---     que no se pueden recuperar.
+-- V5. Tracking sin teléfono. Se cruza con contacts porque, cuando se corrió esto,
+--     contact_id no tenía FK y un contacto borrado dejaba el id colgando (ahora pasa
+--     a NULL, ver supabase-cms-contact-fk.sql; el join sirve igual en los dos casos).
+--     sin_phone_con_contacto cuenta solo los contactos que EXISTEN y tiene que dar 0.
+--     sin_phone incluye los borrados, que no se pueden recuperar.
 select
   count(*)                                   as sin_phone,
   count(c.id)                                as sin_phone_con_contacto

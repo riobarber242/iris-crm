@@ -81,8 +81,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (optErr) return NextResponse.json({ error: `No se pudo marcar "no molestar": ${optErr}` }, { status: 500 });
 
   // 2) Borrado (acotado al tenant). CASCADE → se van también sus mensajes y
-  //    comprobantes. El tracking de campañas conserva el phone; su contact_id queda
-  //    apuntando a un contacto que ya no existe (en la base viva no hay FK a contacts).
+  //    comprobantes. El tracking de campañas conserva el phone y su contact_id pasa a
+  //    NULL (FK ON DELETE SET NULL, supabase-cms-contact-fk.sql).
   let deleted = 0;
   if (action === 'delete') {
     for (let i = 0; i < target.length; i += 200) {
