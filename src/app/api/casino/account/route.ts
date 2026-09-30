@@ -5,6 +5,8 @@ import { decryptSecret, encryptSecret, isSecretEncryptionConfigured } from '@/li
 import { DEFAULT_CASINO_CREDENTIALS_TEMPLATE } from '@/lib/casino/credentials';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { featureBlocked } from '@/lib/plan-guard';
+import { getProvider } from '@/lib/casino/providers';
+import { getTenantProviderId, isLegacyProviderId, MANAGED_BY_ADMIN_MSG } from '@/lib/casino/provider-account';
 
 // GET/POST /api/casino/account — Etapa 2, PR 5. Config self-service de la conexión
 // de casino del tenant. Las CREDENCIALES viven en casino_accounts (cifradas); el
@@ -80,6 +82,23 @@ export async function GET() {
   const session = await requireAgentOrAdmin();
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
   const tid = session.tenant_id;
+
+  // Proveedores del modelo nuevo: los administra el admin global (Admin → Tenants →
+  // Casino). Acá solo se informa el estado, sin datos de conexión ni secretos.
+  const providerId = await getTenantProviderId(tid);
+  if (!isLegacyProviderId(providerId)) {
+    const { data: r } = await supabaseAdmin
+      .from('casino_accounts').select('connection_verified_at')
+      .eq('tenant_id', tid).eq('is_default', true).maybeSingle();
+    return NextResponse.json({
+      managed_by_admin: true,
+      provider: providerId,
+      provider_label: getProvider(providerId)?.label ?? providerId,
+      enabled: await getFlag(tid),
+      connection_verified_at: r?.connection_verified_at ?? null,
+    });
+  }
+
   const [row, enabled] = await Promise.all([loadRow(tid), getFlag(tid)]);
   return NextResponse.json(publicState(row, enabled));
 }
@@ -92,6 +111,12 @@ export async function POST(request: Request) {
   if (!session) return new NextResponse('Requiere rol admin o agent', { status: 403 });
   const tid = session.tenant_id;
   const body = await request.json().catch(() => ({} as any));
+
+  // Una conexión de un proveedor del modelo nuevo no se toca desde acá: ni la
+  // conexión ni el switch de activación (solo el admin global, desde Admin → Tenants).
+  if (!isLegacyProviderId(await getTenantProviderId(tid))) {
+    return NextResponse.json({ error: MANAGED_BY_ADMIN_MSG }, { status: 403 });
+  }
 
   const existing = await loadRow(tid);
 

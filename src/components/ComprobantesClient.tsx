@@ -31,8 +31,22 @@ type ComprobanteItem = {
   can_edit?: boolean;
   // Pago manual del agente (sin contacto): se muestra distinto en la lista.
   pago_agente?: boolean | null;
+  // Depósito al casino con reserva atómica (proveedores del modelo nuevo):
+  // 'unknown' = no se pudo confirmar si entró → se resuelve a mano.
+  casino_deposit_state?: 'in_flight' | 'unknown' | 'done' | null;
+  casino_deposit_started_at?: string | null;
   contacts: { name: string | null; phone: string; casino_username: string | null } | null;
 };
+
+// Mismo umbral que STALE_MS de lib/casino/deposit-guard (server-only, no se importa
+// acá): un 'in_flight' más viejo se considera trabado y pasa a revisión manual.
+const CASINO_STALE_MS = 2 * 60_000;
+function casinoNeedsReview(item: ComprobanteItem): boolean {
+  if (item.casino_deposit_state === 'unknown') return true;
+  if (item.casino_deposit_state !== 'in_flight') return false;
+  const started = item.casino_deposit_started_at ? Date.parse(item.casino_deposit_started_at) : 0;
+  return Date.now() - started > CASINO_STALE_MS;
+}
 
 // "11 jun 11:16" — fecha corta + hora, es-AR. Vacío si la fecha es inválida.
 function formatResolvedAt(iso: string): string {
@@ -90,12 +104,17 @@ type ComprobanteCardProps = {
   onConfirm:   (item: ComprobanteItem, monto: number, bono: number | null) => void;
   onReject:    (item: ComprobanteItem) => void;
   onDelete:    (id: string) => void;
+  onCasinoReview: (item: ComprobanteItem, outcome: 'entered' | 'not_entered') => void;
 };
 
 const ComprobanteCard = React.memo(function ComprobanteCard({
   item, tipo, canDelete, isConfirming, isDeleting,
-  onLightbox, onOpenForm, onCloseForm, onConfirm, onReject, onDelete,
+  onLightbox, onOpenForm, onCloseForm, onConfirm, onReject, onDelete, onCasinoReview,
 }: ComprobanteCardProps) {
+  // Resolver una carga sin confirmar exige mirar el panel del casino: mismos roles
+  // que borrar (admin/agent). El backend lo vuelve a chequear.
+  const canReview = canDelete;
+  const needsReview = casinoNeedsReview(item);
   const [montoInput, setMontoInput] = useState('');
   const [bonoInput,  setBonoInput]  = useState('');
   const [montoError, setMontoError] = useState('');
@@ -218,6 +237,23 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
         )}
         {item.edited_at && item.edited_by_name && (
           <p style={{ margin: 0, fontSize: '11px', color: '#b58900' }}>Editado por {item.edited_by_name} · {formatResolvedAt(item.edited_at)}</p>
+        )}
+
+        {needsReview && item.estado === 'pendiente' && (
+          <div style={{ background: '#fff5da', border: '1px solid #e6c15a', borderRadius: '10px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#7a5a00', lineHeight: 1.4 }}>
+              ⚠️ No se pudo confirmar si esta carga entró en el casino. Está bloqueada para no acreditarla dos veces:
+              revisá en el panel del casino (operaciones API) si entró.
+            </span>
+            {canReview ? (
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <button onClick={() => onCasinoReview(item, 'entered')} style={{ background: '#1a7a3a', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>Sí, entró</button>
+                <button onClick={() => onCasinoReview(item, 'not_entered')} style={{ background: '#fff', color: '#7a5a00', fontWeight: 700, fontSize: '12px', border: '1px solid #e6c15a', borderRadius: '8px', padding: '5px 10px', cursor: 'pointer' }}>No entró, reintentar</button>
+              </div>
+            ) : (
+              <span style={{ fontSize: '11px', color: '#9a7a20' }}>Avisale a un admin para que lo resuelva.</span>
+            )}
+          </div>
         )}
 
         {/* Row 3: form inline (verificar/editar) o botones */}
@@ -491,6 +527,26 @@ export default function ComprobantesClient(
   }, [closeForm, updateComprobante, editComprobante]);
 
   const onReject = useCallback((item: ComprobanteItem) => updateComprobante(item, 'rechazar'), [updateComprobante]);
+
+  // Resolución manual de una carga sin confirmar en el casino. "Sí, entró" la marca
+  // acreditada (al verificar no se vuelve a depositar); "No entró" la libera para que
+  // Verificar intente el depósito otra vez. No verifica el comprobante.
+  const onCasinoReview = useCallback(async (item: ComprobanteItem, outcome: 'entered' | 'not_entered') => {
+    setError(null);
+    try {
+      const res = await fetch('/api/comprobantes/casino-review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comprobanteId: item.id, outcome }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      patchComprobanteLocal(item.id, outcome === 'entered'
+        ? { casino_deposit_state: 'done' }
+        : { casino_deposit_state: null, casino_deposit_started_at: null });
+    } catch (e: any) {
+      setError(String(e?.message ?? '').trim() || 'No se pudo resolver la carga.');
+    }
+    fetchSilentRef.current();
+  }, [patchComprobanteLocal]);
 
   // Borra un comprobante (tachito). Pide confirmación; quita el item al instante.
   const handleDeleteComprobante = useCallback(async (id: string) => {
@@ -852,6 +908,7 @@ export default function ComprobantesClient(
             onConfirm={onConfirm}
             onReject={onReject}
             onDelete={handleDeleteComprobante}
+            onCasinoReview={onCasinoReview}
           />
         ))}
 

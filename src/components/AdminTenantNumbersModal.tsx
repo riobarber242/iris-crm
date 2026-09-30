@@ -62,13 +62,14 @@ const actionBtn: React.CSSProperties = {
 };
 
 export default function AdminTenantNumbersModal({
-  tenant, onClose, onChanged, onMembership, onAgent, onToggleStatus,
+  tenant, onClose, onChanged, onMembership, onAgent, onCasino, onToggleStatus,
 }: {
   tenant: { id: string; name: string; plan: string; status: string; max_whatsapp_numbers: number };
   onClose: () => void;
   onChanged: () => void;             // refrescar las tarjetas tras cualquier cambio
   onMembership: () => void;          // abrir modal de Membresía (donde está el cupo)
   onAgent: () => void;               // abrir modal de Agente
+  onCasino: () => void;              // abrir modal de Casino (proveedor + conexión)
   onToggleStatus: () => Promise<void> | void; // Suspender/Activar inline
 }) {
   const [numbers, setNumbers] = useState<AdminWaNumber[]>([]);
@@ -218,6 +219,7 @@ export default function AdminTenantNumbersModal({
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button onClick={onMembership} style={{ ...actionBtn, background: '#1a1a1a', color: '#C8FF00' }}>Membresía</button>
           <button onClick={onAgent} style={{ ...actionBtn, background: '#F0F0F0', color: '#333' }}>Agente</button>
+          <button onClick={onCasino} style={{ ...actionBtn, background: '#F0F0F0', color: '#333' }}>🎰 Casino</button>
           <button
             onClick={async () => { setTogglingStatus(true); await onToggleStatus(); setTogglingStatus(false); }}
             disabled={togglingStatus}

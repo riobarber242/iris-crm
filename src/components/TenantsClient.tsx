@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import OnboardingWizard from './OnboardingWizard';
 import AdminTenantNumbersModal, { AdminWaNumber, numbersHealth } from './AdminTenantNumbersModal';
+import AdminTenantCasinoModal from './AdminTenantCasinoModal';
 import { PLANS, planLabel } from '@/lib/plan';
 
 type Tenant = {
@@ -71,6 +72,8 @@ export default function TenantsClient() {
   const [editing, setEditing] = useState<Tenant | null>(null);
   // modal de edición de membresía (plan / status / monto / paga hasta / skin / notas)
   const [editingMembership, setEditingMembership] = useState<Tenant | null>(null);
+  // modal de casino (proveedor + conexión + activación) del tenant
+  const [casinoTenant, setCasinoTenant] = useState<Tenant | null>(null);
 
   // wizard de alta guiada
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -142,6 +145,13 @@ export default function TenantsClient() {
           tenant={editingMembership}
           onClose={() => setEditingMembership(null)}
           onSaved={() => { setEditingMembership(null); fetchTenants(); }}
+        />
+      )}
+
+      {casinoTenant && (
+        <AdminTenantCasinoModal
+          tenant={casinoTenant}
+          onClose={() => setCasinoTenant(null)}
         />
       )}
 
@@ -241,6 +251,7 @@ export default function TenantsClient() {
           onChanged={() => fetchAllNumbers(tenants)}
           onMembership={() => { const t = openTenant; setOpenTenantId(null); setEditingMembership(t); }}
           onAgent={() => { const t = openTenant; setOpenTenantId(null); setEditing(t); }}
+          onCasino={() => { const t = openTenant; setOpenTenantId(null); setCasinoTenant(t); }}
           onToggleStatus={() => toggleStatus(openTenant)}
         />
       )}

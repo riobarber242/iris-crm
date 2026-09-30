@@ -13,6 +13,8 @@ import { insertMessage } from '@/lib/messages';
 import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
+import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
+import { guardedDeposit } from '@/lib/casino/deposit-guard';
 
 // Verificar una carga acredita en el casino, y ese flujo tiene un presupuesto de
 // reintentos de 45s (CREDIT_BUDGET_MS) para aguantar las rachas en las que el casino
@@ -403,6 +405,40 @@ export async function PATCH(request: Request) {
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }
+        // Proveedores del modelo nuevo (providers/): depósito con reserva atómica del
+        // comprobante y reconciliación por saldo (lib/casino/deposit-guard). Con null
+        // (celuapuestas o sin casino) sigue el camino de siempre, sin cambios.
+        const alt = await loadNonLegacyAccount(session.tenant_id);
+        if (alt) {
+          if (alt.kind === 'broken') {
+            return new NextResponse(`${alt.error} La recarga NO se verificó.`, { status: 400 });
+          }
+          const dep = await guardedDeposit({
+            provider: alt.provider, ctx: alt.ctx, tenantId: session.tenant_id,
+            comprobanteId, username, amount: montoTotal,
+          });
+          if (!dep.success) {
+            await logActivity({
+              session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
+              details: {
+                ok: false, provider: alt.provider.id, reason: dep.reason, state: dep.state, detail: dep.detail ?? dep.error,
+                username, amount: montoTotal, monto: montoCasino, bono: bonoCasino,
+              },
+            });
+            // 409 cuando quedó bloqueado (en curso / a revisar): el front refresca la lista.
+            const status = dep.state === 'released' ? 400 : 409;
+            await broadcastComprobanteChange(session.tenant_id).catch(() => {});
+            return new NextResponse(dep.state === 'released' ? `${dep.error} La recarga NO se verificó.` : dep.error, { status });
+          }
+          updatePayload.casino_deposited_at = dep.depositedAt;
+          await logActivity({
+            session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
+            details: {
+              ok: true, provider: alt.provider.id, reconciled: dep.reconciled,
+              username, amount: montoTotal, monto: montoCasino, bono: bonoCasino,
+            },
+          });
+        } else {
         // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
         const casinoCreds = await resolveCasinoCreds(session.tenant_id);
         if (!casinoCreds) {
@@ -428,6 +464,7 @@ export async function PATCH(request: Request) {
           session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
           details: { ok: true, username, amount: montoTotal, monto: montoCasino, bono: bonoCasino },
         });
+        } // fin del camino celuapuestas: código sin cambios (sin reindentar, a propósito)
       }
     }
   }

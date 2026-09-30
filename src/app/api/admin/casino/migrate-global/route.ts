@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { requireAdmin } from '@/lib/current-agent';
 import { encryptSecret, isSecretEncryptionConfigured } from '@/lib/secure-secret';
+import { getTenantProviderId, isLegacyProviderId } from '@/lib/casino/provider-account';
 
 // POST /api/admin/casino/migrate-global — Etapa 2, PR 1 (seed único e idempotente).
 //
@@ -51,6 +52,11 @@ export async function POST() {
     }, { status: 409 });
   }
   const tenantId = enabled[0].tenant_id as string;
+
+  // Este seed es de celuapuestas: jamás pisa la fila de un tenant con otro proveedor.
+  if (!isLegacyProviderId(await getTenantProviderId(tenantId))) {
+    return NextResponse.json({ error: 'El tenant usa otro proveedor de casino. Abortado por seguridad.' }, { status: 409 });
+  }
 
   // Nombre del tenant (para el label) + settings casino_* del tenant.
   const { data: tenant } = await supabaseAdmin

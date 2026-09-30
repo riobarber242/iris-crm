@@ -52,6 +52,8 @@ export default function CasinoConfigCard() {
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // Casino de un proveedor que administra IRIS (Admin → Tenants): solo lectura acá.
+  const [managed, setManaged] = useState<{ label: string; enabled: boolean; verifiedAt: string | null } | null>(null);
 
   // Verificado = hay fecha sellada Y no se tocó ninguna credencial desde entonces.
   const verified = !!verifiedAt && !credsDirty;
@@ -61,6 +63,10 @@ export default function CasinoConfigCard() {
       const res = await fetch('/api/casino/account');
       if (!res.ok) { setMsg({ kind: 'err', text: 'No se pudo cargar la configuración.' }); return; }
       const j = await res.json();
+      if (j.managed_by_admin) {
+        setManaged({ label: String(j.provider_label ?? j.provider ?? ''), enabled: !!j.enabled, verifiedAt: j.connection_verified_at ?? null });
+        return;
+      }
       setEnabled(!!j.enabled);
       setAgentUsername(String(j.agent_username ?? ''));
       setAgentId(String(j.agent_id ?? ''));
@@ -190,6 +196,23 @@ export default function CasinoConfigCard() {
 
   if (loading) {
     return <p style={{ color: '#999', fontSize: '14px', padding: '8px 0' }}>Cargando configuración…</p>;
+  }
+
+  if (managed) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{
+          fontSize: '13px', fontWeight: 800, borderRadius: '10px', padding: '10px 12px',
+          background: managed.enabled ? '#e8fff0' : '#f0f0f0', color: managed.enabled ? '#1a7a3a' : '#666',
+        }}>
+          {managed.enabled ? '✅ Casino activado' : '○ Casino desactivado'} — {managed.label}
+        </div>
+        <p style={{ margin: 0, fontSize: '13px', color: '#666', lineHeight: 1.5 }}>
+          La conexión con el casino y su activación las administra IRIS. Si necesitás un cambio, contactá al soporte de IRIS.
+          {managed.verifiedAt ? ` Última conexión verificada: ${new Date(managed.verifiedAt).toLocaleString('es-AR')}.` : ''}
+        </p>
+      </div>
+    );
   }
 
   const labelStyle: React.CSSProperties = { display: 'block', fontSize: '12px', fontWeight: 700, color: '#555', marginBottom: '4px' };

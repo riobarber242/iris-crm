@@ -46,6 +46,8 @@ export default function CajaResumen() {
   // muestra en tenants con casino_deposit_enabled=true (lo decide el backend).
   const [casinoEnabled, setCasinoEnabled] = useState(false);
   const [casinoBalance, setCasinoBalance] = useState<number | null>(null);
+  // El proveedor del tenant no expone el saldo del agente → no se muestra el chip.
+  const [casinoBalanceHidden, setCasinoBalanceHidden] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +66,7 @@ export default function CajaResumen() {
         if (!res.ok) return;
         const j = await res.json();
         setCasinoEnabled(!!j.enabled);
+        setCasinoBalanceHidden(!!j.balance_hidden);
         if (j.enabled && typeof j.balance === 'number') setCasinoBalance(j.balance);
       } catch {}
     }
@@ -121,7 +124,7 @@ export default function CajaResumen() {
 
       {/* Con casino activado mostramos el saldo del casino (sincronizado en vivo)
           en lugar del pozo interno; si no, las dos cards de siempre. */}
-      {casinoEnabled ? (
+      {casinoEnabled ? (casinoBalanceHidden ? null : (
         <div style={{ background: 'linear-gradient(135deg, #0b3d3a 0%, #16324f 55%, #2a1a5e 100%)', border: '1px solid #2f6f6a', borderRadius: '18px', padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
           <div>
             <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#5fe3c8' }}>
@@ -138,7 +141,7 @@ export default function CajaResumen() {
             Baja al verificar una carga (le diste fichas a un jugador) y sube al verificar un pago.
           </span>
         </div>
-      ) : (
+      )) : (
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
           <Card label="Stock del pozo" value={fmt(data.stock)} sub="fichas disponibles" dark />
           <Card label="Total billeteras" value={fmt(data.total_billeteras)} sub={`${data.billeteras.length} operador${data.billeteras.length === 1 ? '' : 'es'}`} />

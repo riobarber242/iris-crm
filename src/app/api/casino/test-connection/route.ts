@@ -4,6 +4,7 @@ import { requireAgentOrAdmin } from '@/lib/current-agent';
 import { testCasinoConnection } from '@/lib/casino/client';
 import { loadCasinoAccount, type CasinoCreds } from '@/lib/casino/account';
 import { featureBlocked } from '@/lib/plan-guard';
+import { getTenantProviderId, isLegacyProviderId, MANAGED_BY_ADMIN_MSG } from '@/lib/casino/provider-account';
 
 // POST /api/casino/test-connection — Etapa 2, PR 4.
 // Prueba real de credenciales: Authenticate → GetAgentBalance, vía proxy. Modos:
@@ -52,6 +53,12 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const tenantId = session.tenant_id;
   const useSaved = body?.useSaved === true;
+
+  // Esta prueba (y el sellado de connection_verified_at) es solo para celuapuestas.
+  // La conexión de un proveedor del modelo nuevo la prueba el admin global.
+  if (!isLegacyProviderId(await getTenantProviderId(tenantId))) {
+    return NextResponse.json({ ok: false, error: MANAGED_BY_ADMIN_MSG }, { status: 403 });
+  }
 
   let creds: CasinoCreds | null = null;
   let hasSavedRow = false;

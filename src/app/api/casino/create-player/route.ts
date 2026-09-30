@@ -7,6 +7,8 @@ import { renderCredentials } from '@/lib/casino/credentials';
 import { logActivity } from '@/lib/activity-log';
 import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
+import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
+import { createPlayerWithProvider } from '@/lib/casino/provider-create-player';
 
 // Solo admin/agent: crear un usuario en el casino es una acción de staff.
 function requireStaff(session: SessionPayload | null): session is SessionPayload {
@@ -50,6 +52,14 @@ export async function POST(request: Request) {
     .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
   if (flagRow?.value !== 'true') {
     return NextResponse.json({ success: false, error: 'El casino no está activado para este tenant' }, { status: 403 });
+  }
+
+  // Proveedores del modelo nuevo (providers/): se atienden con su adaptador. Con null
+  // (celuapuestas o sin casino) se sigue por el camino de siempre, sin cambios.
+  const alt = await loadNonLegacyAccount(session.tenant_id);
+  if (alt) {
+    if (alt.kind === 'broken') return NextResponse.json({ success: false, error: alt.error }, { status: 503 });
+    return createPlayerWithProvider(session, request, alt);
   }
 
   // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
