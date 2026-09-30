@@ -14,7 +14,7 @@ import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/rea
 import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
 import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
-import { guardedDeposit } from '@/lib/casino/deposit-guard';
+import { verifyCargaWithProvider } from '@/lib/casino/verify-carga';
 import { getCasinoStockMode } from '@/lib/casino/stock-mode';
 
 // Verificar una carga acredita en el casino, y ese flujo tiene un presupuesto de
@@ -329,14 +329,31 @@ export async function PATCH(request: Request) {
     return new NextResponse('Comprobante no encontrado', { status: 404 });
   }
 
+  // Depósito del modelo nuevo (lib/casino/deposit-guard) ya acreditado, en curso o a
+  // revisar: el jugador ya tiene (o puede tener) las fichas, así que la carga no se
+  // puede rechazar; se verifica para registrar la caja. casino_deposit_state solo lo
+  // escribe el modelo nuevo: las cargas de celuapuestas no pasan por acá.
+  const casinoState = comprobante.casino_deposit_state as string | null | undefined;
+  if (action === 'rechazar' && comprobante.tipo !== 'pago' && (casinoState === 'done' || casinoState === 'in_flight' || casinoState === 'unknown')) {
+    return new NextResponse(
+      casinoState === 'done'
+        ? 'Esta carga ya se acreditó en el casino: no se puede rechazar. Verificala para registrar la caja.'
+        : 'Esta carga se está acreditando o está a revisar en el casino: no se puede rechazar hasta resolverla.',
+      { status: 409 },
+    );
+  }
+  // Ya acreditada en el casino (modelo nuevo): monto y bono quedan fijos en lo que
+  // se acreditó (verify-carga los guardó antes de depositar); se ignora lo tipeado.
+  const montoFijo = action === 'verificar' && casinoState === 'done';
+
   // Accept optional monto from operator input
   const updatePayload: Record<string, any> = { estado };
-  if (body.monto !== undefined) {
+  if (body.monto !== undefined && !montoFijo) {
     const parsed = Number(body.monto);
     if (!isNaN(parsed) && parsed >= 0) updatePayload.monto = parsed;
   }
   // Bono (fichas) cargado a mano al verificar. Solo dato en Etapa 1.
-  if (action === 'verificar' && body.bono !== undefined) {
+  if (action === 'verificar' && body.bono !== undefined && !montoFijo) {
     updatePayload.bono = normalizeBono(body.bono);
   }
 
@@ -372,6 +389,20 @@ export async function PATCH(request: Request) {
     // manual. Con el casino apagado ('manual') ni se lee el proveedor.
     const stockMode = await getCasinoStockMode(session.tenant_id, casinoDepositEnabled);
     const pozoEnCasino = stockMode === 'casino';
+
+    // Carga de un proveedor del modelo nuevo (providers/): PRIMERO el casino, después
+    // la caja (lib/casino/verify-carga). Con null (celuapuestas, casino apagado o
+    // pagos) sigue el camino de siempre de acá abajo, sin cambios.
+    const altCarga = !esPago && casinoDepositEnabled ? await loadNonLegacyAccount(session.tenant_id) : null;
+    if (altCarga) {
+      const vc = await verifyCargaWithProvider({
+        session, comprobante, comprobanteId,
+        monto: Number(efectiveMonto ?? 0), bono: efectiveBono,
+        stockMode, account: altCarga,
+      });
+      if (!vc.ok) return new NextResponse(vc.message, { status: vc.status });
+      if (vc.depositedAt) updatePayload.casino_deposited_at = vc.depositedAt;
+    } else {
 
     // Movimiento de caja interno. Con el pozo en el casino NO se toca el pozo
     // (fichas_delta=0): la carga acredita la billetera del operador (+monto) y el
@@ -413,40 +444,6 @@ export async function PATCH(request: Request) {
         if (!username) {
           return new NextResponse('El contacto no tiene nombre para acreditar en el casino.', { status: 400 });
         }
-        // Proveedores del modelo nuevo (providers/): depósito con reserva atómica del
-        // comprobante y reconciliación por saldo (lib/casino/deposit-guard). Con null
-        // (celuapuestas o sin casino) sigue el camino de siempre, sin cambios.
-        const alt = await loadNonLegacyAccount(session.tenant_id);
-        if (alt) {
-          if (alt.kind === 'broken') {
-            return new NextResponse(`${alt.error} La recarga NO se verificó.`, { status: 400 });
-          }
-          const dep = await guardedDeposit({
-            provider: alt.provider, ctx: alt.ctx, tenantId: session.tenant_id,
-            comprobanteId, username, amount: montoTotal,
-          });
-          if (!dep.success) {
-            await logActivity({
-              session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
-              details: {
-                ok: false, provider: alt.provider.id, reason: dep.reason, state: dep.state, detail: dep.detail ?? dep.error,
-                username, amount: montoTotal, monto: montoCasino, bono: bonoCasino,
-              },
-            });
-            // 409 cuando quedó bloqueado (en curso / a revisar): el front refresca la lista.
-            const status = dep.state === 'released' ? 400 : 409;
-            await broadcastComprobanteChange(session.tenant_id).catch(() => {});
-            return new NextResponse(dep.state === 'released' ? `${dep.error} La recarga NO se verificó.` : dep.error, { status });
-          }
-          updatePayload.casino_deposited_at = dep.depositedAt;
-          await logActivity({
-            session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
-            details: {
-              ok: true, provider: alt.provider.id, reconciled: dep.reconciled,
-              username, amount: montoTotal, monto: montoCasino, bono: bonoCasino,
-            },
-          });
-        } else {
         // Credenciales del casino del tenant (fila de casino_accounts; fail-closed, sin fallback a env).
         const casinoCreds = await resolveCasinoCreds(session.tenant_id);
         if (!casinoCreds) {
@@ -472,9 +469,9 @@ export async function PATCH(request: Request) {
           session, action: ACTIVITY.CASINO_DEPOSIT, objectType: 'comprobante', objectId: comprobanteId,
           details: { ok: true, username, amount: montoTotal, monto: montoCasino, bono: bonoCasino },
         });
-        } // fin del camino celuapuestas: código sin cambios (sin reindentar, a propósito)
       }
     }
+    } // fin del camino de siempre (celuapuestas / manual / pagos): código sin cambios, sin reindentar a propósito
   }
 
   let { data, error } = await supabaseAdmin

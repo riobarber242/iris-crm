@@ -115,6 +115,14 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
   // que borrar (admin/agent). El backend lo vuelve a chequear.
   const canReview = canDelete;
   const needsReview = casinoNeedsReview(item);
+  // Estados que solo escribe el modelo nuevo (lib/casino/deposit-guard): acreditada
+  // en el casino pero sin la caja registrada, o en curso / a revisar. En esos casos
+  // no se puede rechazar (el backend lo vuelve a chequear) y, si ya se acreditó, el
+  // monto y el bono quedan fijos.
+  const acreditadaSinCaja = item.estado === 'pendiente' && item.casino_deposit_state === 'done';
+  const rechazoBloqueado = tipo !== 'pago' && (
+    item.casino_deposit_state === 'done' || item.casino_deposit_state === 'in_flight' || item.casino_deposit_state === 'unknown'
+  );
   const [montoInput, setMontoInput] = useState('');
   const [bonoInput,  setBonoInput]  = useState('');
   const [montoError, setMontoError] = useState('');
@@ -243,7 +251,8 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
           <div style={{ background: '#fff5da', border: '1px solid #e6c15a', borderRadius: '10px', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <span style={{ fontSize: '12px', fontWeight: 700, color: '#7a5a00', lineHeight: 1.4 }}>
               ⚠️ No se pudo confirmar si esta carga entró en el casino. Está bloqueada para no acreditarla dos veces:
-              revisá en el panel del casino (operaciones API) si entró.
+              revisá en el panel del casino (operaciones API) si entró. Si entró, marcá «Sí, entró» y después tocá
+              Verificar para registrar la caja.
             </span>
             {canReview ? (
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -256,6 +265,15 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
           </div>
         )}
 
+        {acreditadaSinCaja && (
+          <div style={{ background: '#e8fff0', border: '1px solid #5ad87a', borderRadius: '10px', padding: '8px 10px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#1a7a3a', lineHeight: 1.4 }}>
+              ✅ Acreditada en el casino: falta registrar la caja. Tocá Verificar (no se vuelve a acreditar; el monto
+              y el bono quedan fijos en lo que se acreditó).
+            </span>
+          </div>
+        )}
+
         {/* Row 3: form inline (verificar/editar) o botones */}
         {isConfirming ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
@@ -263,6 +281,7 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
               <input
                 type="number" min="0.01" step="0.01"
                 value={montoInput}
+                readOnly={acreditadaSinCaja}
                 onChange={(e) => { setMontoInput(e.target.value); setMontoError(''); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleOk(); if (e.key === 'Escape') onCloseForm(); }}
                 placeholder="Monto $" autoFocus
@@ -272,13 +291,14 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
                 <input
                   type="number" min="0" step="1"
                   value={bonoInput}
+                  readOnly={acreditadaSinCaja}
                   onChange={(e) => setBonoInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleOk(); if (e.key === 'Escape') onCloseForm(); }}
                   placeholder="Bono (fichas)"
                   style={{ width: '120px', padding: '5px 10px', border: '2px solid #ffe08a', borderRadius: '8px', fontSize: '13px', fontWeight: 700, outline: 'none', background: '#fffaf0' }}
                 />
               )}
-              {item.image_url && !isPdfUrl(item.image_url) && (
+              {item.image_url && !isPdfUrl(item.image_url) && !acreditadaSinCaja && (
                 <button
                   type="button" onClick={detectMonto} disabled={aiLoading}
                   title="Detectar monto con IA (no afecta el bono)"
@@ -293,7 +313,12 @@ const ComprobanteCard = React.memo(function ComprobanteCard({
         ) : item.estado === 'pendiente' ? (
           <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
             <button onClick={() => onOpenForm(item)} style={{ background: '#C8FF00', color: '#000', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 14px', cursor: 'pointer', boxShadow: '0 2px 0 #8ab000' }}>✓ Verificar</button>
-            <button onClick={() => onReject(item)} style={{ background: '#1a1a1a', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 14px', cursor: 'pointer', boxShadow: '0 2px 0 #000' }}>✕ Rechazar</button>
+            <button
+              onClick={() => onReject(item)}
+              disabled={rechazoBloqueado}
+              title={rechazoBloqueado ? 'Esta carga ya se acreditó (o está en curso / a revisar) en el casino: no se puede rechazar.' : undefined}
+              style={{ background: '#1a1a1a', color: '#fff', fontWeight: 700, fontSize: '12px', border: 'none', borderRadius: '8px', padding: '5px 14px', cursor: rechazoBloqueado ? 'not-allowed' : 'pointer', boxShadow: '0 2px 0 #000', opacity: rechazoBloqueado ? 0.35 : 1 }}
+            >✕ Rechazar</button>
           </div>
         ) : item.estado === 'verificado' && item.can_edit ? (
           <div style={{ display: 'flex', gap: '8px', marginTop: '2px', justifyContent: 'flex-end' }}>

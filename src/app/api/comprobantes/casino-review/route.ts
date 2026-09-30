@@ -13,8 +13,9 @@ import { isStaleInFlight } from '@/lib/casino/deposit-guard';
 // casino ("operaciones API").
 //
 // Body: { comprobanteId, outcome: 'entered' | 'not_entered' }
-//   entered     → se marca acreditado (casino_deposited_at). Al verificar el
-//                 comprobante NO se vuelve a depositar.
+//   entered     → se marca acreditado (casino_deposited_at). La caja NO se mueve
+//                 acá: se mueve al tocar Verificar (lib/casino/verify-carga), que
+//                 saltea el depósito (ya hecho), registra la caja y verifica.
 //   not_entered → se libera: al verificar se intenta el depósito de nuevo.
 // No verifica el comprobante: eso sigue siendo el botón Verificar de siempre.
 //

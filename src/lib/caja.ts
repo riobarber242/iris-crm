@@ -228,6 +228,48 @@ export async function isCajaOperativa(session: SessionPayload): Promise<boolean>
   return isCasinoEnabled(session);
 }
 
+// ¿Alcanza el pozo para esta carga? Solo LECTURA: lo usa el flujo "primero el
+// casino" (lib/casino/verify-carga) para no acreditar al jugador si después la caja
+// va a rechazar la carga por falta de fichas. Misma cuenta que aplicarMovimiento
+// (monto y bono truncados a entero; la carga consume monto + bono del pozo).
+//   · Si la carga ya tiene su movimiento, alcanza (no se va a volver a cobrar).
+//   · Sin las tablas de caja (degradado) alcanza: la caja tampoco va a cobrar.
+// No reemplaza el control atómico del SQL (fn_aplicar_movimiento): entre esta
+// lectura y el movimiento otro operador puede gastar el pozo; ese caso lo registra
+// el caller.
+export async function hayStockParaCarga(
+  session: SessionPayload,
+  p: { comprobanteId: string; monto: number; bono?: number | null },
+): Promise<{ ok: true } | { ok: false; disponible: number; necesario: number; error?: string }> {
+  const monto = Math.trunc(Number(p.monto));
+  const bono = p.bono != null && Number(p.bono) > 0 ? Math.trunc(Number(p.bono)) : 0;
+  if (!Number.isFinite(monto) || monto <= 0) return { ok: true };
+  const necesario = monto + bono;
+  try {
+    const { data: mov, error: movErr } = await supabaseAdmin
+      .from('movimientos').select('id')
+      .eq('tenant_id', session.tenant_id).eq('comprobante_id', p.comprobanteId)
+      .limit(1).maybeSingle();
+    if (movErr) {
+      if (isMissingCajaError(movErr)) return { ok: true };
+      return { ok: false, disponible: 0, necesario, error: movErr.message };
+    }
+    if (mov) return { ok: true };
+
+    const { data, error } = await supabaseAdmin
+      .from('fichas_stock').select('stock_actual').eq('tenant_id', session.tenant_id).maybeSingle();
+    if (error) {
+      if (isMissingCajaError(error)) return { ok: true };
+      return { ok: false, disponible: 0, necesario, error: error.message };
+    }
+    const disponible = Number(data?.stock_actual ?? 0);
+    return disponible >= necesario ? { ok: true } : { ok: false, disponible, necesario };
+  } catch (err: any) {
+    if (isMissingCajaError(err)) return { ok: true };
+    return { ok: false, disponible: 0, necesario, error: err?.message ?? 'Error leyendo el pozo' };
+  }
+}
+
 // applied=false  → no correspondía cobrar (caja apagada, sin migración, tipo !=
 //                  carga, monto<=0, o YA cobrado): el caller verifica normal.
 // ok=false       → error de negocio real (ej. fichas insuficientes): el caller
