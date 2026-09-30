@@ -134,4 +134,9 @@ export interface CasinoProvider {
   /** Saldo de un jugador. Se usa para reconciliar un depósito ambiguo. */
   playerBalance?(ctx: ProviderContext, username: string, opts?: { deadlineAt?: number; timeoutMs?: number; retry?: boolean }): Promise<ProviderBalanceResult>;
   agentBalance?(ctx: ProviderContext): Promise<number | null>;
+  /**
+   * Diagnóstico (herramientas de prueba del admin): prueba acciones de SOLO LECTURA
+   * candidatas a devolver el saldo del agente, cuando la API no lo documenta.
+   */
+  probeAgentBalance?(ctx: ProviderContext): Promise<{ action: string; httpStatus: number; ms: number; timedOut: boolean; body: string }[]>;
 }

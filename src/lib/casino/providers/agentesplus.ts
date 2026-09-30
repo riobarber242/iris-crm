@@ -307,6 +307,40 @@ async function testConnection(ctx: ProviderContext): Promise<ProviderTestResult>
   return { ok: false, reason, error: messageOf(reason, r) };
 }
 
+// ── Búsqueda del saldo del AGENTE (diagnóstico) ──────────────────────────────
+// La documentación no trae una acción de saldo del agente, pero el panel muestra
+// "Saldo disponible". Esto prueba nombres probables, SOLO de lectura. La lista es
+// fija acá: el navegador no puede pedir ninguna otra acción (nada de deposit,
+// withdraw, create_player ni RTP). Cada acción va sola, sin usuario ni monto, sin
+// reintentos, espaciadas para no acercarse al límite de 60 por minuto.
+export const AGENT_BALANCE_PROBE_ACTIONS = [
+  'agent_balance', 'balance', 'get_balance', 'my_balance', 'agent_info', 'info',
+] as const;
+
+export interface ProbeActionResult {
+  action: string;
+  httpStatus: number;
+  ms: number;
+  timedOut: boolean;
+  /** Body recortado y sin la key (para leerlo en la pantalla de admin). */
+  body: string;
+}
+
+export async function probeAgentBalanceActions(ctx: ProviderContext): Promise<ProbeActionResult[]> {
+  const apiKey = ctx.secrets.api_key ?? '';
+  const out: ProbeActionResult[] = [];
+  for (const action of AGENT_BALANCE_PROBE_ACTIONS) {
+    const t0 = Date.now();
+    const r = await once(ctx, { action }, 8_000);
+    const ms = Date.now() - t0;
+    const body = r.json != null ? sanitize(JSON.stringify(r.json), apiKey).slice(0, 300) : r.providerError;
+    console.log(`[agentesplus] probe ${action} tenant=${ctx.tenantId} http=${r.httpStatus || '-'} ms=${ms}${r.timedOut ? ' timeout' : ''}`);
+    out.push({ action, httpStatus: r.httpStatus, ms, timedOut: r.timedOut, body });
+    await sleep(1_100);
+  }
+  return out;
+}
+
 // Mismo criterio que el alta de celuapuestas (≥8, mayúscula, minúscula y dígito):
 // agentes.plus no documenta reglas, así que se usa la más estricta conocida.
 const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
@@ -335,4 +369,5 @@ export const agentesplusProvider: CasinoProvider = {
   createPlayer,
   deposit,
   playerBalance,
+  probeAgentBalance: probeAgentBalanceActions,
 };

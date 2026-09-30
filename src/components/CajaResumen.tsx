@@ -102,6 +102,11 @@ export default function CajaResumen() {
   const enUso = data.caja_enabled || data.stock > 0 || data.billeteras.length > 0 || casinoEnabled;
   if (!enUso) return null;
 
+  // Con el casino activado la caja está en uso aunque el interruptor interno
+  // (caja_enabled) nunca se haya prendido: verificar mueve las billeteras igual
+  // (lib/caja.ts saltea ese gate en modo casino) y el interruptor ni se muestra.
+  const cajaActiva = data.caja_enabled || casinoEnabled;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
@@ -112,9 +117,9 @@ export default function CajaResumen() {
           </h3>
           <span style={{
             fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px',
-            background: data.caja_enabled ? '#e8fff0' : '#f0f0f0', color: data.caja_enabled ? '#1a7a3a' : '#999',
+            background: cajaActiva ? '#e8fff0' : '#f0f0f0', color: cajaActiva ? '#1a7a3a' : '#999',
           }}>
-            {data.caja_enabled ? 'ACTIVA' : 'APAGADA'}
+            {cajaActiva ? 'ACTIVA' : 'APAGADA'}
           </span>
         </div>
         <Link href="/fichas" style={{ fontSize: '12px', fontWeight: 700, color: '#1d6fb8', textDecoration: 'none' }}>

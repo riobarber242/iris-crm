@@ -32,6 +32,8 @@ export function providerCatalog() {
     hasAgentBalance: p.hasAgentBalance,
     /** Herramientas de prueba del admin (saldo / alta / depósito): solo modelo nuevo. */
     testTools: !p.legacyOperations,
+    /** Tiene la búsqueda de solo lectura del saldo del agente (diagnóstico). */
+    agentBalanceProbe: !!p.probeAgentBalance,
     fields: p.fields.map(({ key, label, kind, required, help, placeholder, defaultValue }) => ({
       key, label, kind, required, help: help ?? null, placeholder: placeholder ?? null, defaultValue: defaultValue ?? null,
     })),

@@ -16,7 +16,8 @@ interface ProviderField {
   key: string; label: string; kind: 'text' | 'url' | 'secret'; required: boolean;
   help: string | null; placeholder: string | null; defaultValue: string | null;
 }
-interface ProviderInfo { id: string; label: string; hasAgentBalance: boolean; testTools: boolean; fields: ProviderField[] }
+interface ProviderInfo { id: string; label: string; hasAgentBalance: boolean; testTools: boolean; agentBalanceProbe?: boolean; fields: ProviderField[] }
+interface ProbeRow { action: string; httpStatus: number; ms: number; timedOut: boolean; body: string }
 interface CasinoState {
   providers: ProviderInfo[];
   enabled: boolean;
@@ -85,6 +86,21 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
   const [tAmount, setTAmount] = useState('1');
   const [confirmDeposit, setConfirmDeposit] = useState(false);
   const [toolMsg, setToolMsg] = useState<Msg>(null);
+  const [probeRows, setProbeRows] = useState<ProbeRow[] | null>(null);
+
+  async function probeAgentBalance() {
+    setBusy('probe_agent_balance'); setToolMsg(null); setProbeRows(null);
+    try {
+      const res = await fetch(`${base}/tools`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'probe_agent_balance' }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) setProbeRows(j.results ?? []);
+      else setToolMsg({ kind: 'err', text: j.error ?? 'Error' });
+    } catch { setToolMsg({ kind: 'err', text: 'Error de red' }); }
+    finally { setBusy(null); }
+  }
 
   function hydrate(s: CasinoState) {
     setSt(s);
@@ -362,6 +378,25 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
                   </button>
                   <p style={hint}>Manda un alta con usuario y contraseña vacíos: mide si el endpoint contesta y cuánto tarda, sin crear a nadie.</p>
                 </div>
+                {savedProvider.agentBalanceProbe && (
+                  <div>
+                    <button disabled={!!busy} onClick={probeAgentBalance} style={btn('#F0F0F0', '#555')}>
+                      {busy === 'probe_agent_balance' ? 'Buscando (≈10 s)…' : 'Buscar saldo del agente (solo lectura)'}
+                    </button>
+                    <p style={hint}>Prueba una lista fija de acciones de lectura candidatas. No deposita, no retira ni crea nada.</p>
+                    {probeRows && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                        {probeRows.map((r) => (
+                          <div key={r.action} style={{ fontSize: '12px', background: '#F7F7F7', borderRadius: '8px', padding: '6px 8px', wordBreak: 'break-word' }}>
+                            <b style={{ fontFamily: 'monospace' }}>{r.action}</b>
+                            {' · '}{r.timedOut ? 'sin respuesta' : `HTTP ${r.httpStatus}`}{' · '}{r.ms} ms
+                            <div style={{ fontFamily: 'monospace', color: '#555', marginTop: '2px' }}>{r.body || '(vacío)'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <Box msg={toolMsg} />
               </div>
             )}

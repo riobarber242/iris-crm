@@ -14,6 +14,7 @@ import {
 //   { action: 'create_player',  username, password }
 //   { action: 'deposit',        username, amount }   ← tope MAX_TEST_DEPOSIT
 //   { action: 'probe_create' }  ← create_player con datos vacíos: mide el endpoint, no crea
+//   { action: 'probe_agent_balance' } ← acciones de lectura candidatas al saldo del agente
 //
 // Solo proveedores del modelo nuevo (celuapuestas opera por su propio código). No toca
 // contactos ni comprobantes. Guard: requireAdmin, scope = tenant del path.
@@ -36,7 +37,7 @@ export async function POST(request: Request, { params }: Params) {
   const body = await request.json().catch(() => ({} as any));
   const action = body?.action;
   const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase() : '';
-  if (!username && action !== 'probe_create') {
+  if (!username && action !== 'probe_create' && action !== 'probe_agent_balance') {
     return NextResponse.json({ ok: false, error: 'Falta el usuario del jugador' }, { status: 400 });
   }
 
@@ -75,6 +76,15 @@ export async function POST(request: Request, { params }: Params) {
       result: r.ok ? 'el proveedor aceptó el pedido vacío (inesperado)' : `${r.reason}: ${r.error}`,
       detail: r.ok ? null : r.detail,
     });
+  }
+
+  // Búsqueda del saldo del agente: acciones de SOLO LECTURA de una lista fija que
+  // vive en el adaptador (el body de este pedido no elige ninguna acción).
+  if (action === 'probe_agent_balance') {
+    if (!provider.probeAgentBalance) return NextResponse.json({ ok: false, error: 'El proveedor no tiene esta prueba' }, { status: 400 });
+    const results = await provider.probeAgentBalance(ctx);
+    await log({ probe_agent_balance: results.map((r) => ({ action: r.action, http: r.httpStatus, ms: r.ms })) });
+    return NextResponse.json({ ok: true, results });
   }
 
   if (action === 'create_player') {
