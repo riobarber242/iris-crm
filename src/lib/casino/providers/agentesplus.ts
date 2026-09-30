@@ -38,6 +38,12 @@ export const AGENTESPLUS_DEFAULT_URL = 'https://agentes.plus/api.php';
 const REQUEST_TIMEOUT_MS = 10_000;
 // Presupuesto por defecto de una llamada suelta (routes sin maxDuration: default 15s).
 const DEFAULT_BUDGET_MS = 12_000;
+// El alta es LENTA del lado de agentes.plus: el 30/09/2026 el primer create_player
+// no respondió en los 12s del presupuesto por defecto (el timeout de 15s que pedía
+// nunca aplicaba: ganaba el presupuesto). Tiene su propio techo; los routes que la
+// llaman declaran maxDuration = 60 y le reservan tiempo a la confirmación posterior.
+const CREATE_TIMEOUT_MS = 40_000;
+const CREATE_BUDGET_MS = 42_000;
 // Escalera ante 429. Si el proveedor manda Retry-After, manda él (con techo).
 const RATE_LIMIT_DELAYS_MS = [2_000, 5_000, 10_000];
 const MAX_RETRY_AFTER_MS = 10_000;
@@ -56,6 +62,10 @@ interface RawResult {
   json: any | null;
   timedOut: boolean;
   networkError: boolean;
+  /** No se llegó a enviar el pedido (sin presupuesto): seguro que no se aplicó. */
+  notSent?: boolean;
+  /** Duración del último intento, en ms (para el diagnóstico en los logs). */
+  ms?: number;
   attempts: number;
   retryAfterMs: number | null;
   /** Motivo del proveedor ("error"), recortado y sin la key. */
@@ -136,18 +146,22 @@ async function call(
     const budget = remainingMs(deadlineAt);
     if (budget < MIN_ATTEMPT_MS) {
       if (last) return { ...last, attempts };
+      // Nunca salió: no es un timeout (eso sería ambiguo en una escritura).
       return {
-        httpStatus: 0, json: null, timedOut: true, networkError: false, attempts: 0, retryAfterMs: null,
+        httpStatus: 0, json: null, timedOut: false, networkError: false, notSent: true, attempts: 0, retryAfterMs: null,
         providerError: 'sin tiempo para llamar a agentes.plus',
       };
     }
     attempts++;
-    last = await once(ctx, { action, ...payload }, Math.min(opts.timeoutMs ?? REQUEST_TIMEOUT_MS, budget));
+    const timeoutMs = Math.min(opts.timeoutMs ?? REQUEST_TIMEOUT_MS, budget);
+    const t0 = Date.now();
+    last = await once(ctx, { action, ...payload }, timeoutMs);
+    last.ms = Date.now() - t0;
     const username = typeof payload.username === 'string' ? payload.username : '-';
     const tag = `[agentesplus] ${action} tenant=${ctx.tenantId} jugador=${username} intento=${attempts}`;
 
     if (isOk(last)) {
-      console.log(`${tag} OK http=200`);
+      console.log(`${tag} OK http=200 ms=${last.ms}`);
       return { ...last, attempts };
     }
 
@@ -164,8 +178,8 @@ async function call(
     }
 
     console.warn(
-      `${tag} FALLÓ http=${last.httpStatus || '-'}${last.timedOut ? ' timeout' : ''}` +
-      `${last.networkError ? ' red' : ''} motivo="${last.providerError}"` +
+      `${tag} FALLÓ http=${last.httpStatus || '-'}${last.timedOut ? ` timeout(${timeoutMs}ms)` : ''}` +
+      `${last.networkError ? ' red' : ''} ms=${last.ms} motivo="${last.providerError}"` +
       (delay !== undefined ? ` — reintento en ${delay}ms` : ''),
     );
 
@@ -213,15 +227,17 @@ function messageOf(reason: ProviderFailReason, r: RawResult, username?: string):
 
 function detailOf(r: RawResult): string {
   return `http=${r.httpStatus || '-'} intentos=${r.attempts}${r.timedOut ? ' timeout' : ''}` +
-    `${r.networkError ? ' red' : ''} motivo="${r.providerError}"`;
+    `${r.networkError ? ' red' : ''}${r.notSent ? ' no-enviado' : ''} ms=${r.ms ?? '-'} motivo="${r.providerError}"`;
 }
 
 /**
- * ¿Hay certeza de que una ESCRITURA no se aplicó? Solo cuando el proveedor contestó
- * y dijo que no: cualquier 4xx (incluye un bloqueo de Cloudflare antes del servidor)
- * o un 200 con status 0. Timeout, error de red, 5xx o un 200 sin JSON son ambiguos.
+ * ¿Hay certeza de que una ESCRITURA no se aplicó? Cuando el pedido no llegó a salir,
+ * o cuando el proveedor contestó y dijo que no: cualquier 4xx (incluye un bloqueo de
+ * Cloudflare antes del servidor) o un 200 con status 0. Timeout, error de red, 5xx o
+ * un 200 sin JSON son ambiguos.
  */
 function definitelyNotApplied(r: RawResult): boolean {
+  if (r.notSent) return true;
   if (r.httpStatus >= 400 && r.httpStatus < 500) return true;
   return r.httpStatus === 200 && r.json != null && 'status' in r.json && Number(r.json.status) !== 1;
 }
@@ -246,9 +262,17 @@ async function playerBalance(
   return { ok: false, reason, error: messageOf(reason, r, username), detail: detailOf(r) };
 }
 
-async function createPlayer(ctx: ProviderContext, username: string, password: string): Promise<ProviderCreateResult> {
-  // Crear no es idempotente: solo se reintenta un 429 (no procesado).
-  const r = await call(ctx, 'create_player', { username, password }, { retryUnavailable: false, timeoutMs: 15_000 });
+async function createPlayer(
+  ctx: ProviderContext, username: string, password: string, opts: { deadlineAt?: number } = {},
+): Promise<ProviderCreateResult> {
+  // Crear no es idempotente: solo se reintenta un 429 (no procesado). Presupuesto
+  // propio (el alta tarda): el caller puede acotarlo para reservar tiempo a la
+  // confirmación por saldo.
+  const r = await call(ctx, 'create_player', { username, password }, {
+    retryUnavailable: false,
+    timeoutMs: CREATE_TIMEOUT_MS,
+    deadlineAt: opts.deadlineAt ?? Date.now() + CREATE_BUDGET_MS,
+  });
   if (isOk(r)) return { ok: true };
   const reason = reasonOf(r);
   const ambiguous = !definitelyNotApplied(r);

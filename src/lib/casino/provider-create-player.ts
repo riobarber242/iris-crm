@@ -17,6 +17,41 @@ import type { CasinoProvider, ProviderContext } from './providers/types';
 
 const MAX_CORRELATIVE_ATTEMPTS = 20;
 
+// Presupuesto del flujo de alta. Los routes que lo usan declaran maxDuration = 60.
+// Se reserva la cola para confirmar por saldo un alta que quedó ambigua.
+// Cuentas: el alta tiene hasta 55 - 20 = 35s; si se cuelga entera, en los 20s de
+// reserva entran dos consultas de confirmación (3s + 4s y 7s + 4s).
+export const CREATE_FLOW_BUDGET_MS = 55_000;
+export const CREATE_CONFIRM_RESERVE_MS = 20_000;
+// Esperas entre consultas de confirmación y techo de cada consulta.
+const CONFIRM_WAITS_MS = [3_000, 7_000, 10_000];
+const CONFIRM_READ_TIMEOUT_MS = 4_000;
+
+export const AMBIGUOUS_CREATE_MSG =
+  'No se pudo confirmar si el usuario se creó en el casino. Antes de reintentar, esperá un minuto y ' +
+  'buscalo en el panel del casino (o consultá su saldo): si ya existe, cargalo a mano en el contacto.';
+
+/**
+ * Después de un alta ambigua (timeout, 5xx), consulta el saldo del jugador unas
+ * veces, espaciadas, para detectar un alta que terminó tarde. Solo un saldo OK
+ * confirma que existe. Respeta `deadlineAt` (no se pasa del maxDuration).
+ */
+export async function confirmPlayerCreated(
+  provider: CasinoProvider, ctx: ProviderContext, username: string, deadlineAt: number,
+): Promise<boolean> {
+  if (!provider.playerBalance) return false;
+  for (const wait of CONFIRM_WAITS_MS) {
+    if (deadlineAt - Date.now() < wait + CONFIRM_READ_TIMEOUT_MS) break;
+    await new Promise((r) => setTimeout(r, wait));
+    const r = await provider.playerBalance(ctx, username, { timeoutMs: CONFIRM_READ_TIMEOUT_MS, retry: false });
+    if (r.ok) {
+      console.log(`[create-player/${provider.id}] alta ambigua confirmada por saldo: ${username} existe`);
+      return true;
+    }
+  }
+  return false;
+}
+
 // "<base><n>js" → "<base><n+1>js"; si no matchea, agrega un 2. Igual que el camino
 // de celuapuestas, para que los usuarios de todos los tenants se vean iguales.
 function nextUsername(username: string): string {
@@ -55,26 +90,29 @@ export async function createPlayerWithProvider(
     return NextResponse.json({ success: false, error: provider.password.ruleText }, { status: 400 });
   }
 
-  let result = await provider.createPlayer(ctx, username, password);
+  const deadlineAt = Date.now() + CREATE_FLOW_BUDGET_MS;
+  const createDeadline = deadlineAt - CREATE_CONFIRM_RESERVE_MS;
+  let result = await provider.createPlayer(ctx, username, password, { deadlineAt: createDeadline });
   let attempts = 0;
   while (!result.ok && result.taken && attempts < MAX_CORRELATIVE_ATTEMPTS) {
     username = nextUsername(username);
-    result = await provider.createPlayer(ctx, username, password);
+    result = await provider.createPlayer(ctx, username, password, { deadlineAt: createDeadline });
     attempts++;
   }
 
-  // Alta ambigua: quizás el casino SÍ lo creó. Solo un lookup OK lo confirma; si el
-  // lookup tampoco contesta, se informa la falla y el operador reintenta.
-  if (!result.ok && result.ambiguous && provider.playerBalance) {
-    const lookup = await provider.playerBalance(ctx, username);
-    if (lookup.ok) {
-      console.log(`[create-player/${provider.id}] alta ambigua pero el usuario existe → creado: ${username}`);
-      result = { ok: true };
-    }
+  // Alta ambigua: quizás el casino SÍ lo creó (o lo termina de crear en unos
+  // segundos). Solo un saldo OK lo confirma; si no aparece, se avisa que no se sabe,
+  // para que el operador no reintente a ciegas y duplique el usuario.
+  if (!result.ok && result.ambiguous) {
+    if (await confirmPlayerCreated(provider, ctx, username, deadlineAt)) result = { ok: true };
   }
 
   if (!result.ok) {
-    return NextResponse.json({ success: false, error: result.error }, { status: 502 });
+    // En un alta ambigua van usuario y contraseña: si aparece más tarde en el panel,
+    // es la contraseña que quedó (mismo criterio que el camino de celuapuestas).
+    return NextResponse.json(result.ambiguous
+      ? { success: false, error: `${result.error} ${AMBIGUOUS_CREATE_MSG}`, username, password }
+      : { success: false, error: result.error }, { status: 502 });
   }
 
   const { error: updErr } = await supabaseAdmin

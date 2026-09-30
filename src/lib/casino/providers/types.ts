@@ -128,7 +128,8 @@ export interface CasinoProvider {
   testConnection(ctx: ProviderContext): Promise<ProviderTestResult>;
 
   // Operaciones del modelo nuevo. Obligatorias salvo con legacyOperations.
-  createPlayer?(ctx: ProviderContext, username: string, password: string): Promise<ProviderCreateResult>;
+  /** opts.deadlineAt acota el alta para que al caller le quede tiempo de confirmar. */
+  createPlayer?(ctx: ProviderContext, username: string, password: string, opts?: { deadlineAt?: number }): Promise<ProviderCreateResult>;
   deposit?(ctx: ProviderContext, username: string, amount: number, deadlineAt: number): Promise<ProviderWriteResult>;
   /** Saldo de un jugador. Se usa para reconciliar un depósito ambiguo. */
   playerBalance?(ctx: ProviderContext, username: string, opts?: { deadlineAt?: number; timeoutMs?: number; retry?: boolean }): Promise<ProviderBalanceResult>;

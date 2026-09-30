@@ -164,7 +164,7 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
     finally { setBusy(null); }
   }
 
-  async function tool(action: 'player_balance' | 'create_player' | 'deposit') {
+  async function tool(action: 'player_balance' | 'create_player' | 'deposit' | 'probe_create') {
     setBusy(action); setToolMsg(null);
     try {
       const res = await fetch(`${base}/tools`, {
@@ -172,12 +172,17 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
         body: JSON.stringify({ action, username: tUser, password: tPass || undefined, amount: Number(tAmount) }),
       });
       const j = await res.json().catch(() => ({}));
-      if (action === 'player_balance') {
+      if (action === 'probe_create') {
+        setToolMsg({
+          kind: j.answered ? 'ok' : 'err',
+          text: `${j.answered ? 'El endpoint de alta respondió' : 'El endpoint de alta NO respondió'} en ${j.ms ?? '?'} ms — ${j.result ?? j.error ?? ''}`,
+        });
+      } else if (action === 'player_balance') {
         setToolMsg(j.ok ? { kind: 'ok', text: `Saldo de ${tUser}: ${Number(j.balance).toLocaleString('es-AR')}` } : { kind: 'err', text: j.error ?? 'Error' });
       } else if (action === 'create_player') {
         setToolMsg(j.ok
-          ? { kind: 'ok', text: `✅ Jugador creado: ${j.username} · contraseña ${j.password}` }
-          : { kind: 'err', text: `${j.error ?? 'Error'}${j.ambiguous ? ' (no se sabe si se creó: consultá el saldo antes de reintentar)' : ''}` });
+          ? { kind: 'ok', text: `✅ Jugador creado${j.confirmed_by_balance ? ' (el alta tardó; confirmado por saldo)' : ''}: ${j.username} · contraseña ${j.password}` }
+          : { kind: 'err', text: `${j.error ?? 'Error'}${j.ambiguous && j.password ? ` Si aparece, la contraseña es ${j.password}.` : ''}` });
       } else {
         const antes = j.balance_before != null ? Number(j.balance_before).toLocaleString('es-AR') : '—';
         const despues = j.balance_after != null ? Number(j.balance_after).toLocaleString('es-AR') : '—';
@@ -350,6 +355,12 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
                       Depósito de prueba (máx. 100)
                     </button>
                   )}
+                </div>
+                <div>
+                  <button disabled={!!busy} onClick={() => tool('probe_create')} style={btn('#F0F0F0', '#555')}>
+                    {busy === 'probe_create' ? 'Probando endpoint…' : 'Probar endpoint de alta (no crea)'}
+                  </button>
+                  <p style={hint}>Manda un alta con usuario y contraseña vacíos: mide si el endpoint contesta y cuánto tarda, sin crear a nadie.</p>
                 </div>
                 <Box msg={toolMsg} />
               </div>

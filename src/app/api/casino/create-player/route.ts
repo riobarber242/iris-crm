@@ -10,6 +10,12 @@ import { featureBlocked } from '@/lib/plan-guard';
 import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
 import { createPlayerWithProvider } from '@/lib/casino/provider-create-player';
 
+// El alta de agentes.plus tarda más que el default de Vercel (el 30/09/2026 no
+// respondió en 12s) y después se confirma por saldo si quedó ambigua. Para el camino
+// de celuapuestas no cambia nada: su propio timeout (15s en AddPlayer) sigue igual;
+// esto solo le permite a la función durar más.
+export const maxDuration = 60;
+
 // Solo admin/agent: crear un usuario en el casino es una acción de staff.
 function requireStaff(session: SessionPayload | null): session is SessionPayload {
   return !!session && (session.role === 'admin' || session.role === 'agent');
