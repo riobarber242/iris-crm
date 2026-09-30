@@ -96,8 +96,6 @@ export default function FichasClient() {
   // muestra en tenants con casino_deposit_enabled=true (lo decide el backend).
   const [casinoEnabled, setCasinoEnabled] = useState(false);
   const [casinoBalance, setCasinoBalance] = useState<number | null>(null);
-  // El proveedor del tenant no expone el saldo del agente → no se muestra el chip.
-  const [casinoBalanceHidden, setCasinoBalanceHidden] = useState(false);
 
   const [cargar, setCargar]   = useState('');
   const [busy, setBusy]       = useState(false);
@@ -165,7 +163,6 @@ export default function FichasClient() {
       if (!res.ok) return;
       const j = await res.json();
       setCasinoEnabled(!!j.enabled);
-      setCasinoBalanceHidden(!!j.balance_hidden);
       if (j.enabled && typeof j.balance === 'number') setCasinoBalance(j.balance);
     } catch {}
   }
@@ -338,7 +335,7 @@ export default function FichasClient() {
       {/* Saldo en el casino (admin.celuapuestas.bond) — sincronizado en vivo.
           Estilo distinto al pozo interno (degradé teal→índigo) para que quede
           claro que es plata del casino, no fichas internas. */}
-      {casinoEnabled && !casinoBalanceHidden && (
+      {casinoEnabled && (
         <div style={{ background: 'linear-gradient(135deg, #0b3d3a 0%, #16324f 55%, #2a1a5e 100%)', border: '1px solid #2f6f6a', borderRadius: '18px', padding: '22px 26px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
           <div>
             <p style={{ margin: 0, fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#5fe3c8' }}>

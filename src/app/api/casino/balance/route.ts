@@ -5,6 +5,7 @@ import { getAgentBalance } from '@/lib/casino/client';
 import { resolveCasinoCreds } from '@/lib/casino/account';
 import { featureBlocked } from '@/lib/plan-guard';
 import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
+import { stockModeFrom } from '@/lib/casino/stock-mode';
 
 // Cache en memoria del saldo (por instancia/lambda) para no martillar el casino
 // si varios agentes miran Fichas a la vez. Keyed por tenant: el saldo es el del
@@ -17,6 +18,9 @@ const balanceCache = new Map<string, { balance: number; expiresAt: number }>();
 //   { enabled: false }                      si el tenant no tiene casino activado
 //   { enabled: true, balance, cached }      si está activado
 //   { enabled: true, balance: null, error } si el casino no respondió
+//   { enabled: false, casino_on: true, stock_mode: 'hybrid' }
+//                                           casino activado pero el stock lo lleva
+//                                           la caja manual (proveedor sin saldo del agente)
 export async function GET() {
   const blocked = await featureBlocked('casino');
   if (blocked) return blocked;
@@ -34,13 +38,19 @@ export async function GET() {
     return NextResponse.json({ enabled: false });
   }
 
-  // Proveedores del modelo nuevo: el saldo del agente sale del adaptador, y si el
-  // proveedor no lo expone el chip se oculta ({ balance_hidden: true }). `enabled`
-  // sigue en true porque el panel lo usa también para el modo casino de la caja.
+  // Proveedores del modelo nuevo. `enabled` es lo que los paneles leen como "el
+  // stock lo lleva el casino" (muestran el saldo y duermen el pozo). En modo
+  // 'hybrid' (lib/casino/stock-mode: el proveedor no da el saldo del agente) va en
+  // false, así Fichas / Mi Caja / Dashboard muestran la caja manual completa;
+  // `casino_on` y `stock_mode` dicen que el casino igual está activado.
   const alt = await loadNonLegacyAccount(session.tenant_id);
   if (alt) {
-    if (alt.kind !== 'ok' || !alt.provider.hasAgentBalance || !alt.provider.agentBalance) {
-      return NextResponse.json({ enabled: true, balance: null, balance_hidden: true });
+    const mode = stockModeFrom(true, alt.kind === 'ok' ? alt.provider.id : alt.providerId);
+    if (mode === 'hybrid') {
+      return NextResponse.json({ enabled: false, casino_on: true, stock_mode: 'hybrid' });
+    }
+    if (alt.kind !== 'ok' || !alt.provider.agentBalance) {
+      return NextResponse.json({ enabled: true, balance: null, error: 'No se pudo obtener el saldo del casino' });
     }
     const hit = balanceCache.get(session.tenant_id);
     if (hit && Date.now() < hit.expiresAt) {

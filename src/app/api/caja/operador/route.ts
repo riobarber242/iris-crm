@@ -6,6 +6,7 @@ import { postInternalSystemMessage } from '@/lib/internal-chat';
 import { broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import { makeThumb, thumbPathFor } from '@/lib/thumb-generate';
 import { featureBlocked } from '@/lib/plan-guard';
+import { getCasinoStockMode } from '@/lib/casino/stock-mode';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Panel de caja del OPERADOR (Etapa 4b lectura · Etapa 5 acciones propias).
@@ -308,10 +309,12 @@ export async function GET(request: Request) {
     }
   }
 
-  // Con el casino activado la caja del operador está OPERATIVA aunque caja_enabled
-  // esté OFF (el pozo manual duerme, pero la billetera sigue viva). El front usa
-  // `casino_enabled` para no mostrar la caja como "desactivada" en ese caso.
-  const casino_enabled = await isCasinoEnabled(session);
+  // Con el stock en el casino (modo 'casino' de lib/casino/stock-mode) la caja del
+  // operador está OPERATIVA aunque caja_enabled esté OFF (el pozo manual duerme,
+  // pero la billetera sigue viva). El front usa `casino_enabled` para no mostrar la
+  // caja como "desactivada" en ese caso. En modo 'hybrid' (proveedor sin saldo del
+  // agente) la caja es manual y manda su interruptor, así que va en false.
+  const casino_enabled = (await getCasinoStockMode(session.tenant_id, await isCasinoEnabled(session))) === 'casino';
 
   // Degradación elegante: tablas de caja ausentes → resumen en cero, sin romper.
   if (isMissingCajaTable(saldoRes.error) || isMissingCajaTable(pozoRes.error) || isMissingCajaTable(hoyRes.error)) {

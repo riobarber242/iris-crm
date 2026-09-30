@@ -15,6 +15,7 @@ import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
 import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
 import { guardedDeposit } from '@/lib/casino/deposit-guard';
+import { getCasinoStockMode } from '@/lib/casino/stock-mode';
 
 // Verificar una carga acredita en el casino, y ese flujo tiene un presupuesto de
 // reintentos de 45s (CREDIT_BUDGET_MS) para aguantar las rachas en las que el casino
@@ -365,23 +366,30 @@ export async function PATCH(request: Request) {
       .eq('key', 'casino_deposit_enabled').eq('tenant_id', session.tenant_id).maybeSingle();
     const casinoDepositEnabled = casinoFlagRow?.value === 'true';
 
-    // Movimiento de caja interno. Con el casino habilitado el pozo NO se toca
+    // ¿Quién lleva el stock? (lib/casino/stock-mode). 'casino' (17Star: el proveedor
+    // da el saldo del agente) duerme el pozo, igual que siempre. 'hybrid' (proveedor
+    // sin saldo del agente) acredita en el casino más abajo Y mueve la caja como en
+    // manual. Con el casino apagado ('manual') ni se lee el proveedor.
+    const stockMode = await getCasinoStockMode(session.tenant_id, casinoDepositEnabled);
+    const pozoEnCasino = stockMode === 'casino';
+
+    // Movimiento de caja interno. Con el pozo en el casino NO se toca el pozo
     // (fichas_delta=0): la carga acredita la billetera del operador (+monto) y el
     // pago la descuenta (-monto). El crédito real al jugador lo hace creditPlayer
-    // más abajo. Sin casino, flujo normal (pozo + billetera).
+    // más abajo. En manual e híbrido, flujo normal (pozo + billetera + interruptor).
     const movRes = esPago
       ? await aplicarPagoComprobante(session, {
           comprobanteId,
           monto:        Number(efectiveMonto ?? 0),
           pagoAgente:   !!comprobante.pago_agente,
-          casinoEnabled: casinoDepositEnabled,
+          casinoEnabled: pozoEnCasino,
         })
       : await aplicarCargaComprobante(session, {
           comprobanteId,
           tipo:  comprobante.tipo,
           monto: Number(efectiveMonto ?? 0),
           bono:  efectiveBono,
-          casinoEnabled: casinoDepositEnabled,
+          casinoEnabled: pozoEnCasino,
         });
     if (!movRes.ok) return new NextResponse(movRes.error, { status: 400 });
 
