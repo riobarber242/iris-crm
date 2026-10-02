@@ -16,7 +16,7 @@ interface ProviderField {
   key: string; label: string; kind: 'text' | 'url' | 'secret'; required: boolean;
   help: string | null; placeholder: string | null; defaultValue: string | null;
 }
-interface ProviderInfo { id: string; label: string; hasAgentBalance: boolean; testTools: boolean; agentBalanceProbe?: boolean; fields: ProviderField[] }
+interface ProviderInfo { id: string; label: string; hasAgentBalance: boolean; testTools: boolean; agentBalanceProbe?: boolean; agentBalanceRead?: boolean; fields: ProviderField[] }
 interface ProbeRow { action: string; httpStatus: number; ms: number; timedOut: boolean; body: string }
 interface CasinoState {
   providers: ProviderInfo[];
@@ -98,6 +98,24 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
       const j = await res.json().catch(() => ({}));
       if (j.ok) setProbeRows(j.results ?? []);
       else setToolMsg({ kind: 'err', text: j.error ?? 'Error' });
+    } catch { setToolMsg({ kind: 'err', text: 'Error de red' }); }
+    finally { setBusy(null); }
+  }
+
+  async function readAgentBalance() {
+    setBusy('read_agent_balance'); setToolMsg(null);
+    try {
+      const res = await fetch(`${base}/tools`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read_agent_balance' }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (j.ok) {
+        setToolMsg({
+          kind: 'ok',
+          text: `Saldo del agente: $${j.raw} · ${j.reused_session ? 'reusó la sesión guardada' : 'tuvo que volver a loguearse'} · ${j.ms} ms`,
+        });
+      } else setToolMsg({ kind: 'err', text: j.error ?? 'Error' });
     } catch { setToolMsg({ kind: 'err', text: 'Error de red' }); }
     finally { setBusy(null); }
   }
@@ -378,6 +396,14 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
                   </button>
                   <p style={hint}>Manda un alta con usuario y contraseña vacíos: mide si el endpoint contesta y cuánto tarda, sin crear a nadie.</p>
                 </div>
+                {savedProvider.agentBalanceRead && (
+                  <div>
+                    <button disabled={!!busy} onClick={readAgentBalance} style={btn('#F0F0F0', '#555')}>
+                      {busy === 'read_agent_balance' ? 'Leyendo…' : 'Leer saldo del panel (solo lectura)'}
+                    </button>
+                    <p style={hint}>Usa los datos del panel guardados y la sesión que IRIS tenga abierta. Dice si tuvo que volver a loguearse.</p>
+                  </div>
+                )}
                 {savedProvider.agentBalanceProbe && (
                   <div>
                     <button disabled={!!busy} onClick={probeAgentBalance} style={btn('#F0F0F0', '#555')}>

@@ -28,6 +28,12 @@ import {
 //               conexión, el casino se apaga hasta que el admin lo vuelva a activar.
 //   set_enabled { enabled } — activar exige una conexión verificada.
 //   test        re-prueba la conexión guardada y sella connection_verified_at.
+//   Campos scope 'agent_balance' (saldo del agente, opcionales): cambiarlos corre
+//   provider.testAgentBalance con lo tipeado; si falla no se guarda. NO apagan el
+//   casino (no tocan depósitos ni altas) y borran la sesión cacheada de la cuenta.
+
+// La prueba previa puede encadenar la API y el login al panel del proveedor.
+export const maxDuration = 60;
 
 const FLAG_KEY = 'casino_deposit_enabled';
 
@@ -119,7 +125,7 @@ export async function POST(request: Request, { params }: Params) {
     }
 
     const values = (body.values && typeof body.values === 'object') ? body.values : {};
-    const { patch, connChanged, missing } = buildProviderPatch(provider, existing, { values });
+    const { patch, connChanged, balanceChanged, missing } = buildProviderPatch(provider, existing, { values });
     if (missing.length) return NextResponse.json({ error: `Faltan datos: ${missing.join(', ')}` }, { status: 400 });
 
     for (const k of ['player_url', 'player_url_2', 'credentials_template'] as const) {
@@ -143,6 +149,29 @@ export async function POST(request: Request, { params }: Params) {
       patch.connection_verified_at = new Date().toISOString();
     }
 
+    // Datos del saldo del agente (scope 'agent_balance', p. ej. el panel de
+    // agentes.plus): prueba propia con lo tipeado antes de persistir. Si quedaron
+    // vacíos no hay nada que probar. NO apaga el casino: no tocan depósitos ni altas.
+    let balanceTested = false;
+    if (balanceChanged && provider.testAgentBalance) {
+      let ctx;
+      try {
+        ctx = contextFromRow(provider, { ...(existing ?? {}), ...patch, id: existing?.id ?? '', tenant_id: tenantId });
+      } catch {
+        ctx = null;
+      }
+      const hasAny = !!ctx && provider.fields.some((f) => f.scope === 'agent_balance' && f.kind !== 'url' &&
+        (f.kind === 'secret' ? !!ctx!.secrets[f.key] : !!ctx!.values[f.key]));
+      if (hasAny) {
+        balanceTested = true;
+        const r = ctx ? await provider.testAgentBalance(ctx) : { ok: false as const, error: 'No se pudo leer la configuración.' };
+        if (!r.ok) {
+          await log({ action: 'save_rejected', provider: provider.id, reason: 'agent_balance_test_failed' });
+          return NextResponse.json({ error: `No se guardó: ${r.error}`, saved: false }, { status: 400 });
+        }
+      }
+    }
+
     let writeErr: { message: string } | null = null;
     if (existing) {
       ({ error: writeErr } = await supabaseAdmin.from('casino_accounts').update(patch).eq('id', existing.id).eq('tenant_id', tenantId));
@@ -157,8 +186,13 @@ export async function POST(request: Request, { params }: Params) {
 
     // Fail-safe: conexión nueva → casino apagado hasta que el admin lo active.
     if (connChanged) await setFlag(tenantId, false);
-    await log({ action: 'save', provider: provider.id, conn_changed: connChanged, provider_changed: providerChange });
-    return NextResponse.json({ ok: true, tested: connChanged, ...(await state(tenantId)) });
+    // Datos del saldo cambiados: la sesión guardada era de los anteriores.
+    if (balanceChanged && existing?.id) {
+      const { error: delErr } = await supabaseAdmin.from('casino_sessions').delete().eq('account_id', existing.id);
+      if (delErr) console.warn(`[admin/casino] no se pudo borrar la sesión vieja tenant=${tenantId}:`, delErr.message);
+    }
+    await log({ action: 'save', provider: provider.id, conn_changed: connChanged, balance_changed: balanceChanged, provider_changed: providerChange });
+    return NextResponse.json({ ok: true, tested: connChanged || balanceTested, ...(await state(tenantId)) });
   }
 
   // ── Activar / desactivar ────────────────────────────────────────────────────

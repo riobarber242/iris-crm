@@ -179,13 +179,15 @@ export interface ProviderSaveInput {
  * Arma el patch de casino_accounts para guardar `input` con `provider`, partiendo de
  * la fila actual (o null). Si cambia el proveedor se descartan config y secretos del
  * anterior (no quedan credenciales de otro casino mezcladas en la fila).
- * Devuelve connChanged = cambió algo que obliga a volver a probar la conexión.
+ * Devuelve connChanged = cambió algo que obliga a volver a probar la conexión, y
+ * balanceChanged = cambió algún campo scope 'agent_balance' (solo el saldo del
+ * agente: se prueba aparte y no apaga el casino).
  */
 export function buildProviderPatch(
   provider: CasinoProvider,
   existing: any | null,
   input: ProviderSaveInput,
-): { patch: Record<string, any>; connChanged: boolean; missing: string[] } {
+): { patch: Record<string, any>; connChanged: boolean; balanceChanged: boolean; missing: string[] } {
   const providerChanged = !existing || providerIdOf(existing) !== provider.id;
   const oldConfig = (!providerChanged && existing?.config && typeof existing.config === 'object') ? existing.config : {};
   let oldBlob: Record<string, string> = {};
@@ -203,6 +205,7 @@ export function buildProviderPatch(
   const config: Record<string, string> = { ...oldConfig };
   const blob: Record<string, string> = { ...oldBlob };
   let connChanged = providerChanged;
+  let balanceChanged = false;
   let blobChanged = providerChanged;
   const missing: string[] = [];
   const flat: Record<string, string> = {};
@@ -210,6 +213,7 @@ export function buildProviderPatch(
   for (const f of provider.fields) {
     const raw = input.values[f.key];
     const typed = typeof raw === 'string' ? raw.trim() : '';
+    const markChanged = () => { if (f.scope === 'agent_balance') balanceChanged = true; else connChanged = true; };
 
     if (f.kind === 'secret') {
       let current = '';
@@ -217,7 +221,7 @@ export function buildProviderPatch(
         current = f.column ? (existing?.[f.column] && !providerChanged ? decryptSecret(existing[f.column]) : '') : (oldBlob[f.key] ?? '');
       } catch { current = ''; }
       if (typed && typed !== current) {
-        connChanged = true;
+        markChanged();
         if (f.column) patch[f.column] = encryptSecret(typed);
         else { blob[f.key] = typed; blobChanged = true; }
       }
@@ -228,7 +232,7 @@ export function buildProviderPatch(
     const prev = String((f.column ? (providerChanged ? '' : existing?.[f.column]) : oldConfig[f.key]) ?? '');
     const next = raw === undefined ? prev : typed;
     flat[f.key] = next;
-    if (next !== prev) connChanged = true;
+    if (next !== prev) markChanged();
     if (f.column) patch[f.column] = next || null;
     else if (next) config[f.key] = next;
     else delete config[f.key];
@@ -238,5 +242,5 @@ export function buildProviderPatch(
   if (provider.deriveColumns) Object.assign(patch, provider.deriveColumns(flat));
   patch.config = config;
   if (blobChanged) patch.secrets_enc = Object.keys(blob).length ? encryptSecret(JSON.stringify(blob)) : null;
-  return { patch, connChanged, missing };
+  return { patch, connChanged, balanceChanged, missing };
 }

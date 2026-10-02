@@ -32,6 +32,7 @@ import type {
   ProviderTestResult,
   ProviderWriteResult,
 } from './types';
+import { AGENTESPLUS_PANEL_DEFAULT_URL, hasPanelCredentials, readPanelBalance, testPanel } from './agentesplus-panel';
 
 export const AGENTESPLUS_DEFAULT_URL = 'https://agentes.plus/api.php';
 
@@ -301,7 +302,12 @@ async function testConnection(ctx: ProviderContext): Promise<ProviderTestResult>
   const probe = `irisprobe${Math.floor(Math.random() * 1e9)}`;
   const r = await call(ctx, 'player_balance', { username: probe }, { retryUnavailable: true });
   if (isOk(r) || r.httpStatus === 404) {
-    return { ok: true, message: 'Conectado con agentes.plus: la API key es válida.' };
+    const base = 'Conectado con agentes.plus: la API key es válida.';
+    // El panel (saldo del agente) es opcional: su resultado se informa pero no hace
+    // fallar la prueba de la API. Guardar sus datos tiene su propia prueba.
+    if (!hasPanelCredentials(ctx)) return { ok: true, message: base };
+    const p = await testPanel(ctx);
+    return { ok: true, message: `${base} ${p.ok ? p.message : `Panel (saldo del agente): ${p.error}`}` };
   }
   const reason = reasonOf(r);
   return { ok: false, reason, error: messageOf(reason, r) };
@@ -358,6 +364,20 @@ export const agentesplusProvider: CasinoProvider = {
       defaultValue: AGENTESPLUS_DEFAULT_URL, placeholder: AGENTESPLUS_DEFAULT_URL,
       help: 'Dejala vacía para usar la oficial.',
     },
+    // Panel web: opcional, SOLO para leer el saldo del agente (la API no lo da).
+    {
+      key: 'panel_user', label: 'Usuario del panel (saldo del agente)', kind: 'text', required: false, scope: 'agent_balance',
+      help: 'Opcional. Usuario con el que el agente entra a agentes.plus. IRIS lo usa solo para leer el "Saldo disponible".',
+    },
+    {
+      key: 'panel_password', label: 'Contraseña del panel', kind: 'secret', required: false, scope: 'agent_balance',
+      help: 'Opcional. Se guarda cifrada y no se vuelve a mostrar. Al guardarla, IRIS prueba entrar al panel.',
+    },
+    {
+      key: 'panel_url', label: 'URL del panel', kind: 'url', required: false, scope: 'agent_balance',
+      defaultValue: AGENTESPLUS_PANEL_DEFAULT_URL, placeholder: AGENTESPLUS_PANEL_DEFAULT_URL,
+      help: 'Dejala vacía para usar la oficial.',
+    },
   ],
   hasAgentBalance: false,
   password: {
@@ -370,4 +390,6 @@ export const agentesplusProvider: CasinoProvider = {
   deposit,
   playerBalance,
   probeAgentBalance: probeAgentBalanceActions,
+  testAgentBalance: testPanel,
+  readAgentBalanceDetail: readPanelBalance,
 };

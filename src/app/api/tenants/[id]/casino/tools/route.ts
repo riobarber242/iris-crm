@@ -15,6 +15,8 @@ import {
 //   { action: 'deposit',        username, amount }   ← tope MAX_TEST_DEPOSIT
 //   { action: 'probe_create' }  ← create_player con datos vacíos: mide el endpoint, no crea
 //   { action: 'probe_agent_balance' } ← acciones de lectura candidatas al saldo del agente
+//   { action: 'read_agent_balance' }  ← saldo del agente por el camino real (sesión
+//                                       guardada; dice si tuvo que volver a loguearse)
 //
 // Solo proveedores del modelo nuevo (celuapuestas opera por su propio código). No toca
 // contactos ni comprobantes. Guard: requireAdmin, scope = tenant del path.
@@ -37,7 +39,7 @@ export async function POST(request: Request, { params }: Params) {
   const body = await request.json().catch(() => ({} as any));
   const action = body?.action;
   const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase() : '';
-  if (!username && action !== 'probe_create' && action !== 'probe_agent_balance') {
+  if (!username && action !== 'probe_create' && action !== 'probe_agent_balance' && action !== 'read_agent_balance') {
     return NextResponse.json({ ok: false, error: 'Falta el usuario del jugador' }, { status: 400 });
   }
 
@@ -85,6 +87,17 @@ export async function POST(request: Request, { params }: Params) {
     const results = await provider.probeAgentBalance(ctx);
     await log({ probe_agent_balance: results.map((r) => ({ action: r.action, http: r.httpStatus, ms: r.ms })) });
     return NextResponse.json({ ok: true, results });
+  }
+
+  // Saldo del agente por el mismo camino que va a usar el chip (cache de sesión
+  // incluido). Sirve para ver si una sesión abierta en otro lado invalidó la de IRIS.
+  if (action === 'read_agent_balance') {
+    if (!provider.readAgentBalanceDetail) return NextResponse.json({ ok: false, error: 'El proveedor no lee el saldo del agente' }, { status: 400 });
+    const r = await provider.readAgentBalanceDetail(ctx);
+    await log(r.ok ? { ok: true, reused_session: r.reusedSession, ms: r.ms } : { ok: false, reason: r.reason, ms: r.ms });
+    return NextResponse.json(r.ok
+      ? { ok: true, balance: r.balance, raw: r.raw, reused_session: r.reusedSession, ms: r.ms }
+      : { ok: false, error: r.error, ms: r.ms });
   }
 
   if (action === 'create_player') {

@@ -39,6 +39,13 @@ export interface ProviderField {
    * (no secreto) o dentro del blob cifrado casino_accounts.secrets_enc (secreto).
    */
   column?: LegacyColumn;
+  /**
+   * A qué parte de la conexión pertenece. 'connection' (default): cambiarlo obliga a
+   * re-probar todo y apaga el casino hasta que el admin lo active. 'agent_balance':
+   * datos opcionales SOLO para leer el saldo del agente; cambiarlos corre su propia
+   * prueba (testAgentBalance) y no toca el flag del casino.
+   */
+  scope?: 'connection' | 'agent_balance';
 }
 
 /** Todo lo que un adaptador sabe de UNA conexión: la fila de un único tenant. */
@@ -139,4 +146,17 @@ export interface CasinoProvider {
    * candidatas a devolver el saldo del agente, cuando la API no lo documenta.
    */
   probeAgentBalance?(ctx: ProviderContext): Promise<{ action: string; httpStatus: number; ms: number; timedOut: boolean; body: string }[]>;
+  /**
+   * Prueba de los campos scope 'agent_balance' (al guardarlos). Sin esos datos
+   * cargados no se llama. Login nuevo, sin cache.
+   */
+  testAgentBalance?(ctx: ProviderContext): Promise<ProviderTestResult>;
+  /**
+   * Lectura del saldo del agente con detalle (herramienta de prueba del admin):
+   * dice si reusó la sesión guardada o tuvo que volver a loguearse.
+   */
+  readAgentBalanceDetail?(ctx: ProviderContext): Promise<
+    | { ok: true; balance: number; raw: string; reusedSession: boolean; ms: number }
+    | { ok: false; reason: ProviderFailReason; error: string; ms: number }
+  >;
 }
