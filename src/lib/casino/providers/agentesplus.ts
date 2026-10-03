@@ -32,7 +32,9 @@ import type {
   ProviderTestResult,
   ProviderWriteResult,
 } from './types';
-import { AGENTESPLUS_PANEL_DEFAULT_URL, hasPanelCredentials, readPanelBalance, testPanel } from './agentesplus-panel';
+import {
+  AGENTESPLUS_PANEL_DEFAULT_URL, PANEL_VIA_DEFAULT, PANEL_VIA_VALUES, hasPanelCredentials, readPanelBalance, testPanel,
+} from './agentesplus-panel';
 
 export const AGENTESPLUS_DEFAULT_URL = 'https://agentes.plus/api.php';
 
@@ -377,6 +379,11 @@ export const agentesplusProvider: CasinoProvider = {
       key: 'panel_url', label: 'URL del panel', kind: 'url', required: false, scope: 'agent_balance',
       defaultValue: AGENTESPLUS_PANEL_DEFAULT_URL, placeholder: AGENTESPLUS_PANEL_DEFAULT_URL,
       help: 'Dejala vacía para usar la oficial.',
+    },
+    {
+      key: 'panel_via', label: 'Salida del panel', kind: 'text', required: false, scope: 'agent_balance',
+      defaultValue: PANEL_VIA_DEFAULT, placeholder: PANEL_VIA_VALUES.join(' | '),
+      help: '"vps" (recomendado): sale por el proxy argentino de IRIS, porque agentes.plus bloquea el panel desde Vercel. "directo": sin proxy. Solo afecta la lectura del saldo; la API va siempre directo.',
     },
   ],
   hasAgentBalance: false,

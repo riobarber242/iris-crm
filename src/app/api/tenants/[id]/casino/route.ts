@@ -160,7 +160,9 @@ export async function POST(request: Request, { params }: Params) {
       } catch {
         ctx = null;
       }
-      const hasAny = !!ctx && provider.fields.some((f) => f.scope === 'agent_balance' && f.kind !== 'url' &&
+      // Solo cuentan los datos propios (usuario, contraseña): los campos con valor por
+      // defecto (URL, salida) "están" siempre y no dicen que haya algo para probar.
+      const hasAny = !!ctx && provider.fields.some((f) => f.scope === 'agent_balance' && !f.defaultValue &&
         (f.kind === 'secret' ? !!ctx!.secrets[f.key] : !!ctx!.values[f.key]));
       if (hasAny) {
         balanceTested = true;

@@ -128,6 +128,17 @@ casino-proxy.irisonline.app, 130-94-106-173.sslip.io {
 		import proxy_al_casino admin.celuapuestas.bond
 	}
 
+	# agentes.plus: SOLO el panel web (login + dashboard.php) para leer el saldo del
+	# agente. Su Cloudflare devuelve 403 a las IPs de Vercel en el panel (02/10/2026,
+	# confirmado con un usuario inventado); desde este VPS contesta normal. La API
+	# (api.php: deposit / create_player) sigue yendo DIRECTO desde Vercel, no pasa por
+	# acá. Mismo snippet: Origin/Referer de agentes.plus como el navegador, sin
+	# X-Forwarded-*. Cookie y Set-Cookie pasan tal cual y Caddy los tacha en el log.
+	@target_agentesplus header X-Casino-Target agentes.plus
+	handle @target_agentesplus {
+		import proxy_al_casino agentes.plus
+	}
+
 	# Fail-closed PURO: a diferencia del Worker, acá NO hay default cuando falta
 	# X-Casino-Target. El CRM manda el header siempre, así que esa rama era código
 	# muerto que sólo agregaba una forma de proxear a un destino que nadie pidió.

@@ -53,6 +53,70 @@ function panelBase(ctx: ProviderContext): string {
   return u.replace(/\/+$/, '');
 }
 
+// ── Salida: directo o por el VPS argentino ───────────────────────────────────
+// El Cloudflare de agentes.plus devuelve 403 al login del panel cuando el pedido
+// sale de Vercel (02/10/2026, confirmado con un usuario inventado); desde el VPS
+// argentino contesta normal. Por eso el panel sale por el mismo proxy (Caddy) que
+// usa 17Star, con agentes.plus en su allowlist. SOLO el panel: la API (api.php)
+// sigue directo desde agentesplus.ts.
+//
+// El proxy es infraestructura de IRIS (CASINO_PROXY_URL / CASINO_PROXY_SECRET, las
+// mismas env de 17Star), no un dato del tenant. Si el VPS se cae, el saldo queda
+// "no disponible" y nada más: las cargas no dependen de esto.
+
+export const PANEL_VIA_DEFAULT = 'vps';
+export const PANEL_VIA_VALUES = ['vps', 'directo'] as const;
+type PanelVia = (typeof PANEL_VIA_VALUES)[number];
+
+function panelVia(ctx: ProviderContext): PanelVia | null {
+  const v = (ctx.values.panel_via ?? '').trim().toLowerCase() || PANEL_VIA_DEFAULT;
+  return (PANEL_VIA_VALUES as readonly string[]).includes(v) ? (v as PanelVia) : null;
+}
+
+type Route = { ok: true; url: (path: string) => string; headers: Record<string, string>; via: PanelVia } | { ok: false; error: string };
+
+function route(ctx: ProviderContext): Route {
+  const via = panelVia(ctx);
+  if (!via) return { ok: false, error: `"Salida del panel" inválida: tiene que ser ${PANEL_VIA_VALUES.join(' o ')}.` };
+  const base = panelBase(ctx);
+  if (via === 'directo') return { ok: true, via, url: (p) => `${base}${p}`, headers: {} };
+  const proxy = (process.env.CASINO_PROXY_URL ?? '').trim().replace(/\/+$/, '');
+  const secret = process.env.CASINO_PROXY_SECRET ?? '';
+  if (!proxy || !secret) return { ok: false, error: 'El proxy de IRIS no está configurado (CASINO_PROXY_URL / CASINO_PROXY_SECRET).' };
+  let host: string;
+  try { host = new URL(base).host; } catch { return { ok: false, error: 'La URL del panel no es válida.' }; }
+  return { ok: true, via, url: (p) => `${proxy}${p}`, headers: { 'X-Proxy-Secret': secret, 'X-Casino-Target': host } };
+}
+
+/**
+ * Diagnóstico de una respuesta inesperada: status y headers que dicen QUIÉN contestó
+ * (Cloudflare, el proxy, el panel) y un recorte del body. Nunca credenciales: se
+ * tachan usuario, contraseña y secreto del proxy si aparecieran en el body, y no se
+ * imprime ningún header de cookies.
+ */
+function logUnexpected(ctx: ProviderContext, stage: string, via: PanelVia, res: Response, body: string) {
+  let snippet = body.replace(/\s+/g, ' ').trim();
+  for (const s of [ctx.secrets.panel_password, ctx.values.panel_user, process.env.CASINO_PROXY_SECRET]) {
+    if (s && s.length >= 3) snippet = snippet.split(s).join('***');
+  }
+  const title = snippet.match(/<title[^>]*>([^<]{0,80})/i)?.[1]?.trim() ?? '-';
+  console.warn(
+    `[agentesplus-panel] ${stage} respuesta inesperada tenant=${ctx.tenantId} via=${via} http=${res.status}` +
+    ` ct="${res.headers.get('content-type') ?? '-'}" server="${res.headers.get('server') ?? '-'}"` +
+    ` cf-ray=${res.headers.get('cf-ray') ? 'sí' : 'no'} proxy=${res.headers.get('x-proxy-colo') ?? '-'}` +
+    ` title="${title}" body="${snippet.slice(0, 200)}"`,
+  );
+}
+
+/** Texto para el operador ante una respuesta que no es del panel (proxy o Cloudflare). */
+function describeUnexpected(res: Response, body: string, via: PanelVia): string {
+  const t = body.trim();
+  if (via === 'vps' && res.status === 401 && /^unauthorized$/i.test(t)) return 'El proxy de IRIS rechazó el pedido (secreto).';
+  if (via === 'vps' && res.status === 403 && /forbidden casino target/i.test(t)) return 'El proxy de IRIS no tiene habilitado el panel de agentes.plus.';
+  if (via === 'vps' && res.status === 502) return 'El proxy de IRIS no pudo llegar al panel de agentes.plus.';
+  return `El panel de agentes.plus respondió algo inesperado (HTTP ${res.status}).`;
+}
+
 // ── Parser (puro, exportado para la prueba offline) ──────────────────────────
 
 const ARS_RE = /^-?\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?$/;
@@ -124,33 +188,44 @@ async function req(url: string, init: RequestInit): Promise<{ res: Response | nu
 
 type LoginResult = { ok: true; jar: Jar } | { ok: false; reason: ProviderFailReason; error: string };
 
+const noResponse = (via: PanelVia, error?: string) =>
+  via === 'vps'
+    ? `No se pudo llegar al panel de agentes.plus por el proxy de IRIS (${error}).`
+    : `El panel de agentes.plus no respondió (${error}).`;
+
 async function login(ctx: ProviderContext): Promise<LoginResult> {
-  const base = panelBase(ctx);
+  const rt = route(ctx);
+  if (!rt.ok) return { ok: false, reason: 'invalid', error: rt.error };
   const jar: Jar = {};
   // GET previo: como el navegador, se arranca con la cookie que da el formulario.
-  const pre = await req(`${base}/index.php`, { method: 'GET', headers: { 'User-Agent': UA } });
-  if (pre.res) { absorbCookies(jar, pre.res); await pre.res.text().catch(() => ''); }
+  const pre = await req(rt.url('/index.php'), { method: 'GET', headers: { ...rt.headers, 'User-Agent': UA } });
+  // Sin respuesta acá (VPS caído, red): cortar ya y no comerse otro timeout en el POST.
+  if (!pre.res) return { ok: false, reason: pre.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, pre.error) };
+  absorbCookies(jar, pre.res); await pre.res.text().catch(() => '');
 
   const form = new FormData();
   form.set('username', ctx.values.panel_user.trim());
   form.set('password', ctx.secrets.panel_password);
   form.set('ajax', '1');
-  const r = await req(`${base}/index.php`, {
+  const r = await req(rt.url('/index.php'), {
     method: 'POST',
     body: form,
-    headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json', Cookie: cookieHeader(jar) },
+    headers: { ...rt.headers, 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json', Cookie: cookieHeader(jar) },
   });
-  if (!r.res) return { ok: false, reason: r.timedOut ? 'timeout' : 'unavailable', error: `El panel de agentes.plus no respondió (${r.error}).` };
+  if (!r.res) return { ok: false, reason: r.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, r.error) };
   absorbCookies(jar, r.res); // el login regenera la sesión: vale la ÚLTIMA PHPSESSID
   const text = await r.res.text().catch(() => '');
   let json: any = null;
-  try { json = JSON.parse(text); } catch { /* HTML: Cloudflare o cambio de página */ }
-  if (json?.ok === true && jar.PHPSESSID) return { ok: true, jar };
-  if (json && json.ok === false) {
+  try { json = JSON.parse(text); } catch { /* HTML / texto: Cloudflare, el proxy o cambio de página */ }
+  if (r.res.status === 200 && json?.ok === true && jar.PHPSESSID) return { ok: true, jar };
+  // Credencial mala SOLO cuando el panel mismo lo dijo (JSON ok:false). Un 401/403
+  // del proxy o de Cloudflare es texto/HTML y cae abajo como "no disponible".
+  if (r.res.status === 200 && json && json.ok === false) {
     const motivo = String(json.error ?? '').replace(/\s+/g, ' ').slice(0, 120);
     return { ok: false, reason: 'bad_credentials', error: `El panel de agentes.plus rechazó el usuario o la contraseña${motivo ? ` ("${motivo}")` : ''}.` };
   }
-  return { ok: false, reason: 'unavailable', error: `El panel de agentes.plus respondió algo inesperado al login (HTTP ${r.res.status}).` };
+  logUnexpected(ctx, 'login', rt.via, r.res, text);
+  return { ok: false, reason: 'unavailable', error: describeUnexpected(r.res, text, rt.via) };
 }
 
 type DashResult =
@@ -159,18 +234,23 @@ type DashResult =
   | { kind: 'fail'; reason: ProviderFailReason; error: string };
 
 async function readDashboard(ctx: ProviderContext, jar: Jar): Promise<DashResult> {
-  const r = await req(`${panelBase(ctx)}/dashboard.php`, {
-    method: 'GET', headers: { 'User-Agent': UA, Cookie: cookieHeader(jar) },
+  const rt = route(ctx);
+  if (!rt.ok) return { kind: 'fail', reason: 'invalid', error: rt.error };
+  const r = await req(rt.url('/dashboard.php'), {
+    method: 'GET', headers: { ...rt.headers, 'User-Agent': UA, Cookie: cookieHeader(jar) },
   });
-  if (!r.res) return { kind: 'fail', reason: r.timedOut ? 'timeout' : 'unavailable', error: `El panel de agentes.plus no respondió (${r.error}).` };
+  if (!r.res) return { kind: 'fail', reason: r.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, r.error) };
   const html = await r.res.text().catch(() => '');
   if (r.res.status >= 300 && r.res.status < 400) return { kind: 'expired' };
-  if (r.res.status !== 200) return { kind: 'fail', reason: 'unavailable', error: `El panel de agentes.plus respondió HTTP ${r.res.status}.` };
+  if (r.res.status !== 200) {
+    logUnexpected(ctx, 'dashboard', rt.via, r.res, html);
+    return { kind: 'fail', reason: 'unavailable', error: describeUnexpected(r.res, html, rt.via) };
+  }
   const parsed = parseDashboardBalance(html);
   if (!parsed) {
     // El formulario de login con 200 también es "sin sesión".
     if (/id=["']login-form["']/.test(html)) return { kind: 'expired' };
-    console.warn(`[agentesplus-panel] saldo no encontrado en el dashboard tenant=${ctx.tenantId} bytes=${html.length}`);
+    logUnexpected(ctx, 'dashboard sin saldo', rt.via, r.res, html.slice(0, 2000));
     return { kind: 'fail', reason: 'unavailable', error: 'No se encontró "Saldo disponible" en el panel (¿cambió la página?).' };
   }
   return { kind: 'ok', ...parsed };
