@@ -30,6 +30,12 @@ import type { ProviderContext, ProviderFailReason, ProviderTestResult } from './
 export const AGENTESPLUS_PANEL_DEFAULT_URL = 'https://agentes.plus';
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const MIN_REQUEST_MS = 1_500;
+// Presupuesto TOTAL de una lectura (sesión guardada + re-login + dashboard). El chip
+// lo llama desde /api/casino/balance (sin maxDuration propio, ~15 s): tiene que
+// terminar antes. Las pruebas del admin tienen más margen.
+const READ_BUDGET_MS = 12_000;
+const TEST_BUDGET_MS = 25_000;
 // La cookie no trae vencimiento: se asume corta (el default de PHP son 24 min sin
 // uso) y se renueva al verla rechazada (302).
 const SESSION_TTL_MS = 20 * 60_000;
@@ -172,9 +178,12 @@ function jarFromHeader(header: string): Jar {
   return jar;
 }
 
-async function req(url: string, init: RequestInit): Promise<{ res: Response | null; timedOut: boolean; error?: string }> {
+async function req(url: string, init: RequestInit, deadlineAt: number): Promise<{ res: Response | null; timedOut: boolean; error?: string }> {
+  const budget = deadlineAt - Date.now();
+  // Sin presupuesto no se manda: para el que llama es lo mismo que un timeout.
+  if (budget < MIN_REQUEST_MS) return { res: null, timedOut: true, error: 'sin tiempo para llamar al panel' };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), Math.min(REQUEST_TIMEOUT_MS, budget));
   try {
     const res = await fetch(url, { ...init, redirect: 'manual', cache: 'no-store', signal: controller.signal });
     return { res, timedOut: false };
@@ -193,12 +202,12 @@ const noResponse = (via: PanelVia, error?: string) =>
     ? `No se pudo llegar al panel de agentes.plus por el proxy de IRIS (${error}).`
     : `El panel de agentes.plus no respondió (${error}).`;
 
-async function login(ctx: ProviderContext): Promise<LoginResult> {
+async function login(ctx: ProviderContext, deadlineAt: number): Promise<LoginResult> {
   const rt = route(ctx);
   if (!rt.ok) return { ok: false, reason: 'invalid', error: rt.error };
   const jar: Jar = {};
   // GET previo: como el navegador, se arranca con la cookie que da el formulario.
-  const pre = await req(rt.url('/index.php'), { method: 'GET', headers: { ...rt.headers, 'User-Agent': UA } });
+  const pre = await req(rt.url('/index.php'), { method: 'GET', headers: { ...rt.headers, 'User-Agent': UA } }, deadlineAt);
   // Sin respuesta acá (VPS caído, red): cortar ya y no comerse otro timeout en el POST.
   if (!pre.res) return { ok: false, reason: pre.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, pre.error) };
   absorbCookies(jar, pre.res); await pre.res.text().catch(() => '');
@@ -211,7 +220,7 @@ async function login(ctx: ProviderContext): Promise<LoginResult> {
     method: 'POST',
     body: form,
     headers: { ...rt.headers, 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json', Cookie: cookieHeader(jar) },
-  });
+  }, deadlineAt);
   if (!r.res) return { ok: false, reason: r.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, r.error) };
   absorbCookies(jar, r.res); // el login regenera la sesión: vale la ÚLTIMA PHPSESSID
   const text = await r.res.text().catch(() => '');
@@ -233,12 +242,12 @@ type DashResult =
   | { kind: 'expired' }
   | { kind: 'fail'; reason: ProviderFailReason; error: string };
 
-async function readDashboard(ctx: ProviderContext, jar: Jar): Promise<DashResult> {
+async function readDashboard(ctx: ProviderContext, jar: Jar, deadlineAt: number): Promise<DashResult> {
   const rt = route(ctx);
   if (!rt.ok) return { kind: 'fail', reason: 'invalid', error: rt.error };
   const r = await req(rt.url('/dashboard.php'), {
     method: 'GET', headers: { ...rt.headers, 'User-Agent': UA, Cookie: cookieHeader(jar) },
-  });
+  }, deadlineAt);
   if (!r.res) return { kind: 'fail', reason: r.timedOut ? 'timeout' : 'unavailable', error: noResponse(rt.via, r.error) };
   const html = await r.res.text().catch(() => '');
   if (r.res.status >= 300 && r.res.status < 400) return { kind: 'expired' };
@@ -319,11 +328,11 @@ async function markBadCredentials(ctx: ProviderContext): Promise<void> {
 // saldo al mismo tiempo no disparan varios logins).
 const loginsInFlight = new Map<string, Promise<LoginResult>>();
 
-function sharedLogin(ctx: ProviderContext): Promise<LoginResult> {
+function sharedLogin(ctx: ProviderContext, deadlineAt: number): Promise<LoginResult> {
   const key = ctx.accountId || `typed:${ctx.tenantId}`;
   const running = loginsInFlight.get(key);
   if (running) return running;
-  const p = login(ctx).finally(() => loginsInFlight.delete(key));
+  const p = login(ctx, deadlineAt).finally(() => loginsInFlight.delete(key));
   loginsInFlight.set(key, p);
   return p;
 }
@@ -334,8 +343,9 @@ function sharedLogin(ctx: ProviderContext): Promise<LoginResult> {
  * Saldo del agente reusando la sesión guardada. Si la sesión venció, UN re-login y
  * un reintento. Respeta la pausa tras credenciales malas.
  */
-export async function readPanelBalance(ctx: ProviderContext): Promise<PanelBalanceResult> {
+export async function readPanelBalance(ctx: ProviderContext, opts: { budgetMs?: number } = {}): Promise<PanelBalanceResult> {
   const t0 = Date.now();
+  const deadlineAt = t0 + (opts.budgetMs ?? READ_BUDGET_MS);
   const fail = (reason: ProviderFailReason, error: string): PanelBalanceResult => {
     console.warn(`[agentesplus-panel] saldo FALLÓ tenant=${ctx.tenantId} motivo=${reason} ms=${Date.now() - t0}`);
     return { ok: false, reason, error, ms: Date.now() - t0 };
@@ -344,7 +354,7 @@ export async function readPanelBalance(ctx: ProviderContext): Promise<PanelBalan
 
   const stored = await readStored(ctx);
   if (stored?.jar) {
-    const d = await readDashboard(ctx, stored.jar);
+    const d = await readDashboard(ctx, stored.jar, deadlineAt);
     if (d.kind === 'ok') {
       if (stored.expiresAt - Date.now() < SESSION_REFRESH_BELOW_MS) await writeStored(ctx, stored.jar);
       console.log(`[agentesplus-panel] saldo OK tenant=${ctx.tenantId} sesión=reusada ms=${Date.now() - t0}`);
@@ -359,13 +369,13 @@ export async function readPanelBalance(ctx: ProviderContext): Promise<PanelBalan
     return fail('bad_credentials', `El panel rechazó la contraseña hace poco; IRIS no reintenta por ${min} min para no bloquear la cuenta.`);
   }
 
-  const lg = await sharedLogin(ctx);
+  const lg = await sharedLogin(ctx, deadlineAt);
   if (!lg.ok) {
     if (lg.reason === 'bad_credentials') await markBadCredentials(ctx);
     return fail(lg.reason, lg.error);
   }
   await writeStored(ctx, lg.jar);
-  const d = await readDashboard(ctx, lg.jar);
+  const d = await readDashboard(ctx, lg.jar, deadlineAt);
   if (d.kind === 'ok') {
     console.log(`[agentesplus-panel] saldo OK tenant=${ctx.tenantId} sesión=nueva ms=${Date.now() - t0}`);
     return { ok: true, balance: d.balance, raw: d.raw, reusedSession: false, ms: Date.now() - t0 };
@@ -382,9 +392,10 @@ export async function readPanelBalance(ctx: ProviderContext): Promise<PanelBalan
 export async function testPanel(ctx: ProviderContext): Promise<ProviderTestResult & { balance?: number }> {
   if (!ctx.values.panel_user?.trim()) return { ok: false, reason: 'invalid', error: 'Falta el usuario del panel.' };
   if (!ctx.secrets.panel_password) return { ok: false, reason: 'invalid', error: 'Falta la contraseña del panel.' };
-  const lg = await login(ctx);
+  const deadlineAt = Date.now() + TEST_BUDGET_MS;
+  const lg = await login(ctx, deadlineAt);
   if (!lg.ok) return { ok: false, reason: lg.reason, error: lg.error };
-  const d = await readDashboard(ctx, lg.jar);
+  const d = await readDashboard(ctx, lg.jar, deadlineAt);
   if (d.kind === 'ok') {
     return { ok: true, balance: d.balance, message: `Panel de agentes.plus OK: saldo disponible $${d.raw}.` };
   }

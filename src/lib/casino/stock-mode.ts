@@ -3,32 +3,33 @@
 // (verificar comprobantes, saldo del casino, caja del operador y las pantallas):
 //
 //   'manual' → casino desactivado. La caja interna (pozo + billeteras) es la verdad.
-//   'casino' → casino activado y el proveedor da el saldo del AGENTE (17Star): el
-//              stock vive en el casino y el pozo interno queda dormido.
-//   'hybrid' → casino activado y el proveedor NO da el saldo del agente: se acredita
+//   'casino' → casino activado y la cuenta da el saldo del AGENTE (17Star; o una
+//              cuenta de agentes.plus con el saldo del panel activado): el stock vive
+//              en el casino y el pozo interno queda dormido.
+//   'hybrid' → casino activado y la cuenta NO da el saldo del agente: se acredita
 //              en el casino y ADEMÁS la caja funciona exactamente como en manual
 //              (pozo, interruptor, Cargar fichas), porque es el único stock visible.
 //
-// Genérico: sale del flag casino_deposit_enabled y de `hasAgentBalance` del
-// adaptador del proveedor. Cuando un adaptador pase a dar el saldo del agente, sus
-// tenants pasan solos de 'hybrid' a 'casino', sin tocar nada más.
+// Genérico: sale del flag casino_deposit_enabled y de accountHasAgentBalance()
+// (provider.hasAgentBalance, o optionalAgentBalance + la marca que pone el admin al
+// activar el saldo del agente después de probarlo). Una lectura fallida del saldo NO
+// cambia el modo: solo lo cambia el admin.
 //
-// Criterio seguro: 'hybrid' SOLO cuando el proveedor es conocido y dice
-// explícitamente que no tiene saldo del agente. Ante cualquier duda (fila ilegible,
-// proveedor desconocido, sin fila) queda 'casino', que es el comportamiento de
-// siempre con el casino activado.
+// Criterio seguro: 'hybrid' SOLO cuando el proveedor es conocido y la cuenta no da
+// el saldo del agente. Ante cualquier duda (fila ilegible, proveedor desconocido, sin
+// fila) queda 'casino', que es el comportamiento de siempre con el casino activado.
 
 import { supabaseAdmin } from '@/lib/db';
 import { getProvider } from './providers';
-import { getTenantProviderId } from './provider-account';
+import { accountHasAgentBalance, getTenantProviderInfo } from './provider-account';
 
 export type CasinoStockMode = 'manual' | 'casino' | 'hybrid';
 
 /** Decisión pura (sin base), para poder probarla aparte. */
-export function stockModeFrom(casinoFlagOn: boolean, providerId: string | null): CasinoStockMode {
+export function stockModeFrom(casinoFlagOn: boolean, providerId: string | null, config?: unknown): CasinoStockMode {
   if (!casinoFlagOn) return 'manual';
   const provider = providerId ? getProvider(providerId) : null;
-  if (provider && !provider.hasAgentBalance) return 'hybrid';
+  if (provider && !accountHasAgentBalance(provider, config)) return 'hybrid';
   return 'casino';
 }
 
@@ -47,5 +48,6 @@ async function readCasinoFlag(tenantId: string): Promise<boolean> {
 export async function getCasinoStockMode(tenantId: string, casinoFlagOn?: boolean): Promise<CasinoStockMode> {
   const flag = casinoFlagOn ?? await readCasinoFlag(tenantId);
   if (!flag) return 'manual';
-  return stockModeFrom(true, await getTenantProviderId(tenantId));
+  const info = await getTenantProviderInfo(tenantId);
+  return stockModeFrom(true, info.providerId, info.config);
 }

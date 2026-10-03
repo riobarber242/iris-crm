@@ -15,8 +15,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 interface ProviderField {
   key: string; label: string; kind: 'text' | 'url' | 'secret'; required: boolean;
   help: string | null; placeholder: string | null; defaultValue: string | null;
+  scope?: 'connection' | 'agent_balance';
 }
-interface ProviderInfo { id: string; label: string; hasAgentBalance: boolean; testTools: boolean; agentBalanceProbe?: boolean; agentBalanceRead?: boolean; fields: ProviderField[] }
+interface ProviderInfo {
+  id: string; label: string; hasAgentBalance: boolean; optionalAgentBalance?: boolean; testTools: boolean;
+  agentBalanceProbe?: boolean; agentBalanceRead?: boolean; fields: ProviderField[];
+}
+interface AgentBalancePreview { saldo: number; pozo: number | null; diferencia: number | null }
 interface ProbeRow { action: string; httpStatus: number; ms: number; timedOut: boolean; body: string }
 interface CasinoState {
   providers: ProviderInfo[];
@@ -25,6 +30,7 @@ interface CasinoState {
   account: {
     has_row: boolean; provider: string | null; values: Record<string, string>; has_secrets: Record<string, boolean>;
     label: string | null; active: boolean; connection_verified_at: string | null;
+    agent_balance_verified_at?: string | null;
     player_url: string; player_url_2: string; credentials_template: string;
   };
 }
@@ -88,6 +94,41 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
   const [toolMsg, setToolMsg] = useState<Msg>(null);
   const [probeRows, setProbeRows] = useState<ProbeRow[] | null>(null);
 
+  // Secretos opcionales marcados para borrar al guardar.
+  const [clearKeys, setClearKeys] = useState<string[]>([]);
+  // Saldo del agente (proveedores con saldo opcional)
+  const [abPreview, setAbPreview] = useState<AgentBalancePreview | null>(null);
+  const [abMsg, setAbMsg] = useState<Msg>(null);
+  const [abConfirmOff, setAbConfirmOff] = useState(false);
+
+  async function agentBalancePreview() {
+    setBusy('ab_preview'); setAbMsg(null); setAbPreview(null);
+    try {
+      const { j } = await post({ action: 'agent_balance_preview' });
+      if (j.ok) setAbPreview({ saldo: j.saldo, pozo: j.pozo, diferencia: j.diferencia });
+      else setAbMsg({ kind: 'err', text: j.error ?? 'Error' });
+    } catch { setAbMsg({ kind: 'err', text: 'Error de red' }); }
+    finally { setBusy(null); }
+  }
+
+  async function setAgentBalance(on: boolean) {
+    setBusy('ab_set'); setAbMsg(null);
+    try {
+      const { res, j } = await post({ action: 'set_agent_balance', on });
+      if (!res.ok || !j.ok) { setAbMsg({ kind: 'err', text: j.error ?? 'No se pudo cambiar' }); return; }
+      hydrate(j);
+      setAbPreview(null); setAbConfirmOff(false);
+      const fmt = (n: number | null | undefined) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('es-AR'));
+      setAbMsg({
+        kind: 'ok',
+        text: on
+          ? `✅ Modo casino: el chip muestra el saldo real (${fmt(j.saldo)}). El pozo quedó congelado en ${fmt(j.pozo)} (diferencia ${fmt(j.diferencia)}). Quedó registrado en la actividad.`
+          : `Volvió al pozo manual (modo híbrido). El pozo retoma desde ${fmt(j.pozo)}: ajustalo en Fichas antes de operar.`,
+      });
+    } catch { setAbMsg({ kind: 'err', text: 'Error de red' }); }
+    finally { setBusy(null); }
+  }
+
   async function probeAgentBalance() {
     setBusy('probe_agent_balance'); setToolMsg(null); setProbeRows(null);
     try {
@@ -129,6 +170,7 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
     setPlayerUrl2(s.account.player_url_2 ?? '');
     setTemplate(s.account.credentials_template ?? '');
     setNeedsConfirm(null);
+    setClearKeys([]);
   }
 
   async function load() {
@@ -149,6 +191,7 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
     setProviderId(id);
     setMsg(null);
     setNeedsConfirm(null);
+    setClearKeys([]);
     // Al volver al proveedor guardado se recuperan sus valores; si no, formulario limpio.
     setValues(st && st.account.provider === id ? { ...st.account.values } : {});
   }
@@ -167,11 +210,19 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
         action: 'save', provider: provider.id, values,
         player_url: playerUrl, player_url_2: playerUrl2, credentials_template: template,
         confirm_provider_change: confirmProviderChange,
+        clear: clearKeys,
       });
       if (res.status === 409 && j.needs_confirmation) { setNeedsConfirm(j.error); return; }
       if (!res.ok) { setMsg({ kind: 'err', text: j.error ?? 'No se pudo guardar' }); return; }
       hydrate(j);
-      setMsg({ kind: 'ok', text: j.tested ? '✅ Conexión probada y guardada. El casino quedó desactivado: activalo cuando quieras.' : '✅ Guardado.' });
+      // El aviso de "casino desactivado" solo cuando cambió la conexión (el backend
+      // apaga el flag únicamente en ese caso). Los datos del saldo no lo tocan.
+      const parts: string[] = [];
+      if (j.conn_changed) parts.push('Conexión probada y guardada. El casino quedó desactivado: activalo cuando quieras.');
+      else if (j.balance_tested) parts.push('Datos del panel probados y guardados. El casino sigue como estaba.');
+      else parts.push('Guardado.');
+      if (j.agent_balance_off) parts.push('Se borraron los datos del panel: volvió al pozo manual (modo híbrido). Ajustá el pozo en Fichas antes de operar.');
+      setMsg({ kind: 'ok', text: `✅ ${parts.join(' ')}` });
     } catch { setMsg({ kind: 'err', text: 'Error de red' }); }
     finally { setBusy(null); }
   }
@@ -276,19 +327,39 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
                 <div style={sectionTitle}>Conexión</div>
                 {provider.fields.map((f) => {
                   const loaded = sameAsSaved && !!st.account.has_secrets[f.key];
+                  const canClear = f.kind === 'secret' && !f.required && loaded;
+                  const clearing = clearKeys.includes(f.key);
                   return (
                     <div key={f.key}>
                       <label style={labelStyle}>{f.label}{f.required ? '' : ' (opcional)'}</label>
-                      <input
-                        type={f.kind === 'secret' ? 'password' : 'text'}
-                        value={values[f.key] ?? ''}
-                        onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-                        placeholder={f.kind === 'secret'
-                          ? (loaded ? '•••••••• cargada ✓ — vacío = no se cambia' : 'Pegala acá')
-                          : (f.placeholder ?? '')}
-                        autoComplete={f.kind === 'secret' ? 'new-password' : 'off'}
-                        style={inputStyle}
-                      />
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <input
+                          type={f.kind === 'secret' ? 'password' : 'text'}
+                          value={clearing ? '' : (values[f.key] ?? '')}
+                          disabled={clearing}
+                          onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                          placeholder={f.kind === 'secret'
+                            ? (clearing ? 'Se va a BORRAR al guardar' : loaded ? '•••••••• cargada ✓ — vacío = no se cambia' : 'Pegala acá')
+                            : (f.placeholder ?? '')}
+                          autoComplete={f.kind === 'secret' ? 'new-password' : 'off'}
+                          style={{ ...inputStyle, ...(clearing ? { background: '#FFF0F0' } : {}) }}
+                        />
+                        {canClear && (
+                          <button type="button" disabled={!!busy}
+                            onClick={() => {
+                              setClearKeys((k) => clearing ? k.filter((x) => x !== f.key) : [...k, f.key]);
+                              setValues((v) => ({ ...v, [f.key]: '' }));
+                            }}
+                            style={{ ...btn(clearing ? '#C0392B' : '#F0F0F0', clearing ? '#fff' : '#555'), flexShrink: 0 }}>
+                            {clearing ? 'No borrar' : 'Borrar'}
+                          </button>
+                        )}
+                      </div>
+                      {clearing && f.scope === 'agent_balance' && st.account.agent_balance_verified_at && (
+                        <p style={{ ...hint, color: '#C0392B', fontWeight: 700 }}>
+                          Sin estos datos el saldo real se apaga y el tenant vuelve al pozo manual (híbrido).
+                        </p>
+                      )}
                       {f.help && <p style={hint}>{f.help}</p>}
                     </div>
                   );
@@ -357,6 +428,78 @@ export default function AdminTenantCasinoModal({ tenant, onClose }: {
                 </button>
               </div>
             )}
+
+            {/* Saldo del agente (proveedores con saldo opcional): decide modo casino vs híbrido */}
+            {savedProvider?.optionalAgentBalance && st.account.has_row && (() => {
+              const abOn = !!st.account.agent_balance_verified_at;
+              const abData = savedProvider.fields
+                .filter((f) => f.scope === 'agent_balance' && !f.defaultValue)
+                .every((f) => f.kind === 'secret' ? !!st.account.has_secrets[f.key] : !!st.account.values[f.key]);
+              const fmt = (n: number | null) => (n === null ? '—' : n.toLocaleString('es-AR'));
+              return (
+                <div style={{ borderTop: '1px solid #eee', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={sectionTitle}>Saldo del agente</div>
+                  <div style={{
+                    fontSize: '12.5px', fontWeight: 800, borderRadius: '10px', padding: '9px 12px',
+                    background: abOn ? '#e8fff0' : '#F5F5F5', color: abOn ? '#1a7a3a' : '#555',
+                  }}>
+                    {abOn
+                      ? `Modo casino desde ${new Date(st.account.agent_balance_verified_at!).toLocaleString('es-AR')}: el chip muestra el saldo real del panel y el pozo de IRIS está congelado.`
+                      : 'Modo híbrido: el stock lo lleva el pozo de IRIS (Fichas). El chip no muestra el saldo real.'}
+                  </div>
+
+                  {!abOn && !abData && (
+                    <p style={{ ...hint, margin: 0 }}>Para usar el saldo real, cargá y guardá arriba el usuario y la contraseña del panel.</p>
+                  )}
+
+                  {!abOn && abData && !abPreview && (
+                    <div>
+                      <button disabled={!!busy} onClick={agentBalancePreview} style={btn('#111', '#fff')}>
+                        {busy === 'ab_preview' ? 'Leyendo el panel…' : 'Pasar a saldo real (ver pozo vs. saldo)'}
+                      </button>
+                      <p style={hint}>Primero muestra el saldo real y el pozo. Nada cambia hasta que confirmes.</p>
+                    </div>
+                  )}
+
+                  {!abOn && abPreview && (
+                    <div style={{ background: '#FFF7E0', borderRadius: '10px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#6b4a00' }}>
+                        Saldo real del panel: <b>{fmt(abPreview.saldo)}</b> · Pozo de IRIS: <b>{fmt(abPreview.pozo)}</b> · Diferencia: <b>{fmt(abPreview.diferencia)}</b>.
+                        {' '}Al confirmar, las cargas dejan de descontar del pozo (queda congelado en ese valor) y el chip pasa a mostrar el saldo real.
+                        Las billeteras de los operadores siguen igual. Conviene hacerlo entre turnos.
+                      </span>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button disabled={!!busy} onClick={() => setAgentBalance(true)} style={btn('#1a7a3a', '#fff')}>
+                          {busy === 'ab_set' ? 'Probando y activando…' : 'Confirmar: pasar a saldo real'}
+                        </button>
+                        <button disabled={!!busy} onClick={() => setAbPreview(null)} style={btn('#F0F0F0', '#333')}>Cancelar</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {abOn && (abConfirmOff ? (
+                    <div style={{ background: '#FFF0F0', borderRadius: '10px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#C0392B' }}>
+                        Vuelve al pozo manual (híbrido): las cargas vuelven a descontar del pozo, que retoma desde el valor que quedó congelado.
+                        Ajustalo en Fichas antes de operar. Los datos del panel quedan guardados.
+                      </span>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button disabled={!!busy} onClick={() => setAgentBalance(false)} style={btn('#C0392B', '#fff')}>
+                          {busy === 'ab_set' ? '…' : 'Sí, volver al pozo manual'}
+                        </button>
+                        <button disabled={!!busy} onClick={() => setAbConfirmOff(false)} style={btn('#F0F0F0', '#333')}>Cancelar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <button disabled={!!busy} onClick={() => setAbConfirmOff(true)} style={btn('#F0F0F0', '#555')}>Volver al pozo manual</button>
+                    </div>
+                  ))}
+
+                  <Box msg={abMsg} />
+                </div>
+              );
+            })()}
 
             {/* Herramientas de prueba (proveedores del modelo nuevo, con conexión guardada) */}
             {savedProvider?.testTools && verified && (

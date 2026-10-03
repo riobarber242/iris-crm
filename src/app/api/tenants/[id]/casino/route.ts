@@ -6,7 +6,7 @@ import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import { DEFAULT_CASINO_CREDENTIALS_TEMPLATE } from '@/lib/casino/credentials';
 import { getProvider, providerCatalog } from '@/lib/casino/providers';
 import {
-  buildProviderPatch, contextFromRow, loadProviderAccount, providerIdOf, publicProviderState,
+  AGENT_BALANCE_VERIFIED_KEY, buildProviderPatch, contextFromRow, loadProviderAccount, providerIdOf, publicProviderState,
 } from '@/lib/casino/provider-account';
 
 // /api/tenants/[id]/casino — configuración de casino de CUALQUIER tenant, desde la
@@ -31,6 +31,12 @@ import {
 //   Campos scope 'agent_balance' (saldo del agente, opcionales): cambiarlos corre
 //   provider.testAgentBalance con lo tipeado; si falla no se guarda. NO apagan el
 //   casino (no tocan depósitos ni altas) y borran la sesión cacheada de la cuenta.
+//   save acepta `clear: [keys]` para borrar secretos opcionales; si faltan los datos
+//   del saldo, se saca la marca y el tenant vuelve a 'hybrid'.
+//   agent_balance_preview  saldo real + pozo (solo lectura).
+//   set_agent_balance { on } activa/desactiva el saldo del agente (modo casino/hybrid);
+//                       activar exige una prueba con login nuevo. Queda en el log el
+//                       pozo y el saldo real del momento.
 
 // La prueba previa puede encadenar la API y el login al panel del proveedor.
 export const maxDuration = 60;
@@ -57,6 +63,14 @@ function setFlag(tenantId: string, on: boolean) {
     .upsert({ key: FLAG_KEY, value: on ? 'true' : 'false', tenant_id: tenantId }, { onConflict: 'key,tenant_id' });
 }
 
+/** Pozo de fichas del tenant (fichas_stock), para el registro del cambio de modo. */
+async function readPozo(tenantId: string): Promise<number | null> {
+  const { data, error } = await supabaseAdmin.from('fichas_stock').select('stock_actual').eq('tenant_id', tenantId).maybeSingle();
+  if (error || !data) return null;
+  const n = Number(data.stock_actual);
+  return Number.isFinite(n) ? n : null;
+}
+
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
@@ -72,6 +86,8 @@ async function state(tenantId: string) {
       label: row?.label ?? null,
       active: row?.active ?? false,
       connection_verified_at: row?.connection_verified_at ?? null,
+      agent_balance_verified_at: (row?.config && typeof row.config === 'object' && typeof row.config[AGENT_BALANCE_VERIFIED_KEY] === 'string')
+        ? row.config[AGENT_BALANCE_VERIFIED_KEY] : null,
       player_url: row?.player_url ?? '',
       player_url_2: row?.player_url_2 ?? '',
       credentials_template: row?.credentials_template ?? '',
@@ -125,7 +141,8 @@ export async function POST(request: Request, { params }: Params) {
     }
 
     const values = (body.values && typeof body.values === 'object') ? body.values : {};
-    const { patch, connChanged, balanceChanged, missing } = buildProviderPatch(provider, existing, { values });
+    const clear = Array.isArray(body.clear) ? body.clear : [];
+    const { patch, connChanged, balanceChanged, agentBalanceTurnedOff, missing } = buildProviderPatch(provider, existing, { values, clear });
     if (missing.length) return NextResponse.json({ error: `Faltan datos: ${missing.join(', ')}` }, { status: 400 });
 
     for (const k of ['player_url', 'player_url_2', 'credentials_template'] as const) {
@@ -194,7 +211,70 @@ export async function POST(request: Request, { params }: Params) {
       if (delErr) console.warn(`[admin/casino] no se pudo borrar la sesión vieja tenant=${tenantId}:`, delErr.message);
     }
     await log({ action: 'save', provider: provider.id, conn_changed: connChanged, balance_changed: balanceChanged, provider_changed: providerChange });
-    return NextResponse.json({ ok: true, tested: connChanged || balanceTested, ...(await state(tenantId)) });
+    // Se borraron datos del saldo que estaba activado: el tenant volvió a 'hybrid' y el
+    // pozo vuelve a usarse con el valor que tenía congelado.
+    if (agentBalanceTurnedOff) {
+      await log({ action: 'agent_balance_off', provider: provider.id, motivo: 'datos del panel borrados', pozo_actual: await readPozo(tenantId) });
+    }
+    return NextResponse.json({
+      ok: true,
+      conn_changed: connChanged,
+      balance_tested: balanceTested,
+      agent_balance_off: agentBalanceTurnedOff,
+      ...(await state(tenantId)),
+    });
+  }
+
+  // ── Saldo del agente (proveedores con saldo opcional, p. ej. agentes.plus) ────
+  // preview: saldo real + pozo, para mostrar antes de cambiar. set_agent_balance:
+  // { on } activa (prueba con login nuevo y pone la marca → 'casino') o desactiva
+  // (saca la marca → 'hybrid'). Las dos dejan en el log el pozo y el saldo real.
+  if (action === 'agent_balance_preview' || action === 'set_agent_balance') {
+    const load = await loadProviderAccount(tenantId);
+    if (load.kind === 'none') return NextResponse.json({ ok: false, error: 'El tenant no tiene casino configurado' }, { status: 404 });
+    if (load.kind === 'broken') return NextResponse.json({ ok: false, error: load.error }, { status: 400 });
+    const { provider, ctx, row } = load;
+    if (!provider.optionalAgentBalance || !provider.testAgentBalance) {
+      return NextResponse.json({ ok: false, error: `${provider.label} no tiene saldo del agente opcional.` }, { status: 400 });
+    }
+    const config: Record<string, unknown> = (row.config && typeof row.config === 'object') ? { ...row.config } : {};
+    const isOn = !!config[AGENT_BALANCE_VERIFIED_KEY];
+    const pozo = await readPozo(tenantId);
+
+    if (action === 'agent_balance_preview') {
+      if (!provider.readAgentBalanceDetail) return NextResponse.json({ ok: false, error: 'El proveedor no lee el saldo del agente' }, { status: 400 });
+      const r = await provider.readAgentBalanceDetail(ctx);
+      if (!r.ok) return NextResponse.json({ ok: false, error: r.error });
+      return NextResponse.json({ ok: true, on: isOn, saldo: r.balance, pozo, diferencia: pozo === null ? null : r.balance - pozo });
+    }
+
+    const on = body.on === true;
+    if (on === isOn) return NextResponse.json({ ok: true, unchanged: true, ...(await state(tenantId)) });
+
+    let saldo: number | null = null;
+    if (on) {
+      // Prueba con login NUEVO, igual que al guardar: solo se activa si anda hoy.
+      const t = await provider.testAgentBalance(ctx);
+      if (!t.ok) return NextResponse.json({ ok: false, error: `No se activó: ${t.error}` }, { status: 400 });
+      saldo = typeof t.balance === 'number' ? t.balance : null;
+      config[AGENT_BALANCE_VERIFIED_KEY] = new Date().toISOString();
+    } else {
+      delete config[AGENT_BALANCE_VERIFIED_KEY];
+    }
+    const { error: upErr } = await supabaseAdmin.from('casino_accounts')
+      .update({ config }).eq('id', row.id).eq('tenant_id', tenantId);
+    if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+
+    await log(on
+      ? {
+          action: 'agent_balance_on', provider: provider.id,
+          pozo_congelado: pozo, saldo_real: saldo, diferencia: saldo !== null && pozo !== null ? saldo - pozo : null,
+        }
+      : { action: 'agent_balance_off', provider: provider.id, motivo: 'desactivado por el admin', pozo_actual: pozo });
+    return NextResponse.json({
+      ok: true, on, pozo, saldo, diferencia: saldo !== null && pozo !== null ? saldo - pozo : null,
+      ...(await state(tenantId)),
+    });
   }
 
   // ── Activar / desactivar ────────────────────────────────────────────────────

@@ -13,6 +13,10 @@ import { stockModeFrom } from '@/lib/casino/stock-mode';
 // corto (10s).
 const CACHE_TTL_MS = 10_000;
 const balanceCache = new Map<string, { balance: number; expiresAt: number }>();
+// Proveedores del modelo nuevo: tras una lectura fallida, 30 s sin volver a intentar
+// (por instancia). El TTL del saldo bueno lo fija cada adaptador (agentBalanceCacheMs).
+const FAIL_TTL_MS = 30_000;
+const balanceFailUntil = new Map<string, number>();
 
 // GET /api/casino/balance — saldo de fichas del agente en el casino.
 //   { enabled: false }                      si el tenant no tiene casino activado
@@ -45,22 +49,37 @@ export async function GET() {
   // `casino_on` y `stock_mode` dicen que el casino igual está activado.
   const alt = await loadNonLegacyAccount(session.tenant_id);
   if (alt) {
-    const mode = stockModeFrom(true, alt.kind === 'ok' ? alt.provider.id : alt.providerId);
+    const mode = stockModeFrom(
+      true,
+      alt.kind === 'ok' ? alt.provider.id : alt.providerId,
+      alt.kind === 'ok' ? alt.row?.config : null,
+    );
     if (mode === 'hybrid') {
       return NextResponse.json({ enabled: false, casino_on: true, stock_mode: 'hybrid' });
     }
     if (alt.kind !== 'ok' || !alt.provider.agentBalance) {
       return NextResponse.json({ enabled: true, balance: null, error: 'No se pudo obtener el saldo del casino' });
     }
+    const now = Date.now();
     const hit = balanceCache.get(session.tenant_id);
-    if (hit && Date.now() < hit.expiresAt) {
+    if (hit && now < hit.expiresAt) {
       return NextResponse.json({ enabled: true, balance: hit.balance, cached: true });
     }
+    // Falla reciente: no se reintenta en cada poll (una lectura caída puede tardar
+    // ~10 s). Se sirve lo último que haya, marcado viejo, o "no disponible".
+    const failedUntil = balanceFailUntil.get(session.tenant_id) ?? 0;
+    const unavailable = () => NextResponse.json({
+      enabled: true, balance: hit?.balance ?? null, cached: !!hit, stale: !!hit,
+      error: hit ? undefined : 'Saldo no disponible',
+    });
+    if (now < failedUntil) return unavailable();
     const b = await alt.provider.agentBalance(alt.ctx);
     if (b === null) {
-      return NextResponse.json({ enabled: true, balance: hit?.balance ?? null, cached: !!hit, stale: !!hit, error: hit ? undefined : 'No se pudo obtener el saldo del casino' });
+      balanceFailUntil.set(session.tenant_id, Date.now() + FAIL_TTL_MS);
+      return unavailable();
     }
-    balanceCache.set(session.tenant_id, { balance: b, expiresAt: Date.now() + CACHE_TTL_MS });
+    balanceFailUntil.delete(session.tenant_id);
+    balanceCache.set(session.tenant_id, { balance: b, expiresAt: Date.now() + (alt.provider.agentBalanceCacheMs ?? CACHE_TTL_MS) });
     return NextResponse.json({ enabled: true, balance: b, cached: false });
   }
 

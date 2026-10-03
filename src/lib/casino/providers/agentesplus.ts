@@ -386,7 +386,11 @@ export const agentesplusProvider: CasinoProvider = {
       help: '"vps" (recomendado): sale por el proxy argentino de IRIS, porque agentes.plus bloquea el panel desde Vercel. "directo": sin proxy. Solo afecta la lectura del saldo; la API va siempre directo.',
     },
   ],
+  // La API no da el saldo del agente; el panel sí, si la cuenta tiene sus datos y el
+  // admin lo activó (ver stock-mode). Cache de 60 s: cada lectura es un GET al panel.
   hasAgentBalance: false,
+  optionalAgentBalance: true,
+  agentBalanceCacheMs: 60_000,
   password: {
     rule: PASSWORD_RE,
     ruleText: 'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula y un número.',
@@ -397,6 +401,10 @@ export const agentesplusProvider: CasinoProvider = {
   deposit,
   playerBalance,
   probeAgentBalance: probeAgentBalanceActions,
+  agentBalance: async (ctx) => {
+    const r = await readPanelBalance(ctx);
+    return r.ok ? r.balance : null;
+  },
   testAgentBalance: testPanel,
   readAgentBalanceDetail: readPanelBalance,
 };

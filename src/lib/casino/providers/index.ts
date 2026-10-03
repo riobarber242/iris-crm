@@ -30,14 +30,17 @@ export function providerCatalog() {
     id: p.id,
     label: p.label,
     hasAgentBalance: p.hasAgentBalance,
+    /** El saldo del agente se activa por cuenta (datos del panel + activación del admin). */
+    optionalAgentBalance: !!p.optionalAgentBalance,
     /** Herramientas de prueba del admin (saldo / alta / depósito): solo modelo nuevo. */
     testTools: !p.legacyOperations,
     /** Tiene la búsqueda de solo lectura del saldo del agente (diagnóstico). */
     agentBalanceProbe: !!p.probeAgentBalance,
     /** Lee el saldo del agente por un camino propio (p. ej. el panel web). */
     agentBalanceRead: !!p.readAgentBalanceDetail,
-    fields: p.fields.map(({ key, label, kind, required, help, placeholder, defaultValue }) => ({
+    fields: p.fields.map(({ key, label, kind, required, help, placeholder, defaultValue, scope }) => ({
       key, label, kind, required, help: help ?? null, placeholder: placeholder ?? null, defaultValue: defaultValue ?? null,
+      scope: scope ?? 'connection',
     })),
   }));
 }

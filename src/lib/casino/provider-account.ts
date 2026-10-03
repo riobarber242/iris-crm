@@ -140,6 +140,39 @@ export async function getTenantProviderId(tenantId: string): Promise<string | nu
   return providerIdOf(data);
 }
 
+/**
+ * Marca en casino_accounts.config: el admin activó el saldo del agente de una cuenta
+ * con saldo OPCIONAL (provider.optionalAgentBalance) después de probarlo. Es lo que
+ * decide 'casino' vs 'hybrid' (lib/casino/stock-mode). No es un campo del formulario:
+ * buildProviderPatch la conserva y la borra sola si faltan los datos del saldo.
+ */
+export const AGENT_BALANCE_VERIFIED_KEY = 'agent_balance_verified_at';
+
+/** ¿La cuenta da el saldo del agente? Sin base: sale del proveedor y del config. */
+export function accountHasAgentBalance(provider: CasinoProvider, config: unknown): boolean {
+  if (provider.hasAgentBalance) return true;
+  if (!provider.optionalAgentBalance) return false;
+  const c = (config && typeof config === 'object') ? config as Record<string, unknown> : {};
+  return typeof c[AGENT_BALANCE_VERIFIED_KEY] === 'string' && !!c[AGENT_BALANCE_VERIFIED_KEY];
+}
+
+/**
+ * Proveedor + config de la fila default del tenant, para el modo de stock. Mismas
+ * reglas que getTenantProviderId (error → UNREADABLE_PROVIDER, sin fila → null).
+ */
+export async function getTenantProviderInfo(tenantId: string): Promise<{ providerId: string | null; config: Record<string, unknown> | null }> {
+  const { data, error } = await supabaseAdmin
+    .from('casino_accounts').select('*')
+    .eq('tenant_id', tenantId).eq('is_default', true)
+    .maybeSingle();
+  if (error) {
+    console.error(`[casino] getTenantProviderInfo error tenant=${tenantId}:`, error.message);
+    return { providerId: UNREADABLE_PROVIDER, config: null };
+  }
+  if (!data) return { providerId: null, config: null };
+  return { providerId: providerIdOf(data), config: (data.config && typeof data.config === 'object') ? data.config : null };
+}
+
 /** true si el proveedor corre por el código propio de los routes (celuapuestas). */
 export function isLegacyProviderId(id: string | null): boolean {
   if (!id) return true;
@@ -173,6 +206,11 @@ export function publicProviderState(row: any | null) {
 export interface ProviderSaveInput {
   /** Valores tipeados. Un secreto vacío o ausente = no se cambia el guardado. */
   values: Record<string, unknown>;
+  /**
+   * Secretos OPCIONALES a borrar (keys de campos kind 'secret', required false y sin
+   * columna propia). Es la única forma de vaciar un secreto: vacío = no se cambia.
+   */
+  clear?: string[];
 }
 
 /**
@@ -181,19 +219,22 @@ export interface ProviderSaveInput {
  * anterior (no quedan credenciales de otro casino mezcladas en la fila).
  * Devuelve connChanged = cambió algo que obliga a volver a probar la conexión, y
  * balanceChanged = cambió algún campo scope 'agent_balance' (solo el saldo del
- * agente: se prueba aparte y no apaga el casino).
+ * agente: se prueba aparte y no apaga el casino). agentBalanceTurnedOff = la cuenta
+ * tenía el saldo del agente activado y con este guardado le faltan los datos: la
+ * marca se borra y el tenant vuelve a 'hybrid'.
  */
 export function buildProviderPatch(
   provider: CasinoProvider,
   existing: any | null,
   input: ProviderSaveInput,
-): { patch: Record<string, any>; connChanged: boolean; balanceChanged: boolean; missing: string[] } {
+): { patch: Record<string, any>; connChanged: boolean; balanceChanged: boolean; agentBalanceTurnedOff: boolean; missing: string[] } {
   const providerChanged = !existing || providerIdOf(existing) !== provider.id;
   const oldConfig = (!providerChanged && existing?.config && typeof existing.config === 'object') ? existing.config : {};
   let oldBlob: Record<string, string> = {};
   if (!providerChanged) {
     try { oldBlob = decryptSecretsBlob(existing); } catch { oldBlob = {}; }
   }
+  const clear = new Set(Array.isArray(input.clear) ? input.clear.filter((k) => typeof k === 'string') : []);
 
   const patch: Record<string, any> = { provider: provider.id };
   // Cambio de proveedor sobre una fila existente: se vacían las columnas propias que
@@ -207,6 +248,8 @@ export function buildProviderPatch(
   let connChanged = providerChanged;
   let balanceChanged = false;
   let blobChanged = providerChanged;
+  // ¿Quedan cargados todos los datos propios del saldo (sin valor por defecto)?
+  let balanceDataComplete = true;
   const missing: string[] = [];
   const flat: Record<string, string> = {};
 
@@ -220,12 +263,20 @@ export function buildProviderPatch(
       try {
         current = f.column ? (existing?.[f.column] && !providerChanged ? decryptSecret(existing[f.column]) : '') : (oldBlob[f.key] ?? '');
       } catch { current = ''; }
+      let final = current;
       if (typed && typed !== current) {
         markChanged();
         if (f.column) patch[f.column] = encryptSecret(typed);
         else { blob[f.key] = typed; blobChanged = true; }
+        final = typed;
+      } else if (!typed && clear.has(f.key) && !f.required && !f.column && current) {
+        markChanged();
+        delete blob[f.key];
+        blobChanged = true;
+        final = '';
       }
-      if (f.required && !typed && !current) missing.push(f.label);
+      if (f.required && !final) missing.push(f.label);
+      if (f.scope === 'agent_balance' && !f.defaultValue && !final) balanceDataComplete = false;
       continue;
     }
 
@@ -237,10 +288,17 @@ export function buildProviderPatch(
     else if (next) config[f.key] = next;
     else delete config[f.key];
     if (f.required && !next) missing.push(f.label);
+    if (f.scope === 'agent_balance' && !f.defaultValue && !next) balanceDataComplete = false;
   }
+
+  // Sin los datos del saldo, la marca de "saldo activado" no puede quedar: el tenant
+  // vuelve a 'hybrid' (el caller lo registra con el valor del pozo).
+  const hadAgentBalance = !!oldConfig[AGENT_BALANCE_VERIFIED_KEY];
+  const agentBalanceTurnedOff = hadAgentBalance && !balanceDataComplete;
+  if (!balanceDataComplete) delete config[AGENT_BALANCE_VERIFIED_KEY];
 
   if (provider.deriveColumns) Object.assign(patch, provider.deriveColumns(flat));
   patch.config = config;
   if (blobChanged) patch.secrets_enc = Object.keys(blob).length ? encryptSecret(JSON.stringify(blob)) : null;
-  return { patch, connChanged, balanceChanged, missing };
+  return { patch, connChanged, balanceChanged, agentBalanceTurnedOff, missing };
 }

@@ -128,6 +128,15 @@ export interface CasinoProvider {
 
   /** El proveedor expone el saldo del AGENTE. Si no, el chip de saldo se oculta. */
   hasAgentBalance: boolean;
+  /**
+   * El saldo del agente es OPCIONAL por cuenta: existe solo si la cuenta tiene los
+   * campos scope 'agent_balance' cargados y el admin lo activó tras probarlos
+   * (config.agent_balance_verified_at). Es lo que pasa a una cuenta de 'hybrid' a
+   * 'casino' (lib/casino/stock-mode). Una lectura fallida NO cambia el modo.
+   */
+  optionalAgentBalance?: boolean;
+  /** TTL del cache del saldo del agente en /api/casino/balance (default 10 s). */
+  agentBalanceCacheMs?: number;
 
   /** Reglas de contraseña del jugador que exige el proveedor. */
   password: { rule: RegExp; ruleText: string; generate(): string };
@@ -150,7 +159,7 @@ export interface CasinoProvider {
    * Prueba de los campos scope 'agent_balance' (al guardarlos). Sin esos datos
    * cargados no se llama. Login nuevo, sin cache.
    */
-  testAgentBalance?(ctx: ProviderContext): Promise<ProviderTestResult>;
+  testAgentBalance?(ctx: ProviderContext): Promise<ProviderTestResult & { balance?: number }>;
   /**
    * Lectura del saldo del agente con detalle (herramienta de prueba del admin):
    * dice si reusó la sesión guardada o tuvo que volver a loguearse.
