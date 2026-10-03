@@ -13,7 +13,8 @@ import { insertMessage } from '@/lib/messages';
 import { broadcastComprobanteChange, broadcastMovimientoChange } from '@/lib/realtime-broadcast';
 import type { SessionPayload } from '@/lib/session';
 import { featureBlocked } from '@/lib/plan-guard';
-import { loadNonLegacyAccount } from '@/lib/casino/provider-account';
+import { loadNonLegacyAccount, loadProviderAccount } from '@/lib/casino/provider-account';
+import { isDepositGuardEnabled, legacyDepositBlock } from '@/lib/casino/deposit-guard';
 import { verifyCargaWithProvider } from '@/lib/casino/verify-carga';
 import { getCasinoStockMode } from '@/lib/casino/stock-mode';
 
@@ -394,15 +395,30 @@ export async function PATCH(request: Request) {
     // la caja (lib/casino/verify-carga). Con null (celuapuestas, casino apagado o
     // pagos) sigue el camino de siempre de acá abajo, sin cambios.
     const altCarga = !esPago && casinoDepositEnabled ? await loadNonLegacyAccount(session.tenant_id) : null;
-    if (altCarga) {
+    // celuapuestas (17Star) con el interruptor por tenant casino_deposit_guard: la
+    // carga pasa por el MISMO flujo protegido (reserva atómica, depósito clasificado,
+    // reconciliación y caja recién con el depósito confirmado). Apagado (default) →
+    // null y sigue el camino de siempre de abajo.
+    const guardLoad = !altCarga && !esPago && casinoDepositEnabled && await isDepositGuardEnabled(session.tenant_id)
+      ? await loadProviderAccount(session.tenant_id)
+      : null;
+    const cargaProtegida = altCarga ?? (guardLoad && guardLoad.kind !== 'none' ? guardLoad : null);
+    if (cargaProtegida) {
       const vc = await verifyCargaWithProvider({
         session, comprobante, comprobanteId,
         monto: Number(efectiveMonto ?? 0), bono: efectiveBono,
-        stockMode, account: altCarga,
+        stockMode, account: cargaProtegida,
       });
       if (!vc.ok) return new NextResponse(vc.message, { status: vc.status });
       if (vc.depositedAt) updatePayload.casino_deposited_at = vc.depositedAt;
     } else {
+
+    // Protección del camino de siempre (corre con el interruptor prendido o apagado):
+    // si la carga quedó reservada o a revisar por el flujo protegido, NO se deposita
+    // por acá. Sin esto, apagar casino_deposit_guard con un caso pendiente volvería
+    // a acreditarlo. Hoy ninguna carga de celuapuestas tiene estado: no cambia nada.
+    const bloqueo = !esPago && casinoDepositEnabled ? legacyDepositBlock(comprobante) : null;
+    if (bloqueo) return new NextResponse(bloqueo, { status: 409 });
 
     // Movimiento de caja interno. Con el pozo en el casino NO se toca el pozo
     // (fichas_delta=0): la carga acredita la billetera del operador (+monto) y el

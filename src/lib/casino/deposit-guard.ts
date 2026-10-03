@@ -230,6 +230,49 @@ export async function guardedDeposit(p: GuardParams, db: Db = supabaseAdmin): Pr
   };
 }
 
+/**
+ * Interruptor por tenant `casino_deposit_guard` (tabla settings, value 'true').
+ * Lleva a esta protección a los proveedores que operan por su código propio
+ * (celuapuestas / 17Star). Apagado por defecto: sin fila, con otro valor o si la
+ * lectura falla, sigue el camino de siempre. Se prende/apaga sin redeploy.
+ */
+export const DEPOSIT_GUARD_KEY = 'casino_deposit_guard';
+
+export async function isDepositGuardEnabled(tenantId: string, db: Db = supabaseAdmin): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('settings').select('value')
+      .eq('key', DEPOSIT_GUARD_KEY).eq('tenant_id', tenantId).maybeSingle();
+    if (error) {
+      console.warn(`[casino-guard] no se pudo leer ${DEPOSIT_GUARD_KEY} tenant=${tenantId} (queda apagado):`, error.message);
+      return false;
+    }
+    return data?.value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Camino de siempre (celuapuestas sin el interruptor): mensaje para NO depositar si
+ * la carga quedó reservada o a revisar por el flujo protegido; null = puede seguir.
+ * Pura, para la prueba offline.
+ */
+export function legacyDepositBlock(row: {
+  casino_deposited_at?: string | null;
+  casino_deposit_state?: string | null;
+  casino_deposit_started_at?: string | null;
+}): string | null {
+  if (row.casino_deposited_at) return null;
+  if (row.casino_deposit_state === 'unknown') return UNKNOWN_DEPOSIT_MSG;
+  if (row.casino_deposit_state === 'in_flight') {
+    return isStaleInFlight(row)
+      ? UNKNOWN_DEPOSIT_MSG
+      : 'Esta carga ya se está acreditando en el casino. Esperá unos segundos y actualizá.';
+  }
+  return null;
+}
+
 /** El 'in_flight' de este comprobante está trabado (la función murió en el medio). */
 export function isStaleInFlight(row: { casino_deposit_state?: string | null; casino_deposit_started_at?: string | null }): boolean {
   if (row.casino_deposit_state !== 'in_flight') return false;

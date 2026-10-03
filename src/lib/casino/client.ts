@@ -846,3 +846,77 @@ export async function testCasinoConnection(creds: CasinoCreds): Promise<CasinoTe
   );
   return { ok: true, agentName: creds.agentUsername, balance, authResultKeys };
 }
+
+// ── Lectura del jugador con saldo (protección de doble depósito) ──────────────
+// AGREGADO para el adaptador de celuapuestas (providers/celuapuestas.ts), que la
+// usa como playerBalance de lib/casino/deposit-guard: el saldo antes del depósito y
+// la reconciliación de un resultado ambiguo. Es el MISMO pedido que
+// getPlayerTargetId (GetAgentWithChildren con searchText), con el mismo token,
+// reintentos y 401, pero devuelve además el `balance` del jugador. Las funciones de
+// arriba no cambian: con casino_deposit_guard apagado esto no se llama nunca.
+// Solo lectura.
+
+export type PlayerInfo =
+  | { ok: true; targetId: string; balance: number }
+  | { ok: false; reason: 'not_found' }
+  | { ok: false; reason: 'casino_unavailable'; detail: string };
+
+export async function getPlayerInfo(
+  creds: CasinoCreds,
+  username: string,
+  opts: { deadlineAt?: number; timeoutMs?: number; retryDelaysMs?: number[] } = {},
+): Promise<PlayerInfo> {
+  const { deadlineAt, timeoutMs, retryDelaysMs } = opts;
+  const teniaTokenCacheado = tokenCache.has(tokenKey(creds));
+  const token = await getCasinoToken(creds, deadlineAt, retryDelaysMs);
+  if (!token) {
+    return { ok: false, reason: 'casino_unavailable', detail: 'no se pudo autenticar contra el casino' };
+  }
+
+  const params = new URLSearchParams({
+    parentId: '-1',
+    username: creds.agentUsername,
+    userId: 'NaN',
+    userType: '2',
+    searchText: username,
+    onlyHidden: 'false',
+    offset: '0',
+    rowQty: '20',
+    searchInAllTree: 'true',
+  });
+  const url = `${PROXY_URL}/api/services/app/Agent/GetAgentWithChildren?${params}`;
+
+  const r = await withFreshTokenOnce(
+    creds,
+    'GetAgentWithChildren(info)',
+    (headers) => casinoFetchJson(url, { method: 'GET', headers }, { label: 'GetAgentWithChildren(info)', deadlineAt, timeoutMs, retryDelaysMs }),
+    { deadlineAt, retryDelaysMs, teniaTokenCacheado },
+  );
+
+  if (r.timedOut) return { ok: false, reason: 'casino_unavailable', detail: 'el casino no respondió a tiempo' };
+  if (r.notJson) {
+    console.error(`[Casino] GetAgentWithChildren(info): body no es JSON tras ${r.attempts} intento(s) — ${proxyDiag(r.res)}`);
+    return { ok: false, reason: 'casino_unavailable', detail: `body no es JSON tras ${r.attempts} intento(s)` };
+  }
+  if (r.status >= 400) return { ok: false, reason: 'casino_unavailable', detail: `HTTP ${r.status}` };
+
+  const data = r.json;
+  let items: any[] = [];
+  if (Array.isArray(data)) items = data;
+  else if (Array.isArray(data?.result)) items = data.result;
+  else if (Array.isArray(data?.result?.items)) items = data.result.items;
+  else if (Array.isArray(data?.items)) items = data.items;
+  else if (Array.isArray(data?.data)) items = data.data;
+
+  const player = items.find((p: any) => (p?.userName ?? p?.username ?? p?.UserName ?? '') === username);
+  if (!player) return { ok: false, reason: 'not_found' };
+
+  const accountId = player?.accountId ?? player?.AccountId ?? null;
+  const balance = Number(player?.balance ?? player?.Balance);
+  if (accountId == null || !Number.isFinite(balance)) {
+    console.error(`[Casino] GetAgentWithChildren(info): jugador "${username}" sin accountId o saldo legible`);
+    return { ok: false, reason: 'casino_unavailable', detail: 'el casino devolvió el jugador sin accountId o sin saldo' };
+  }
+  console.log(`[Casino] GetAgentWithChildren(info) OK jugador=${username} intentos=${r.attempts}`);
+  return { ok: true, targetId: String(accountId), balance };
+}
