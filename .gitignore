@@ -13,3 +13,6 @@ yarn-error.log*
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Scripts de diagnóstico de una sola vez (no se versionan)
+scripts/_local/
