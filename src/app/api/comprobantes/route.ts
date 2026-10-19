@@ -552,12 +552,8 @@ export async function PATCH(request: Request) {
       if (autoMsg) {
         const montoFmt = Number(efectiveMonto).toLocaleString('es-AR');
         const template = (settingsByKey.get(AUTO_MSG_TEMPLATE_KEY) as string | undefined)?.trim() || AUTO_MSG_DEFAULT_TEMPLATE;
-        let msg = renderAutoMsg(template, montoFmt);
-        // Si hubo bono, se lo sumamos al aviso (sufijo fijo, no editable por ahora).
-        const bonoNotif = Number(efectiveBono) || 0;
-        if (bonoNotif > 0) {
-          msg += ` + $${bonoNotif.toLocaleString('es-AR')} de regalo 🎁`;
-        }
+        // El bono va donde esté `$bono` en el template; si no lo usa, al final.
+        const msg = renderAutoMsg(template, montoFmt, Number(efectiveBono) || 0);
         // await: en serverless, un fire-and-forget no await-eado puede no
         // completarse porque el runtime suspende la instancia al retornar.
         try {

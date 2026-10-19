@@ -476,7 +476,7 @@ const MessageList = React.memo(function MessageList({
                 onError={fallbackToOriginal(media.url)}
                 onClick={() => h.openLightbox(media.url)}
               />
-              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{media.caption}</p>}
             </div>
           ) : media?._type === 'audio' ? (
             <audio
@@ -499,7 +499,7 @@ const MessageList = React.memo(function MessageList({
             (String(media.mime ?? '').includes('pdf') || /\.pdf(\?|$)/i.test(media.url)) ? (
               <div>
                 <PdfPreview url={media.url} filename={media.filename} />
-                {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+                {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{media.caption}</p>}
               </div>
             ) : (
               <a href={media.url} target="_blank" rel="noreferrer" style={{ fontSize: '14px', textDecoration: 'underline', color: 'inherit' }}>📎 {media.filename || 'Ver archivo'}</a>
@@ -512,7 +512,7 @@ const MessageList = React.memo(function MessageList({
                 style={{ maxWidth: '280px', maxHeight: '320px', width: '100%', borderRadius: '10px', display: 'block', background: '#000' }}
                 onLoadedData={h.onMediaLoad}
               />
-              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5 }}>{media.caption}</p>}
+              {media.caption && <p style={{ margin: '6px 0 0 0', fontSize: '14px', lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{media.caption}</p>}
             </div>
           ) : media?._type === 'location' ? (
             <a
@@ -556,7 +556,9 @@ const MessageList = React.memo(function MessageList({
             if (b.kind === 'audio-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🎤 Audio</span>;
             if (b.kind === 'sticker-missing') return <span style={{ fontSize: '14px', opacity: 0.85 }}>🌟 Sticker</span>;
             if (b.kind === 'unsupported') return <span style={{ fontSize: '14px', opacity: 0.85, fontStyle: 'italic' }}>⚠️ Mensaje no compatible (encuesta, mensaje efímero u otro tipo que WhatsApp no permite recibir por API)</span>;
-            return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5 }}>{text}</p>;
+            // pre-wrap: respeta los saltos de línea y renglones vacíos tal como
+            // llegan a WhatsApp (avisos de recarga, credenciales del casino).
+            return <p style={{ margin: 0, fontSize: '14px', lineHeight: 1.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{text}</p>;
           })()}
 
           {/* "Enviar a verificar": solo en mensajes con imagen. Entrante →

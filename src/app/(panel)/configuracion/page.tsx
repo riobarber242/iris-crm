@@ -47,7 +47,7 @@ export default async function ConfiguracionPage() {
 
       {showCajaConfig && (
         <>
-          <SectionCard title="Notificación de recarga verificada" description="Mensaje que se envía al cliente por WhatsApp al verificar una recarga. Editable, con la variable $monto.">
+          <SectionCard title="Notificación de recarga verificada" description="Mensaje que se envía al cliente por WhatsApp al verificar una recarga. Editable, con las variables $monto y $bono.">
             <AutoMsgToggle />
           </SectionCard>
 

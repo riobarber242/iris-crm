@@ -10,7 +10,7 @@ import {
 
 // Configuración de la notificación automática "recarga confirmada":
 //   · enabled  (flag on/off, key AUTO_MSG_FLAG_KEY).
-//   · template (texto con la variable $monto, key AUTO_MSG_TEMPLATE_KEY).
+//   · template (texto con las variables $monto y $bono, key AUTO_MSG_TEMPLATE_KEY).
 // El template se renderiza al verificar una carga (ver comprobantes/route.ts).
 
 export async function GET() {
