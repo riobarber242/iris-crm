@@ -36,6 +36,36 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+// PostgREST corta CUALQUIER select en 1.000 filas (max-rows del proyecto) y lo hace
+// en silencio: sin error, data trae 1.000. Así una campaña "nuevo" de Derki
+// (20.069 contactos) quedó con target_total = 1.000. Toda lectura que arme el
+// universo de una campaña tiene que paginar con esto.
+// `page(from, to)` debe construir una query NUEVA en cada llamada (un builder de
+// supabase-js no se re-await-ea) con un orden ESTABLE (terminar en .order('id')),
+// si no las páginas pueden repetir o saltear filas. Un error en cualquier página
+// se devuelve: un universo parcial es peor que no enviar.
+const PAGE_SIZE = 1000;
+
+// Ante un fallo leyendo el universo/progreso: 'pausada' + 'auto_resume' para que
+// el cron la reintente (nunca queda huérfana en 'enviando').
+async function pauseForRetry(campaignId: string, tenantId: string): Promise<void> {
+  await supabaseAdmin.from('campaigns')
+    .update({ status: 'pausada', paused_reason: 'auto_resume', paused_at: new Date().toISOString() })
+    .eq('id', campaignId).eq('tenant_id', tenantId);
+}
+async function fetchAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ rows: T[] } | { error: string }> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) return { error: error.message };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return { rows };
+}
+
 // Renderiza el cuerpo de una plantilla reemplazando {{1}}, {{2}}… por los valores ya
 // resueltos por contacto. Se usa SOLO para persistir el texto real del mensaje en la
 // conversación (lo que muestra el panel); el envío a Meta lo arma sendWhatsAppTemplate.
@@ -130,12 +160,19 @@ export async function tenantUsageSince(tenantId: string, sinceISO: string): Prom
   if (ids.length === 0) return 0;
   const set = new Set<string>();
   for (const slice of chunk(ids, IN_CHUNK)) {
-    const { data } = await supabaseAdmin
+    // Paginado: con >1.000 envíos en 24h contaba de menos y dejaba pasar el techo.
+    const res = await fetchAllPages<{ contact_id: string }>((from, to) => supabaseAdmin
       .from('campaign_recipients')
       .select('contact_id')
       .in('campaign_id', slice)
-      .gte('sent_at', sinceISO);
-    for (const r of data ?? []) set.add(r.contact_id);
+      .gte('sent_at', sinceISO)
+      .order('id', { ascending: true })
+      .range(from, to));
+    if ('error' in res) {
+      console.warn('[campaign send] Fallback de uso diario falló:', res.error);
+      continue;
+    }
+    for (const r of res.rows) set.add(r.contact_id);
   }
   return set.size;
 }
@@ -203,17 +240,26 @@ export function normalizeScope(scope: unknown, filter: string): TargetScope {
 // ocupaba el lugar de la categoría, así que no hay estado que filtrar.
 const SIN_FILTRO_DE_ESTADO = new Set(['todos', 'suelto', 'libre']);
 
-async function resolveContacts(filter: string, tenantId: string, scope: TargetScope, senderIds: string[], legacyIds: string[]) {
-  let base = supabaseAdmin
-    .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
-    .order('created_at', { ascending: true });
-
-  base = applyScope(base, scope, senderIds, legacyIds);
+// Universo de una campaña por categoría × alcance (exportada para el script de
+// verificación de solo lectura). Paginado (ver fetchAllPages):
+// antes un `await base` a secas devolvía como mucho 1.000 contactos. Devuelve
+// { error } en vez de [] ante un fallo, para no dar la campaña por terminada con
+// 0 envíos en silencio.
+export async function resolveContacts(
+  filter: string, tenantId: string, scope: TargetScope, senderIds: string[], legacyIds: string[],
+): Promise<{ rows: any[] } | { error: string }> {
+  // Factory: cada página necesita su propio builder. Orden created_at + id
+  // (estable: created_at sola puede empatar en un import masivo).
+  const base = () => applyScope(
+    supabaseAdmin
+      .from('contacts').select('id, phone, name, whatsapp_number_id').eq('tenant_id', tenantId).neq('blocked', true)
+      .order('created_at', { ascending: true }).order('id', { ascending: true }),
+    scope, senderIds, legacyIds,
+  );
 
   if (filter.startsWith('phone:')) {
     const phone = filter.slice('phone:'.length).trim();
-    const { data } = await base.eq('phone', phone);
-    return data ?? [];
+    return fetchAllPages((from, to) => base().eq('phone', phone).range(from, to));
   }
 
   // Inactivos sin recargar en los últimos X días (X dinámico: inactivo_Xd).
@@ -222,28 +268,31 @@ async function resolveContacts(filter: string, tenantId: string, scope: TargetSc
     const days   = Math.min(365, Math.max(1, Number(inactiveMatch[1])));
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
 
-    const [{ data: inactivos }, { data: recentRecargas }] = await Promise.all([
-      base.eq('status', 'inactivo'),
-      supabaseAdmin
+    // Las recargas recientes también se paginan: con más de 1.000 en la ventana,
+    // las que quedaban afuera hacían que a ese cliente se le mandara igual.
+    const [inactivos, recentRecargas] = await Promise.all([
+      fetchAllPages<any>((from, to) => base().eq('status', 'inactivo').range(from, to)),
+      fetchAllPages<{ contact_id: string }>((from, to) => supabaseAdmin
         .from('comprobantes')
         .select('contact_id')
         .eq('tenant_id', tenantId)
         .eq('estado', 'verificado')
         .gte('created_at', cutoff)
-        .order('created_at', { ascending: true }),
+        .order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(from, to)),
     ]);
+    if ('error' in inactivos) return inactivos;
+    if ('error' in recentRecargas) return recentRecargas;
 
-    const recentIds = new Set((recentRecargas ?? []).map((r: any) => r.contact_id));
-    return (inactivos ?? []).filter((c: any) => !recentIds.has(c.id));
+    const recentIds = new Set(recentRecargas.rows.map((r) => r.contact_id));
+    return { rows: inactivos.rows.filter((c: any) => !recentIds.has(c.id)) };
   }
 
   if (filter && !SIN_FILTRO_DE_ESTADO.has(filter)) {
-    const { data } = await base.eq('status', filter);
-    return data ?? [];
+    return fetchAllPages((from, to) => base().eq('status', filter).range(from, to));
   }
 
-  const { data } = await base;
-  return data ?? [];
+  return fetchAllPages((from, to) => base().range(from, to));
 }
 
 export type SendResult = {
@@ -333,7 +382,13 @@ export async function runCampaignBatch(
       : (campaign.target_number_id ? [campaign.target_number_id] : []);
     const filtro = campaign.target_filter ?? 'todos';
     const scope  = normalizeScope(campaign.target_scope, filtro);
-    contacts = await resolveContacts(filtro, tenantId, scope, senderNumberIds, legacyIds);
+    const resolved = await resolveContacts(filtro, tenantId, scope, senderNumberIds, legacyIds);
+    if ('error' in resolved) {
+      // Igual que el fallo de "no molestar": queda pausada y la retoma el cron.
+      await pauseForRetry(campaignId, tenantId);
+      return { error: `Error resolviendo destinatarios: ${resolved.error}`, status: 500 };
+    }
+    contacts = resolved.rows;
   }
 
   // "No molestar" (contact_optouts): se sacan de TODA campaña, por teléfono, en los
@@ -343,9 +398,7 @@ export async function runCampaignBatch(
   {
     const opt = await loadOptedOutPhones(tenantId);
     if ('error' in opt) {
-      await supabaseAdmin.from('campaigns')
-        .update({ status: 'pausada', paused_reason: 'auto_resume', paused_at: new Date().toISOString() })
-        .eq('id', campaignId).eq('tenant_id', tenantId);
+      await pauseForRetry(campaignId, tenantId);
       return { error: `Error leyendo la lista de "no molestar": ${opt.error}`, status: 500 };
     }
     if (opt.phones.size > 0) contacts = contacts.filter((c: any) => !opt.phones.has(phoneKey(c.phone)));
@@ -353,21 +406,27 @@ export async function runCampaignBatch(
 
   // Exclusión inteligente: no reenviar a contactos ya contactados por las
   // campañas seleccionadas. Se re-validan los ids contra el tenant.
+  // Paginado: sin esto, de campañas anteriores con más de 1.000 envíos solo se
+  // excluían los primeros 1.000 y al resto se le volvía a mandar. Un error ahora
+  // pausa (antes se tragaba y se enviaba sin excluir).
   const excludeIds: string[] = Array.isArray(campaign.exclude_campaign_ids) ? campaign.exclude_campaign_ids : [];
   if (excludeIds.length > 0) {
-    try {
-      const { data: ownCampaigns } = await supabaseAdmin
-        .from('campaigns').select('id').eq('tenant_id', tenantId).in('id', excludeIds);
-      const validIds = (ownCampaigns ?? []).map((c: any) => c.id);
-      if (validIds.length > 0) {
-        const { data: prev } = await supabaseAdmin
-          .from('campaign_recipients').select('contact_id').in('campaign_id', validIds);
-        const alreadySent = new Set((prev ?? []).map((r: any) => r.contact_id));
-        contacts = contacts.filter((c: any) => !alreadySent.has(c.id));
-      }
-    } catch (err) {
-      console.warn('[campaign send] Exclusión falló (¿tabla campaign_recipients?), envío sin excluir:', err);
+    const { data: ownCampaigns, error: ownErr } = await supabaseAdmin
+      .from('campaigns').select('id').eq('tenant_id', tenantId).in('id', excludeIds);
+    const validIds = (ownCampaigns ?? []).map((c: any) => c.id);
+    const prev = ownErr
+      ? { error: ownErr.message }
+      : validIds.length === 0
+      ? { rows: [] }
+      : await fetchAllPages<{ contact_id: string }>((from, to) => supabaseAdmin
+          .from('campaign_recipients').select('contact_id').in('campaign_id', validIds)
+          .order('id', { ascending: true }).range(from, to));
+    if ('error' in prev) {
+      await pauseForRetry(campaignId, tenantId);
+      return { error: `Error leyendo las campañas a excluir: ${prev.error}`, status: 500 };
     }
+    const alreadySent = new Set(prev.rows.map((r) => r.contact_id));
+    contacts = contacts.filter((c: any) => !alreadySent.has(c.id));
   }
 
   // Orden estable (por id) para que el slice de send_limit y la reanudación sean
@@ -397,17 +456,22 @@ export async function runCampaignBatch(
   // ── Reanudación: saltear a quienes YA se intentó en ESTA campaña ──────────────
   // campaign_recipients registra cada intento (éxito o fallo, ver más abajo). Tras un
   // corte por presupuesto de tiempo, filtramos esos: no reenviamos y el avance es
-  // monótono (garantiza que el loop termine aunque un contacto falle siempre). Si la
-  // tabla no existe, simplemente no reanuda.
+  // monótono (garantiza que el loop termine aunque un contacto falle siempre).
+  // Paginado y estricto: con más de 1.000 intentados, leer solo 1.000 hacía que se
+  // le REENVIARA al resto; y un error tragado (data = null) reenviaba a todos. Si
+  // no se puede leer el progreso, se pausa y lo retoma el cron.
   let attemptedBefore = 0;
-  try {
-    const { data: prevDone } = await supabaseAdmin
-      .from('campaign_recipients').select('contact_id').eq('campaign_id', campaignId);
-    const attempted = new Set((prevDone ?? []).map((r: any) => r.contact_id));
+  {
+    const prevDone = await fetchAllPages<{ contact_id: string }>((from, to) => supabaseAdmin
+      .from('campaign_recipients').select('contact_id').eq('campaign_id', campaignId)
+      .order('id', { ascending: true }).range(from, to));
+    if ('error' in prevDone) {
+      await pauseForRetry(campaignId, tenantId);
+      return { error: `Error leyendo el progreso de la campaña: ${prevDone.error}`, status: 500 };
+    }
+    const attempted = new Set(prevDone.rows.map((r) => r.contact_id));
     attemptedBefore = attempted.size;
     contacts = contacts.filter((c: any) => !attempted.has(c.id));
-  } catch (err) {
-    console.warn('[campaign send] No se pudo leer el progreso previo (¿tabla campaign_recipients?):', err);
   }
 
   const isTemplate = campaign.type === 'template_meta';
