@@ -81,7 +81,19 @@ type IrisTemplate = {
 };
 
 // Contacto seleccionable en el modo "elegir contactos" (agendados con usuario).
-type PickContact = { id: string; name: string | null; phone: string; casino_username: string | null };
+type PickContact = { id: string; name: string | null; phone: string; casino_username: string | null; opted_out?: boolean };
+type ExcludedContact = PickContact & { reason: string | null; opted_out_at: string | null };
+
+const optoutChipStyle: React.CSSProperties = {
+  fontSize: '11px', fontWeight: 700, color: '#4a5470', background: '#eef0f5',
+  borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0,
+};
+
+const OPTOUT_REASON: Record<string, string> = {
+  boton_negativo:  'Botón negativo',
+  numero_invalido: 'Número inválido',
+  manual:          'Manual',
+};
 
 // Paginación del picker individual: filas por página del endpoint paginado
 // (mismo patrón que la pantalla de Contactos). Acota egress/memoria en tenants
@@ -325,6 +337,15 @@ export default function CampanasClient() {
   const [recipientCount, setRecipientCount] = useState<number | null>(null);
   const countSeqRef = useRef(0);   // descarta respuestas de conteo fuera de orden
   const [countLoading,   setCountLoading]   = useState(false);
+  // "No molestar" de la audiencia actual: ya descontados de recipientCount (el
+  // envío siempre los excluye, sin opción de incluirlos). La lista se pide recién
+  // al abrir el chip, con la misma query del conteo (countQueryRef).
+  const [optoutExcluded,    setOptoutExcluded]    = useState<number | null>(null);
+  const [optoutList,        setOptoutList]        = useState<ExcludedContact[] | null>(null);
+  const [optoutTruncated,   setOptoutTruncated]   = useState(false);
+  const [optoutListOpen,    setOptoutListOpen]    = useState(false);
+  const [optoutListLoading, setOptoutListLoading] = useState(false);
+  const countQueryRef = useRef('');
 
   // Modo de destinatarios: por categoría (filtro) o selección individual (ids).
   const [targetMode,      setTargetMode]      = useState<'category' | 'individual'>('category');
@@ -529,10 +550,14 @@ export default function CampanasClient() {
     // pantalla un total que no corresponde a la selección actual.
     const seq = ++countSeqRef.current;
     setCountLoading(true); setRecipientCount(null);
+    setOptoutExcluded(null); setOptoutList(null); setOptoutListOpen(false);
     try {
       const isInactivoDays = /^inactivo_\d+d$/.test(f);
       const param = isInactivoDays ? `?status=inactivo` : f === 'todos' ? '?all=true' : `?status=${f}`;
-      const res = await fetch(`/api/contacts${param}${scopeParams(sc, lineIds)}`);
+      const query = `${param}${scopeParams(sc, lineIds)}`;
+      countQueryRef.current = query;
+      // optouts=1: el count ya viene sin los "no molestar" (igual que el envío).
+      const res = await fetch(`/api/contacts${query}&optouts=1`);
       if (!res.ok || seq !== countSeqRef.current) return;
       const data = await res.json();
       if (seq !== countSeqRef.current) return;   // llegó tarde: la ganó otra llamada
@@ -541,8 +566,28 @@ export default function CampanasClient() {
       setRecipientCount(
         typeof data?.count === 'number' ? data.count : Array.isArray(data) ? data.length : null,
       );
+      setOptoutExcluded(typeof data?.excluded === 'number' ? data.excluded : null);
     } catch {}
     if (seq === countSeqRef.current) setCountLoading(false);
+  }
+
+  // Abre/cierra la lista de excluidos por "no molestar" de la audiencia actual.
+  // Se pide una sola vez por audiencia (fetchRecipientCount la resetea).
+  async function toggleOptoutList() {
+    if (optoutListOpen) { setOptoutListOpen(false); return; }
+    setOptoutListOpen(true);
+    if (optoutList) return;
+    const seq = countSeqRef.current;
+    setOptoutListLoading(true);
+    try {
+      const res = await fetch(`/api/contacts${countQueryRef.current}&optouts=list`, { cache: 'no-store' });
+      if (res.ok && seq === countSeqRef.current) {
+        const data = await res.json();
+        setOptoutList(Array.isArray(data?.contacts) ? data.contacts : []);
+        setOptoutTruncated(!!data?.truncated);
+      }
+    } catch {}
+    if (seq === countSeqRef.current) setOptoutListLoading(false);
   }
 
   // Trae UNA página del listado paginado (server-side: orden + búsqueda + rango),
@@ -560,6 +605,8 @@ export default function CampanasClient() {
     // miran casino_username—, así que el picker tiene que ofrecer el mismo
     // universo al que la campaña le va a mandar.
     params.set('includeSinUsuario', 'true');
+    // Marca a los "no molestar" (se muestran en gris y no se pueden tildar).
+    params.set('markOptouts', 'true');
     if (sc === 'libre' || sc === 'suelto') params.set('scope', sc);
     else if (lineIds.length > 0) { params.set('scope', 'lineas'); params.set('numbers', lineIds.join(',')); }
     try {
@@ -1434,6 +1481,45 @@ export default function CampanasClient() {
                       {filter === 'inactivo_dias' && !countLoading && <span style={{ color: '#888', fontWeight: 400 }}> (estimado — el filtro exacto aplica al enviar)</span>}
                     </p>
                   )}
+
+                  {/* "No molestar": ya descontados del total de arriba. Siempre
+                      activo, sin opción de incluirlos (cuida la calidad del número). */}
+                  {!countLoading && optoutExcluded != null && optoutExcluded > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
+                      <button
+                        type="button"
+                        onClick={toggleOptoutList}
+                        style={{ ...optoutChipStyle, fontSize: '12px', padding: '5px 12px', border: '1px solid #d5dae6', cursor: 'pointer', alignSelf: 'flex-start', fontFamily: 'inherit' }}
+                      >
+                        🔕 {optoutExcluded} contacto{optoutExcluded !== 1 ? 's' : ''} excluido{optoutExcluded !== 1 ? 's' : ''} por &quot;No molestar&quot; {optoutListOpen ? '▴' : '▾'}
+                      </button>
+                      {optoutListOpen && (
+                        <div style={{ border: '1px solid #e6e9f0', borderRadius: '10px', padding: '8px 10px', background: '#fafbfd', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                          <p style={{ fontSize: '11px', color: '#777', margin: '0 0 4px 0', lineHeight: 1.5 }}>
+                            Ya están descontados del total. No reciben campañas nunca; para quitarle la marca a alguien, hacelo desde su ficha.
+                          </p>
+                          {optoutListLoading ? (
+                            <span style={{ fontSize: '12px', color: '#888' }}>Cargando…</span>
+                          ) : (optoutList ?? []).length === 0 ? (
+                            <span style={{ fontSize: '12px', color: '#888' }}>No se pudo cargar la lista.</span>
+                          ) : (
+                            <>
+                              {(optoutList ?? []).map((c) => (
+                                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
+                                  <span style={{ fontWeight: 700, color: '#222', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                    {c.casino_username || c.name || c.phone}
+                                  </span>
+                                  <span style={{ color: '#999', flexShrink: 0 }}>{c.phone}</span>
+                                  <span style={{ color: '#4a5470', flexShrink: 0 }}>{OPTOUT_REASON[c.reason ?? ''] ?? 'No molestar'}</span>
+                                </div>
+                              ))}
+                              {optoutTruncated && <span style={{ fontSize: '11px', color: '#999' }}>Se muestran los primeros {(optoutList ?? []).length}.</span>}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1441,7 +1527,8 @@ export default function CampanasClient() {
               {targetMode === 'individual' && (() => {
                 // El server ya filtró (búsqueda), ordenó y paginó: `visible` = lo cargado.
                 const visible = contactsList;
-                const visibleIds = visible.map((c) => c.id);
+                // Los "no molestar" se ven pero no entran en "Seleccionar visibles".
+                const visibleIds = visible.filter((c) => !c.opted_out).map((c) => c.id);
                 const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
                 const searching = contactSearch.trim().length > 0;
                 return (
@@ -1486,15 +1573,19 @@ export default function CampanasClient() {
                         <div style={{ maxHeight: '320px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid #eee', borderRadius: '10px', padding: '6px' }}>
                           {visible.map((c) => {
                             const checked = selectedIds.includes(c.id);
+                            // "No molestar": visible pero no seleccionable (el envío
+                            // lo excluiría igual; así no se cuenta de más).
+                            const blockedOpt = !!c.opted_out;
                             return (
-                              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', background: checked ? '#f0fff4' : 'transparent' }}>
-                                <input type="checkbox" checked={checked} onChange={() => toggleContact(c.id)} />
-                                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                              <label key={c.id} title={blockedOpt ? 'En "No molestar": no recibe campañas' : undefined} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', cursor: blockedOpt ? 'not-allowed' : 'pointer', background: checked ? '#f0fff4' : 'transparent', opacity: blockedOpt ? 0.55 : 1 }}>
+                                <input type="checkbox" checked={checked && !blockedOpt} disabled={blockedOpt} onChange={() => toggleContact(c.id)} />
+                                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
                                   <span style={{ fontSize: '13px', fontWeight: 700, color: '#000', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {c.casino_username || c.name || c.phone}
                                   </span>
                                   <span style={{ fontSize: '11px', color: '#999' }}>{c.phone}</span>
                                 </span>
+                                {blockedOpt && <span style={optoutChipStyle}>🔕 No molestar</span>}
                               </label>
                             );
                           })}
@@ -1598,6 +1689,17 @@ export default function CampanasClient() {
                   : `${filterLabel(effectiveFilter(filter, inactiveDays))}${recipientCount !== null ? ` (~${recipientCount})` : ''}`}</div>
                 {targetMode === 'category' && (
                   <div><strong>Alcance:</strong> {SCOPES.find((s) => s.value === scope)?.label}</div>
+                )}
+                {targetMode === 'category' && optoutExcluded != null && (
+                  <div>
+                    <strong>No molestar:</strong>{' '}
+                    {optoutExcluded > 0
+                      ? `${optoutExcluded} excluido${optoutExcluded !== 1 ? 's' : ''} (ya descontados; siempre activo)`
+                      : 'nadie de esta audiencia (siempre activo)'}
+                  </div>
+                )}
+                {targetMode === 'individual' && (
+                  <div><strong>No molestar:</strong> no se pueden elegir; siempre se excluyen al enviar.</div>
                 )}
                 <div>
                   <strong>Sale desde:</strong>{' '}

@@ -3,6 +3,10 @@ import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { inferProvinciaFromPhone } from '@/lib/phone-province';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
+import { phoneKey } from '@/lib/campaigns/optouts';
+import {
+  countAudienceOptOuts, listAudienceOptOuts, optedOutAmong, type AudienceBuilder,
+} from '@/lib/campaigns/audience-optouts';
 
 // Estados válidos de un contacto (alineado con la regla de contact-status y el
 // selector de la UI). 'bloqueado' es solo un valor más: sin comportamiento
@@ -53,16 +57,39 @@ export async function GET(request: Request) {
   // Agregado en SQL con head:true (cuenta sin traer filas). Antes devolvía TODOS
   // los ids del tenant solo para hacer .length en el cliente → egress/memoria al
   // escalar. Devuelve { count }.
+  //
+  // ?optouts=1 (asistente de campañas): el count ya DESCUENTA a los "no molestar"
+  // de esa audiencia, como hace el envío, y devuelve { count, gross, excluded }.
+  // ?optouts=list: { excluded, contacts } con quiénes son. Sin el parámetro, la
+  // respuesta es la de siempre.
   if (all || status) {
-    let query = supabaseAdmin.from('contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', session.tenant_id)
-      .neq('blocked', true);
-    if (status) query = query.eq('status', status);
-    query = applyScope(query);
-    const { count, error } = await query;
+    const tid = session.tenant_id;
+    // Factory: cada consulta (el total y cada lote de "no molestar") necesita su
+    // propio builder con los mismos filtros.
+    const buildAudience: AudienceBuilder = (cols, opts) => {
+      let q = supabaseAdmin.from('contacts').select(cols, opts)
+        .eq('tenant_id', tid)
+        .neq('blocked', true);
+      if (status) q = q.eq('status', status);
+      return applyScope(q);
+    };
+    const optoutsMode = url.searchParams.get('optouts');
+
+    if (optoutsMode === 'list') {
+      const [list, cnt] = await Promise.all([listAudienceOptOuts(tid, buildAudience), countAudienceOptOuts(tid, buildAudience)]);
+      if ('error' in list) return new NextResponse(list.error, { status: 500 });
+      if ('error' in cnt)  return new NextResponse(cnt.error, { status: 500 });
+      return NextResponse.json({ excluded: cnt.excluded, contacts: list.contacts, truncated: cnt.excluded > list.contacts.length });
+    }
+
+    const { count, error } = await buildAudience('id', { count: 'exact', head: true });
     if (error) return new NextResponse(error.message, { status: 500 });
-    return NextResponse.json({ count: count ?? 0 });
+    if (optoutsMode !== '1') return NextResponse.json({ count: count ?? 0 });
+
+    const opt = await countAudienceOptOuts(tid, buildAudience);
+    if ('error' in opt) return new NextResponse(opt.error, { status: 500 });
+    const gross = count ?? 0;
+    return NextResponse.json({ count: Math.max(0, gross - opt.excluded), gross, excluded: opt.excluded });
   }
 
   // ── Modo LISTADO (agendados: con casino_username) ──────────────────────────
@@ -142,9 +169,18 @@ export async function GET(request: Request) {
   const { data, error, count } = await ordenada.range(offset, offset + limit - 1);
   if (error) return new NextResponse(error.message, { status: 500 });
 
+  // ?markOptouts=true (selector del asistente de campañas): cada fila lleva
+  // opted_out, para mostrarla en gris y no dejar tildarla. Solo marca; el envío
+  // los excluye igual.
+  let rows: any[] = data ?? [];
+  if (url.searchParams.get('markOptouts') === 'true' && rows.length > 0) {
+    const opted = await optedOutAmong(session.tenant_id, rows.map((r) => r.phone));
+    rows = rows.map((r) => ({ ...r, opted_out: opted.has(phoneKey(r.phone)) }));
+  }
+
   // El cuerpo sigue siendo el array de siempre (no romper a los que ya lo leen);
   // el total viaja en un header.
-  const res = NextResponse.json(data ?? []);
+  const res = NextResponse.json(rows);
   if (conConteo && typeof count === 'number') res.headers.set('X-Total-Count', String(count));
   return res;
 }
