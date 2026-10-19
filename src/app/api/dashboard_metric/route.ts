@@ -14,24 +14,28 @@ import { isMetricAllowedFor } from '@/lib/plan';
 // de período que /api/dashboard_stats.
 const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
 
-function periodRange(period: PeriodId): { gte: string; lt?: string } {
+function periodBounds() {
   const argNow   = new Date(Date.now() - ART_OFFSET_MS);
   const y = argNow.getUTCFullYear();
   const m = argNow.getUTCMonth();
   const d = argNow.getUTCDate();
   const wd = argNow.getUTCDay(); // 0=Dom … 6=Sáb
+  const daysToMonday = (wd + 6) % 7;
+  return {
+    todayStart:     new Date(Date.UTC(y, m, d, 3, 0, 0, 0)).toISOString(),
+    weekStart:      new Date(Date.UTC(y, m, d - daysToMonday, 3, 0, 0, 0)).toISOString(),
+    monthStart:     new Date(Date.UTC(y, m, 1, 3, 0, 0, 0)).toISOString(),
+    prevMonthStart: new Date(Date.UTC(y, m - 1, 1, 3, 0, 0, 0)).toISOString(),
+  };
+}
 
-  const todayStart     = new Date(Date.UTC(y, m, d, 3, 0, 0, 0));
-  const daysToMonday   = (wd + 6) % 7;
-  const weekStart      = new Date(Date.UTC(y, m, d - daysToMonday, 3, 0, 0, 0));
-  const monthStart     = new Date(Date.UTC(y, m, 1, 3, 0, 0, 0));
-  const prevMonthStart = new Date(Date.UTC(y, m - 1, 1, 3, 0, 0, 0));
-
+function periodRange(period: PeriodId): { gte: string; lt?: string } {
+  const b = periodBounds();
   switch (period) {
-    case 'hoy':          return { gte: todayStart.toISOString() };
-    case 'semana':       return { gte: weekStart.toISOString() };
-    case 'mes':          return { gte: monthStart.toISOString() };
-    case 'mes_anterior': return { gte: prevMonthStart.toISOString(), lt: monthStart.toISOString() };
+    case 'hoy':          return { gte: b.todayStart };
+    case 'semana':       return { gte: b.weekStart };
+    case 'mes':          return { gte: b.monthStart };
+    case 'mes_anterior': return { gte: b.prevMonthStart, lt: b.monthStart };
   }
 }
 
@@ -49,11 +53,25 @@ async function computeMetric(tid: string, metric: string, period: PeriodId | nul
 
   switch (metric) {
     case 'conversaciones': {
-      // contactos únicos con algún mensaje en el período
-      let q = supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid);
-      if (range) q = withRange(q, range);
-      const { data } = await q;
-      return new Set((data ?? []).map((r: any) => r.contact_id)).size;
+      // Contactos únicos con algún mensaje en el período, contados en la base con
+      // la misma RPC que dashboard_stats (antes: filas traídas acá, cortadas en
+      // 1.000). Los 4 períodos del catálogo son exactamente los de la RPC.
+      if (!period) return 0;
+      const b = periodBounds();
+      const { data } = await supabaseAdmin.rpc('fn_dashboard_conv_counts', {
+        p_tenant_id:   tid,
+        p_today_start: b.todayStart,
+        p_week_start:  b.weekStart,
+        p_month_start: b.monthStart,
+        p_prev_start:  b.prevMonthStart,
+        p_prev_end:    b.monthStart,
+      });
+      const cc = (data as any)?.[0];
+      if (!cc) return 0;
+      const byPeriod: Record<PeriodId, number> = {
+        hoy: cc.conv_today, semana: cc.conv_week, mes: cc.conv_month, mes_anterior: cc.conv_prev_month,
+      };
+      return Number(byPeriod[period] ?? 0);
     }
     case 'mensajes': {
       let q = supabaseAdmin.from('messages').select('id', { count: 'exact', head: true }).eq('tenant_id', tid);
@@ -74,10 +92,11 @@ async function computeMetric(tid: string, metric: string, period: PeriodId | nul
       return count ?? 0;
     }
     case 'monto_verificado': {
-      let q = supabaseAdmin.from('comprobantes').select('monto').eq('tenant_id', tid).eq('estado', 'verificado');
-      if (range) q = withRange(q, range);
-      const { data } = await q;
-      return (data ?? []).reduce((s: number, r: any) => s + Number(r.monto ?? 0), 0);
+      // Suma en la base (antes: se sumaban acá las primeras 1.000 filas).
+      const { data } = await supabaseAdmin.rpc('fn_comprobantes_verificados', {
+        p_tenant_id: tid, p_gte: range?.gte ?? null, p_lt: range?.lt ?? null,
+      });
+      return Number((data as any)?.[0]?.monto ?? 0);
     }
     case 'comprobantes_recibidos': {
       let q = supabaseAdmin.from('comprobantes').select('id', { count: 'exact', head: true }).eq('tenant_id', tid);

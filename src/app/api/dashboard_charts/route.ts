@@ -32,18 +32,18 @@ export async function GET() {
     .from('campaign_message_status').select('id', { count: 'exact', head: true })
     .eq('tenant_id', tid).gte('created_at', mesIso);
 
+  // Contactos, comprobantes y recargas se agregan en la base (GROUP BY): antes
+  // se traían las filas y se contaban acá, cortadas en 1.000 por PostgREST (Derki
+  // tiene 20.214 contactos; Casino, miles de comprobantes). Ver
+  // supabase-agregados-sin-tope-rpcs.sql.
   const [contactsRes, comprobantesRes, recargasRes,
          campTotalRes, campLeidosRes, campEntregadosRes, campFallidosRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('status, provincia').eq('tenant_id', tid),
+    supabaseAdmin.rpc('fn_contacts_breakdown', { p_tenant_id: tid }),
     cajaEnabled
-      ? supabaseAdmin.from('comprobantes').select('estado').eq('tenant_id', tid)
+      ? supabaseAdmin.rpc('fn_comprobantes_por_estado', { p_tenant_id: tid })
       : Promise.resolve({ data: [] as any[] }),
     cajaEnabled
-      ? supabaseAdmin.from('comprobantes')
-          .select('monto, created_at')
-          .eq('tenant_id', tid)
-          .eq('estado', 'verificado')
-          .gte('created_at', sixMonthsAgo.toISOString())
+      ? supabaseAdmin.rpc('fn_recargas_por_mes', { p_tenant_id: tid, p_since: sixMonthsAgo.toISOString() })
       : Promise.resolve({ data: [] as any[] }),
 
     // Campañas del mes: total, leídos, entregados (incluye leídos) y fallidos.
@@ -53,11 +53,14 @@ export async function GET() {
     cms().eq('status', 'failed'),
   ]);
 
+  // Grupos (status, provincia, n) de la RPC.
+  const contactGroups = ((contactsRes.data ?? []) as { status: string | null; provincia: string | null; n: number }[]);
+
   // Contact status breakdown
   const statusCount: Record<string, number> = {};
-  for (const c of contactsRes.data ?? []) {
-    const s = c.status ?? 'nuevo';
-    statusCount[s] = (statusCount[s] ?? 0) + 1;
+  for (const g of contactGroups) {
+    const s = g.status ?? 'nuevo';
+    statusCount[s] = (statusCount[s] ?? 0) + Number(g.n);
   }
   const contactsByStatus = [
     { status: 'cliente_activo', label: 'Cliente activo', count: statusCount['cliente_activo'] ?? 0, color: '#C8FF00' },
@@ -69,9 +72,9 @@ export async function GET() {
 
   // Comprobantes breakdown
   const estadoCount: Record<string, number> = {};
-  for (const c of comprobantesRes.data ?? []) {
-    const e = c.estado ?? 'pendiente';
-    estadoCount[e] = (estadoCount[e] ?? 0) + 1;
+  for (const g of (comprobantesRes.data ?? []) as { estado: string | null; n: number }[]) {
+    const e = g.estado ?? 'pendiente';
+    estadoCount[e] = (estadoCount[e] ?? 0) + Number(g.n);
   }
   const comprobantesByEstado = [
     { estado: 'verificado', label: 'Verificado', count: estadoCount['verificado'] ?? 0, color: '#22C55E' },
@@ -81,9 +84,10 @@ export async function GET() {
 
   // Revenue by month (last 6)
   const byMonth: Record<string, number> = {};
-  for (const r of recargasRes.data ?? []) {
-    const d = new Date(r.created_at);
-    const key = `${d.getFullYear()}-${d.getMonth()}`;
+  // La RPC agrupa por año/mes en UTC (mes 1–12), que es la zona del server: la
+  // misma clave que armaba antes getFullYear()/getMonth() sobre cada fila.
+  for (const r of (recargasRes.data ?? []) as { anio: number; mes: number; monto: number | string }[]) {
+    const key = `${r.anio}-${Number(r.mes) - 1}`;
     byMonth[key] = (byMonth[key] ?? 0) + Number(r.monto ?? 0);
   }
   const now = new Date();
@@ -95,11 +99,11 @@ export async function GET() {
 
   // Province breakdown
   const provMap: Record<string, Record<string, number>> = {};
-  for (const c of contactsRes.data ?? []) {
-    if (!c.provincia) continue;
-    if (!provMap[c.provincia]) provMap[c.provincia] = {};
-    const s = c.status ?? 'nuevo';
-    provMap[c.provincia][s] = (provMap[c.provincia][s] ?? 0) + 1;
+  for (const g of contactGroups) {
+    if (!g.provincia) continue;
+    if (!provMap[g.provincia]) provMap[g.provincia] = {};
+    const s = g.status ?? 'nuevo';
+    provMap[g.provincia][s] = (provMap[g.provincia][s] ?? 0) + Number(g.n);
   }
   // Dominant by business priority, NOT raw majority: a province with even one
   // cliente_activo paints green so active clients are never masked by 'nuevo' contacts.

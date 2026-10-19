@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
+import { loadPendingCandidates } from '@/lib/pending-candidates';
 import { irisSystemPrompt } from '@/lib/system-prompt';
 import { logActivity, ACTIVITY } from '@/lib/activity-log';
 import {
@@ -322,55 +323,45 @@ async function getMetrics(tid: string) {
     countRows('comprobantes', tid, (q) => q.eq('estado', 'rechazado')),
   ]);
 
-  // Montos verificados: total, este mes y mes anterior (para la comparativa).
-  const { data: verif } = await supabaseAdmin
-    .from('comprobantes')
-    .select('monto, created_at')
-    .eq('tenant_id', tid)
-    .eq('estado', 'verificado');
+  // Montos verificados, conversaciones y SLA: agregados en la base con las MISMAS
+  // RPCs que el dashboard (antes se traían las filas y se sumaban acá, cortadas
+  // en 1.000 por PostgREST → la IA leía números de menos).
+  const [totalVerifRes, montosRes, convRes, slaRes] = await Promise.all([
+    supabaseAdmin.rpc('fn_comprobantes_verificados', { p_tenant_id: tid, p_gte: null, p_lt: null }),
+    supabaseAdmin.rpc('fn_dashboard_montos', {
+      p_tenant_id:   tid,
+      p_today_start: startToday,
+      p_month_start: startMonth,
+      p_prev_start:  prevMonthStart,
+      p_prev_end:    prevMonthEnd,
+    }),
+    supabaseAdmin.rpc('fn_dashboard_conv_counts', {
+      p_tenant_id:   tid,
+      p_today_start: startToday,
+      p_week_start:  startMonth, // no se usa acá
+      p_month_start: startMonth,
+      p_prev_start:  prevMonthStart,
+      p_prev_end:    prevMonthEnd,
+    }),
+    // SLA de 1ra respuesta HUMANA (últimos 30 días), en minutos: misma RPC que el dashboard.
+    supabaseAdmin.rpc('fn_dashboard_sla_first_human', { p_tenant_id: tid, p_window_start: slaWindowStart }),
+  ]);
 
-  let montoVerificadoTotal = 0, montoVerificadoMes = 0, montoVerificadoPrev = 0;
-  let recargasMes = 0, recargasPrev = 0;
-  for (const r of verif ?? []) {
-    const m = Number(r.monto ?? 0);
-    montoVerificadoTotal += m;
-    const ts = r.created_at ?? '';
-    if (ts >= startMonth) { montoVerificadoMes += m; recargasMes++; }
-    else if (ts >= prevMonthStart && ts < prevMonthEnd) { montoVerificadoPrev += m; recargasPrev++; }
-  }
+  const mv = (montosRes.data as any)?.[0] ?? {};
+  const montoVerificadoTotal = Number((totalVerifRes.data as any)?.[0]?.monto ?? 0);
+  const montoVerificadoMes   = Number(mv.monto_mes ?? 0);
+  const montoVerificadoPrev  = Number(mv.monto_prev ?? 0);
+  const recargasMes  = Number(mv.recargas_mes ?? 0);
+  const recargasPrev = Number(mv.recargas_prev ?? 0);
   const ticketMes  = recargasMes  > 0 ? montoVerificadoMes  / recargasMes  : 0;
   const ticketPrev = recargasPrev > 0 ? montoVerificadoPrev / recargasPrev : 0;
 
   // Conversaciones = contactos únicos con algún mensaje en el período (este mes vs anterior).
-  const [convMesRes, convPrevRes] = await Promise.all([
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', startMonth),
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid)
-      .gte('created_at', prevMonthStart).lt('created_at', prevMonthEnd),
-  ]);
-  const convMes  = new Set((convMesRes.data  ?? []).map((m: any) => m.contact_id)).size;
-  const convPrev = new Set((convPrevRes.data ?? []).map((m: any) => m.contact_id)).size;
+  const cc = (convRes.data as any)?.[0] ?? {};
+  const convMes  = Number(cc.conv_month ?? 0);
+  const convPrev = Number(cc.conv_prev_month ?? 0);
 
-  // SLA de 1ra respuesta HUMANA (últimos 30 días): minutos promedio desde que el
-  // cliente escribe hasta que responde un humano. El bot (role=assistant) NO frena
-  // el cronómetro. Misma lógica que el dashboard.
-  const { data: slaMsgs } = await supabaseAdmin
-    .from('messages').select('contact_id, role, created_at').eq('tenant_id', tid)
-    .gte('created_at', slaWindowStart).order('created_at', { ascending: true });
-  const byContact = new Map<string, { role: string; ts: number }[]>();
-  for (const m of (slaMsgs ?? [])) {
-    const arr = byContact.get(m.contact_id) ?? [];
-    arr.push({ role: m.role, ts: new Date(m.created_at).getTime() });
-    byContact.set(m.contact_id, arr);
-  }
-  let slaTotalMs = 0, slaCount = 0;
-  for (const msgs of byContact.values()) {
-    let pendingUserTs: number | null = null;
-    for (const { role, ts } of msgs) {
-      if (role === 'user') { if (pendingUserTs === null) pendingUserTs = ts; }
-      else if (role === 'human') { if (pendingUserTs !== null) { slaTotalMs += ts - pendingUserTs; slaCount++; pendingUserTs = null; } }
-    }
-  }
-  const slaPromedioMin = slaCount > 0 ? Math.round((slaTotalMs / slaCount) / 60000) : null;
+  const slaPromedioMin = slaRes.data == null ? null : Math.round(Number(slaRes.data));
 
   return {
     contactos: { total, nuevo, cliente_activo: clienteActivo, inactivo, bloqueado },
@@ -390,7 +381,6 @@ async function getMetrics(tid: string) {
     sla_primera_respuesta_humana: {
       promedio_minutos: slaPromedioMin,
       ventana_dias: 30,
-      casos_medidos: slaCount,
       descripcion: 'Minutos promedio desde que el cliente escribe hasta que un HUMANO responde (el bot no cuenta). null si no hubo casos en la ventana.',
     },
   };
@@ -610,28 +600,24 @@ async function getClientHistory(tid: string, input: any) {
 async function getConversationSummary(tid: string) {
   const todayStart = periodRange('hoy').gte!;
 
-  const [contactsRes, msgsRes, activeTodayRes] = await Promise.all([
-    supabaseAdmin.from('contacts').select('id, name, phone, conversation_state, last_read_at, human_taken').eq('tenant_id', tid),
-    supabaseAdmin.from('messages').select('contact_id, role, content, created_at')
-      .eq('tenant_id', tid).order('created_at', { ascending: false }).limit(1000),
-    supabaseAdmin.from('messages').select('contact_id').eq('tenant_id', tid).gte('created_at', todayStart),
+  // Candidatos a pendiente desde la base (mismo origen que el dashboard y el
+  // contador). Antes: todos los contactos + los últimos 1.000 mensajes del
+  // tenant, ambos cortados en 1.000 (Derki tiene 20.214 contactos).
+  const [cand, convRes] = await Promise.all([
+    loadPendingCandidates(tid),
+    supabaseAdmin.rpc('fn_dashboard_conv_counts', {
+      p_tenant_id: tid, p_today_start: todayStart, p_week_start: todayStart,
+      p_month_start: todayStart, p_prev_start: todayStart, p_prev_end: todayStart,
+    }),
   ]);
-
-  const lastMsgByContact = new Map<string, { role: string; content: string; created_at: string }>();
-  for (const m of (msgsRes.data ?? [])) {
-    if (!lastMsgByContact.has(m.contact_id)) {
-      lastMsgByContact.set(m.contact_id, { role: m.role, content: m.content, created_at: m.created_at });
-    }
-  }
 
   let rojo = 0;
   let naranja = 0;
-  const pendientes: { nombre: string | null; telefono: string | null; nivel: string; ultimo_mensaje: string; de: string; fecha: string }[] = [];
-  for (const c of (contactsRes.data ?? [])) {
-    const lm = lastMsgByContact.get(c.id as string);
+  const niveles: { id: string; nivel: 'rojo' | 'naranja'; fecha: string; role: string }[] = [];
+  for (const c of ('rows' in cand ? cand.rows : [])) {
     const level = classifyPending({
-      lastRole: lm?.role,
-      lastMsgAt: lm?.created_at,
+      lastRole: c.last_role,
+      lastMsgAt: c.last_msg_at,
       lastReadAt: c.last_read_at,
       conversationState: c.conversation_state,
       humanTaken: c.human_taken,
@@ -639,21 +625,38 @@ async function getConversationSummary(tid: string) {
     if (!level) continue;
     if (level === 'red') rojo++;
     else naranja++;
-    pendientes.push({
-      nombre: c.name ?? null,
-      telefono: c.phone ?? null,
-      nivel: level === 'red' ? 'rojo' : 'naranja',
-      ultimo_mensaje: snippet(lm!.content),
-      de: ROLE_LABEL[lm!.role] ?? lm!.role,
-      fecha: lm!.created_at,
-    });
+    niveles.push({ id: c.id, nivel: level === 'red' ? 'rojo' : 'naranja', fecha: c.last_msg_at!, role: c.last_role ?? '' });
   }
-  pendientes.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+  niveles.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  // Detalle (nombre, teléfono y texto del último mensaje) solo de los 5 que se
+  // muestran: 1 query de contactos + 1 de último mensaje por cada uno.
+  const top = niveles.slice(0, 5);
+  const ids = top.map((t) => t.id);
+  const [{ data: topContacts }, lastMsgs] = await Promise.all([
+    ids.length > 0
+      ? supabaseAdmin.from('contacts').select('id, name, phone').eq('tenant_id', tid).in('id', ids)
+      : Promise.resolve({ data: [] as any[] }),
+    Promise.all(top.map((t) => supabaseAdmin.from('messages').select('content')
+      .eq('tenant_id', tid).eq('contact_id', t.id)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle())),
+  ]);
+  const contactById = new Map<string, { name: string | null; phone: string | null }>(
+    (topContacts ?? []).map((c: any) => [c.id, c]),
+  );
+  const pendientes = top.map((t, i) => ({
+    nombre:         contactById.get(t.id)?.name ?? null,
+    telefono:       contactById.get(t.id)?.phone ?? null,
+    nivel:          t.nivel,
+    ultimo_mensaje: snippet(lastMsgs[i].data?.content ?? ''),
+    de:             ROLE_LABEL[t.role] ?? t.role,
+    fecha:          t.fecha,
+  }));
 
   return {
-    chats_con_actividad_hoy: new Set((activeTodayRes.data ?? []).map((m: any) => m.contact_id)).size,
+    chats_con_actividad_hoy: Number((convRes.data as any)?.[0]?.conv_today ?? 0),
     sin_responder: { total: rojo + naranja, rojo, naranja },
-    pendientes_mas_recientes: pendientes.slice(0, 5),
+    pendientes_mas_recientes: pendientes,
   };
 }
 

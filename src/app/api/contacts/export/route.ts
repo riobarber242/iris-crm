@@ -29,13 +29,24 @@ export async function GET() {
     .eq('tenant_id', session.tenant_id);
   const labelById = new Map<string, string>((lines ?? []).map((l: any) => [l.id, l.label ?? '']));
 
-  const { data: contacts, error } = await supabaseAdmin
-    .from('contacts')
-    .select('casino_username, name, phone, status, provincia, blocked, created_at, whatsapp_number_id')
-    .eq('tenant_id', session.tenant_id)
-    .order('created_at', { ascending: false });
-
-  if (error) return new NextResponse(error.message, { status: 500 });
+  // Por bloques de 1.000 (el máximo de PostgREST por request) con orden estable:
+  // un select a secas cortaba el CSV en 1.000 filas sin avisar (Derki: 20.214).
+  // Un error en cualquier bloque corta la exportación: un CSV a medias que parece
+  // completo es peor que un error.
+  const PAGE = 1000;
+  const contacts: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseAdmin
+      .from('contacts')
+      .select('casino_username, name, phone, status, provincia, blocked, created_at, whatsapp_number_id')
+      .eq('tenant_id', session.tenant_id)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) return new NextResponse(error.message, { status: 500 });
+    contacts.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
 
   const rows = (contacts ?? []).map((c: any) => [
     c.casino_username ?? '',

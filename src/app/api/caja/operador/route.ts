@@ -34,6 +34,9 @@ import { getCasinoStockMode } from '@/lib/casino/stock-mode';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const POZO_LIMIT = 30;
+// Movimientos de billetera que se muestran (los más recientes). El saldo de cada
+// fila es exacto igual: lo calcula la base sobre toda la historia.
+const BILLETERA_LIMIT = 500;
 
 // Detecta tablas de caja ausentes (migración Etapa 2 sin correr) para degradar
 // en vez de romper la UI del operador. Espeja el helper de /api/fichas.
@@ -74,32 +77,30 @@ export async function GET(request: Request) {
   const caja_enabled = await isCajaEnabled(session);
 
   // ── Mis movimientos de billetera (asc, con saldo corriendo) ────────────────
+  // El saldo corriendo lo calcula la base sobre TODA la historia (window function
+  // en fn_caja_billetera_movimientos) y se devuelven los últimos BILLETERA_LIMIT.
+  // Antes se traían las filas y se sumaba acá: con más de 1.000 movimientos
+  // PostgREST cortaba en los 1.000 MÁS VIEJOS y los recientes no aparecían nunca.
   if (view === 'billetera') {
-    const { data, error } = await supabaseAdmin
-      .from('movimientos')
-      .select('id, tipo, monto, bono, billetera_delta, comprobante_id, created_at')
-      .eq('tenant_id', tid)
-      .eq('operador_id', yo)
-      .neq('billetera_delta', 0)
-      .order('created_at', { ascending: true });
+    const { data, error } = await supabaseAdmin.rpc('fn_caja_billetera_movimientos', {
+      p_tenant_id: tid, p_operador_id: yo, p_limit: BILLETERA_LIMIT,
+    });
     if (isMissingCajaTable(error)) return NextResponse.json({ caja_enabled, degraded: true, movimientos: [] });
     if (error) return new NextResponse(error.message, { status: 500 });
 
-    let saldo = 0;
-    const movimientos = (data ?? []).map((m: any) => {
-      saldo += Number(m.billetera_delta);
-      return {
-        id:              m.id,
-        tipo:            m.tipo,
-        monto:           Number(m.monto),
-        bono:            m.bono ?? null,
-        billetera_delta: Number(m.billetera_delta),
-        saldo_corriendo: saldo,
-        comprobante_id:  m.comprobante_id ?? null,
-        created_at:      m.created_at,
-      };
-    });
-    return NextResponse.json({ caja_enabled, movimientos });
+    const rows = (data ?? []) as any[];
+    const movimientos = rows.map((m) => ({
+      id:              m.id,
+      tipo:            m.tipo,
+      monto:           Number(m.monto),
+      bono:            m.bono ?? null,
+      billetera_delta: Number(m.billetera_delta),
+      saldo_corriendo: Number(m.saldo_corriendo),
+      comprobante_id:  m.comprobante_id ?? null,
+      created_at:      m.created_at,
+    }));
+    // total = todos los movimientos de billetera (la lista puede ser un recorte).
+    return NextResponse.json({ caja_enabled, movimientos, total: Number(rows[0]?.total ?? 0) });
   }
 
   // ── Movimientos del pozo (comunal, SIN atribuir a operador) ─────────────────
@@ -249,9 +250,9 @@ export async function GET(request: Request) {
       .eq('tenant_id', tid).eq('estado', 'pendiente').neq('tipo', 'descarga'),
     supabaseAdmin.from('agents').select('sueldo_diario').eq('id', yo).maybeSingle(),
     supabaseAdmin.from('settings').select('value').eq('key', 'whatsapp_agente').eq('tenant_id', tid).maybeSingle(),
-    // Movimientos del turno actual (tipo+monto) para el resumen en vivo del cierre.
-    supabaseAdmin.from('movimientos').select('tipo, monto')
-      .eq('tenant_id', tid).eq('operador_id', yo).gte('created_at', startISO),
+    // Totales por tipo del turno actual para el resumen en vivo del cierre. Suma
+    // en la base (antes: filas sumadas acá, cortadas en 1.000).
+    supabaseAdmin.rpc('fn_caja_resumen_turno', { p_tenant_id: tid, p_operador_id: yo, p_since: startISO }),
     // Otros operadores del tenant: posibles destinos del traspaso.
     supabaseAdmin.from('agents').select('id, name').eq('tenant_id', tid).eq('role', 'operator').neq('id', yo),
     // ¿Ya cerró su turno en el día AR vigente? Bloquea sueldo y "Cerrar turno".
@@ -270,8 +271,8 @@ export async function GET(request: Request) {
   // turno_inicio_at si hay turno abierto; si no, el día AR (mismo fallback que
   // fn_cerrar_turno). Como hoy no se abren turnos, en la práctica es el día AR.
   const saldoActual = Number(saldoRes.data?.saldo_actual ?? 0);
-  const turnoMovs = (turnoRes.error ? [] : (turnoRes.data ?? [])) as any[];
-  const sumTipo = (t: string) => turnoMovs.filter((m) => m.tipo === t).reduce((s, m) => s + Number(m.monto ?? 0), 0);
+  const turnoTotales = (turnoRes.error ? [] : (turnoRes.data ?? [])) as { tipo: string; total: number | string }[];
+  const sumTipo = (t: string) => Number(turnoTotales.find((r) => r.tipo === t)?.total ?? 0);
   const resumen_turno = {
     total_cargas:     sumTipo('carga'),
     total_pagos:      sumTipo('pago'),

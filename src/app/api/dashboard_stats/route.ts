@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
+import { loadPendingCandidates } from '@/lib/pending-candidates';
 import { planForTenant } from '@/lib/plan-guard';
 import { hasFeature } from '@/lib/plan';
 
@@ -112,8 +113,9 @@ export async function GET() {
     supabaseAdmin.rpc('fn_dashboard_sla_first_human', { p_tenant_id: tid, p_window_start: slaWindowStart.toISOString() }),
     // Chats activos hoy en gestión manual — join en Postgres (sin el .in(opIds))
     supabaseAdmin.rpc('fn_dashboard_chats_activos_hoy', { p_tenant_id: tid, p_today_start: todayStart.toISOString() }),
-    // Snapshot por contacto (contacto + su último mensaje) para clasificar pendientes
-    supabaseAdmin.rpc('fn_contacts_pending_snapshot', { p_tenant_id: tid }),
+    // Candidatos a pendiente (no leídos + su último mensaje), paginado. El snapshot
+    // de 1 fila por contacto se cortaba en 1.000 (ver lib/pending-candidates.ts).
+    loadPendingCandidates(tid),
 
     // ── Campañas (widget "Campañas") ────────────────────────────────────────
     // Activas = en curso o pausadas AHORA (una campaña se autopausa por cupo
@@ -164,7 +166,7 @@ export async function GET() {
   // un humano (human_taken) o cliente reconocido. Solo la lectura humana limpia.
   let pendingOrange = 0;
   let pendingRed    = 0;
-  for (const c of ((pendSnapRes.data as any[]) ?? [])) {
+  for (const c of ('rows' in pendSnapRes ? pendSnapRes.rows : [])) {
     const level = classifyPending({
       lastRole:          c.last_role,
       lastMsgAt:         c.last_msg_at,

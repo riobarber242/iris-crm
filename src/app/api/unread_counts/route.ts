@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/db';
 import { getSessionAgent } from '@/lib/current-agent';
 import { classifyPending } from '@/lib/pending';
+import { loadPendingCandidates } from '@/lib/pending-candidates';
 
 // Devuelve los pendientes según la regla de negocio (ver lib/pending.ts):
 //   newPending       (🟠 naranja): bot terminó / entrante sin flujo de bot, sin leer.
@@ -19,13 +20,14 @@ export async function GET() {
     // sin filtro de fecha) para derivar el último msg por contacto en Node: ~84 KB
     // gzip por corrida, polleado cada 15 s. La RPC devuelve 1 fila por contacto.
     // classifyPending sigue en JS (única fuente de verdad, ver lib/pending.ts).
-    const { data: snap, error: sErr } = await supabaseAdmin
-      .rpc('fn_contacts_pending_snapshot', { p_tenant_id: session.tenant_id });
-    if (sErr) return new NextResponse(sErr.message, { status: 500 });
+    // Ahora solo los candidatos (no leídos), paginado: el snapshot de 1 fila por
+    // contacto se cortaba en 1.000 (ver lib/pending-candidates.ts).
+    const snap = await loadPendingCandidates(session.tenant_id);
+    if ('error' in snap) return new NextResponse(snap.error, { status: 500 });
 
     let newPending       = 0; // 🟠
     let recurringPending = 0; // 🔴
-    for (const c of (snap ?? [])) {
+    for (const c of snap.rows) {
       const level = classifyPending({
         lastRole:          c.last_role,
         lastMsgAt:         c.last_msg_at,

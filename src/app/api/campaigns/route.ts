@@ -194,13 +194,12 @@ export async function GET() {
   );
   if (rampedActive.length > 0) {
     const ids = rampedActive.map((c: any) => c.id);
-    const { data: recs } = await supabaseAdmin
-      .from('campaign_recipients')
-      .select('campaign_id')
-      .in('campaign_id', ids)
-      .gte('sent_at', startOfArDayISO());
+    // Conteo agrupado en la base (antes: filas contadas acá, cortadas en 1.000).
+    const { data: recs } = await supabaseAdmin.rpc('fn_campaign_recipients_since', {
+      p_tenant_id: session.tenant_id, p_campaign_ids: ids, p_since: startOfArDayISO(),
+    });
     const tally = new Map<string, number>();
-    for (const r of recs ?? []) tally.set(r.campaign_id, (tally.get(r.campaign_id) ?? 0) + 1);
+    for (const r of (recs ?? []) as { campaign_id: string; n: number }[]) tally.set(r.campaign_id, Number(r.n));
     for (const c of rampedActive) (c as any).ramp_used_today = tally.get(c.id) ?? 0;
 
     // Progreso TOTAL acumulado (todos los días desde que arrancó), para el chip de

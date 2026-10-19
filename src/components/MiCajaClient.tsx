@@ -186,13 +186,21 @@ function deltaTxt(n: number)   { return `${n > 0 ? '+' : ''}${fmt(n)}`; }
 
 function BilleteraDetalle({ onOpenComp }: { onOpenComp: (id: string) => void }) {
   const [rows, setRows] = useState<any[] | null>(null);
+  const [total, setTotal] = useState(0); // movimientos totales (la lista trae los últimos)
   useEffect(() => {
-    fetch('/api/caja/operador?view=billetera').then((r) => r.json()).then((d) => setRows(d.movimientos ?? [])).catch(() => setRows([]));
+    fetch('/api/caja/operador?view=billetera').then((r) => r.json())
+      .then((d) => { setRows(d.movimientos ?? []); setTotal(Number(d.total ?? 0)); })
+      .catch(() => setRows([]));
   }, []);
   if (rows === null) return <Vacio texto="Cargando…" />;
   if (rows.length === 0) return <Vacio texto="Todavía no tenés movimientos en tu billetera." />;
   return (
     <div>
+      {total > rows.length && (
+        <div style={{ fontSize: '12px', color: '#888', padding: '6px 4px 10px' }}>
+          Últimos {rows.length.toLocaleString('es-AR')} de {total.toLocaleString('es-AR')} movimientos. El saldo de cada uno es el real (cuenta toda la historia).
+        </div>
+      )}
       {rows.map((m) => (
         <div key={m.id} onClick={() => m.comprobante_id && onOpenComp(m.comprobante_id)} style={{ ...rowBase, cursor: m.comprobante_id ? 'pointer' : 'default' }}>
           <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
